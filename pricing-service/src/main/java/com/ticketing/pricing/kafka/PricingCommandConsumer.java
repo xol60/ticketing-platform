@@ -24,17 +24,17 @@ public class PricingCommandConsumer {
     public void onPriceLockCommand(ConsumerRecord<String, DomainEvent> record, Acknowledgment ack) {
         try {
             if (!(record.value() instanceof PriceLockCommand cmd)) {
-                log.warn("Unexpected event type on {}: {}", Topics.PRICING_LOCK_CMD,
-                        record.value().getClass().getSimpleName());
+                log.warn("Unexpected type on {}: {}", Topics.PRICING_LOCK_CMD, record.value().getClass().getSimpleName());
                 ack.acknowledge();
                 return;
             }
-            log.info("Received PriceLockCommand: sagaId={}, ticketId={}", cmd.getSagaId(), cmd.getTicketId());
+            log.info("PriceLockCommand: sagaId={} ticketId={} userPrice={} confirmed={}",
+                    cmd.getSagaId(), cmd.getTicketId(), cmd.getUserPrice(), cmd.isConfirmed());
             pricingService.lockPrice(cmd);
             ack.acknowledge();
         } catch (Exception e) {
             log.error("Error processing PriceLockCommand: {}", e.getMessage(), e);
-            // Do not ack — let Kafka retry according to retry policy
+            // Do not ack — retry
         }
     }
 
@@ -46,12 +46,10 @@ public class PricingCommandConsumer {
     public void onPriceUnlockCommand(ConsumerRecord<String, DomainEvent> record, Acknowledgment ack) {
         try {
             if (!(record.value() instanceof PriceUnlockCommand cmd)) {
-                log.warn("Unexpected event type on {}: {}", Topics.PRICING_UNLOCK_CMD,
-                        record.value().getClass().getSimpleName());
+                log.warn("Unexpected type on {}: {}", Topics.PRICING_UNLOCK_CMD, record.value().getClass().getSimpleName());
                 ack.acknowledge();
                 return;
             }
-            log.info("Received PriceUnlockCommand: sagaId={}, ticketId={}", cmd.getSagaId(), cmd.getTicketId());
             pricingService.unlockPrice(cmd);
             ack.acknowledge();
         } catch (Exception e) {

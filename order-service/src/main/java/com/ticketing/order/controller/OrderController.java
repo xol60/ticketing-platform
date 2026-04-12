@@ -20,43 +20,51 @@ public class OrderController {
 
     private final OrderService orderService;
 
-    /**
-     * Create a new order.
-     * User identity comes from the trusted gateway header X-User-Id.
-     */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<OrderResponse> createOrder(
             @RequestHeader("X-User-Id") String userId,
             @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
             @Valid @RequestBody CreateOrderRequest request) {
-
-        log.debug("POST /api/orders userId={} traceId={} ticketId={}", userId, traceId, request.getTicketId());
-        OrderResponse response = orderService.createOrder(userId, traceId, request);
-        return ApiResponse.ok(response, traceId);
+        return ApiResponse.ok(orderService.createOrder(userId, traceId, request), traceId);
     }
 
-    /**
-     * Get a single order by id.
-     */
     @GetMapping("/{id}")
     public ApiResponse<OrderResponse> getOrder(
             @PathVariable String id,
             @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
-
-        OrderResponse response = orderService.getOrder(id);
-        return ApiResponse.ok(response, traceId);
+        return ApiResponse.ok(orderService.getOrder(id), traceId);
     }
 
-    /**
-     * List orders by userId query param.
-     */
     @GetMapping
     public ApiResponse<List<OrderResponse>> getOrdersByUser(
             @RequestParam String userId,
             @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
+        return ApiResponse.ok(orderService.getOrdersByUser(userId), traceId);
+    }
 
-        List<OrderResponse> orders = orderService.getOrdersByUser(userId);
-        return ApiResponse.ok(orders, traceId);
+    /**
+     * User confirms the new price shown during PRICE_CHANGED state.
+     * Saga resumes with confirmed=true price lock.
+     */
+    @PostMapping("/{id}/confirm-price")
+    public ApiResponse<Void> confirmPrice(
+            @PathVariable String id,
+            @RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
+        orderService.confirmPrice(id, userId, traceId);
+        return ApiResponse.ok(null, traceId);
+    }
+
+    /**
+     * User rejects the new price. Saga compensates, ticket is released.
+     */
+    @PostMapping("/{id}/cancel-price")
+    public ApiResponse<Void> cancelPrice(
+            @PathVariable String id,
+            @RequestHeader("X-User-Id") String userId,
+            @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
+        orderService.cancelPrice(id, userId, traceId);
+        return ApiResponse.ok(null, traceId);
     }
 }

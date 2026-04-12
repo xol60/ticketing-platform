@@ -3,7 +3,9 @@ package com.ticketing.pricing.service;
 import com.ticketing.common.events.*;
 import com.ticketing.pricing.config.CacheConfig;
 import com.ticketing.pricing.domain.model.EventPriceRule;
+import com.ticketing.pricing.domain.model.PriceHistory;
 import com.ticketing.pricing.domain.repository.EventPriceRuleRepository;
+import com.ticketing.pricing.domain.repository.PriceHistoryRepository;
 import com.ticketing.pricing.dto.request.CreatePriceRuleRequest;
 import com.ticketing.pricing.dto.request.UpdatePriceRuleRequest;
 import com.ticketing.pricing.dto.response.PriceRuleResponse;
@@ -34,10 +36,15 @@ import java.util.concurrent.CopyOnWriteArrayList;
 @Slf4j
 public class PricingService {
 
-    private static final String PRICE_LOCK_KEY_PREFIX = "price:lock:";
-    private static final long   LOCK_TTL_MINUTES      = 10;
+    private static final String   PRICE_LOCK_KEY_PREFIX     = "price:lock:";
+    private static final long     LOCK_TTL_MINUTES          = 10;
+    /** How far back we search price_history to decide if a price is "stale vs fabricated". */
+    private static final Duration HISTORY_VALIDITY_WINDOW   = Duration.ofMinutes(30);
+    /** How long a user has to confirm a price change before the saga times out. */
+    private static final Duration CONFIRM_WINDOW            = Duration.ofMinutes(5);
 
     private final EventPriceRuleRepository      repository;
+    private final PriceHistoryRepository        priceHistoryRepository;
     private final PriceRuleMapper               mapper;
     private final PricingEventPublisher         publisher;
     private final RedisTemplate<String, Object> redisTemplate;
@@ -53,7 +60,8 @@ public class PricingService {
         }
         EventPriceRule rule = mapper.toEntity(request);
         rule = repository.save(rule);
-        log.info("Created price rule for eventId={}", rule.getEventId());
+        writeHistory(rule.getEventId(), rule.getCurrentPrice(), "MANUAL");
+        log.info("Created price rule for eventId={} price={}", rule.getEventId(), rule.getCurrentPrice());
         return mapper.toResponse(rule);
     }
 
@@ -72,43 +80,87 @@ public class PricingService {
                 .orElseThrow(() -> new IllegalArgumentException("No price rule found for event: " + eventId));
         mapper.updateEntity(request, rule);
         rule = repository.save(rule);
-        log.info("Updated price rule for eventId={}", eventId);
+        writeHistory(rule.getEventId(), rule.getCurrentPrice(), "MANUAL");
+        log.info("Updated price rule for eventId={} newPrice={}", eventId, rule.getCurrentPrice());
         return mapper.toResponse(rule);
     }
 
     // ── Lock / Unlock ─────────────────────────────────────────────────────────
 
-    @Transactional(readOnly = true)
+    @Transactional
     public void lockPrice(PriceLockCommand cmd) {
-        log.info("Locking price: sagaId={}, ticketId={}, orderId={}, requestedPrice={}",
-                cmd.getSagaId(), cmd.getTicketId(), cmd.getOrderId(), cmd.getRequestedPrice());
+        log.info("lockPrice: sagaId={} orderId={} ticketId={} userPrice={} confirmed={}",
+                cmd.getSagaId(), cmd.getOrderId(), cmd.getTicketId(),
+                cmd.getUserPrice(), cmd.isConfirmed());
 
         EventPriceRule rule = repository.findByEventId(cmd.getEventId())
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "No price rule found for event: " + cmd.getEventId()));
+                .orElse(null);
 
-        BigDecimal requested = cmd.getRequestedPrice();
-        if (requested.compareTo(rule.getMinPrice()) < 0 || requested.compareTo(rule.getMaxPrice()) > 0) {
-            throw new IllegalArgumentException(
-                    String.format("Requested price %s is outside allowed range [%s, %s]",
-                            requested, rule.getMinPrice(), rule.getMaxPrice()));
+        if (rule == null) {
+            log.warn("No price rule for eventId={}, failing saga sagaId={}", cmd.getEventId(), cmd.getSagaId());
+            publisher.publishPricingFailed(new PricingFailedEvent(
+                    cmd.getTraceId(), cmd.getSagaId(),
+                    cmd.getOrderId(), cmd.getTicketId(), "NO_PRICE_RULE"));
+            return;
         }
 
-        String key = lockKey(cmd.getTicketId(), cmd.getOrderId());
-        redisTemplate.opsForValue().set(key, requested.toPlainString(),
-                Duration.ofMinutes(LOCK_TTL_MINUTES));
+        // ── Confirmed re-lock: user already agreed to the new price ───────────
+        if (cmd.isConfirmed()) {
+            BigDecimal currentPrice = rule.getCurrentPrice();
+            doLock(cmd, currentPrice);
+            log.info("Confirmed price lock: sagaId={} price={}", cmd.getSagaId(), currentPrice);
+            return;
+        }
 
-        publisher.publishPricingLocked(
-                new PricingLockedEvent(cmd.getTraceId(), cmd.getSagaId(),
-                        cmd.getTicketId(), cmd.getOrderId(), requested));
+        // ── Normal lock: validate userPrice against price_history ─────────────
+        BigDecimal priceAtOrderTime = priceHistoryRepository
+                .findPriceAt(cmd.getEventId(), cmd.getOrderCreatedAt());
 
-        log.info("Price locked: key={}, price={}", key, requested);
+        if (priceAtOrderTime == null) {
+            // No history at all (shouldn't happen in normal ops — failsafe)
+            log.warn("No price history at orderCreatedAt={} for eventId={}, using current price",
+                    cmd.getOrderCreatedAt(), cmd.getEventId());
+            doLock(cmd, rule.getCurrentPrice());
+            return;
+        }
+
+        boolean priceEverExisted = priceHistoryRepository.existsInRecentHistory(
+                cmd.getEventId(),
+                cmd.getUserPrice(),
+                Instant.now().minus(HISTORY_VALIDITY_WINDOW));
+
+        // Case A — price never appeared in history: fabricated price
+        if (!priceEverExisted) {
+            log.warn("Fabricated price {} for eventId={} sagaId={}",
+                    cmd.getUserPrice(), cmd.getEventId(), cmd.getSagaId());
+            publisher.publishPricingFailed(new PricingFailedEvent(
+                    cmd.getTraceId(), cmd.getSagaId(),
+                    cmd.getOrderId(), cmd.getTicketId(), "INVALID_PRICE"));
+            return;
+        }
+
+        // Case B — userPrice matches price at order creation time: proceed
+        if (cmd.getUserPrice().compareTo(priceAtOrderTime) == 0) {
+            doLock(cmd, priceAtOrderTime);
+            log.info("Normal price lock: sagaId={} price={}", cmd.getSagaId(), priceAtOrderTime);
+            return;
+        }
+
+        // Case C — price was real but has changed: ask user to confirm
+        BigDecimal currentPrice = rule.getCurrentPrice();
+        log.info("Price changed for sagaId={}: userPrice={} currentPrice={}",
+                cmd.getSagaId(), cmd.getUserPrice(), currentPrice);
+        publisher.publishPriceChanged(new PriceChangedEvent(
+                cmd.getTraceId(), cmd.getSagaId(),
+                cmd.getOrderId(), cmd.getTicketId(),
+                cmd.getUserPrice(), currentPrice,
+                Instant.now().plus(CONFIRM_WINDOW)));
     }
 
     public void unlockPrice(PriceUnlockCommand cmd) {
         String key = lockKey(cmd.getTicketId(), cmd.getOrderId());
         Boolean deleted = redisTemplate.delete(key);
-        log.info("Price unlocked: key={}, deleted={}, reason={}", key, deleted, cmd.getReason());
+        log.info("Price unlocked: key={} deleted={} reason={}", key, deleted, cmd.getReason());
     }
 
     // ── Dynamic pricing ───────────────────────────────────────────────────────
@@ -127,46 +179,95 @@ public class PricingService {
                 rule.setDemandFactor(computeDemandFactor(rule));
                 repository.save(rule);
 
+                // Write to price_history (closes old record, opens new)
+                writeHistory(rule.getEventId(), newPrice, "DEMAND");
+
                 PriceRuleResponse response = mapper.toResponse(rule);
-
-                // Publish to Kafka (for WebSocket push etc.)
-                publisher.publishPriceUpdated(
-                        new PriceUpdatedEvent(
-                                UUID.randomUUID().toString(),
-                                null,
-                                rule.getEventId(),
-                                null,
-                                newPrice,
-                                rule.getMinPrice(),
-                                rule.getMaxPrice()));
-
-                // Push SSE update
+                publisher.publishPriceUpdated(new PriceUpdatedEvent(
+                        UUID.randomUUID().toString(), null,
+                        rule.getEventId(), null, newPrice,
+                        rule.getMinPrice(), rule.getMaxPrice()));
                 pushSseUpdate(rule.getEventId(), response);
 
-                log.debug("Price recalculated: eventId={}, newPrice={}", rule.getEventId(), newPrice);
+                log.debug("Price recalculated: eventId={} newPrice={}", rule.getEventId(), newPrice);
             }
         }
     }
 
+    // ── SSE ───────────────────────────────────────────────────────────────────
+
+    public void pushSseUpdate(String eventId, PriceRuleResponse price) {
+        List<SseEmitter> emitters = sseEmitterRegistry.getOrDefault(eventId, List.of());
+        List<SseEmitter> dead = new CopyOnWriteArrayList<>();
+        for (SseEmitter emitter : emitters) {
+            try {
+                emitter.send(SseEmitter.event().name("price-update").data(price));
+            } catch (Exception e) {
+                log.warn("SSE send failed for eventId={}", eventId);
+                dead.add(emitter);
+            }
+        }
+        if (!dead.isEmpty()) {
+            sseEmitterRegistry.computeIfPresent(eventId, (k, list) -> {
+                list.removeAll(dead);
+                return list.isEmpty() ? null : list;
+            });
+        }
+    }
+
+    public SseEmitter registerSseEmitter(String eventId) {
+        SseEmitter emitter = new SseEmitter(Long.MAX_VALUE);
+        sseEmitterRegistry.computeIfAbsent(eventId, k -> new CopyOnWriteArrayList<>()).add(emitter);
+        Runnable cleanup = () -> sseEmitterRegistry.computeIfPresent(eventId, (k, list) -> {
+            list.remove(emitter);
+            return list.isEmpty() ? null : list;
+        });
+        emitter.onCompletion(cleanup);
+        emitter.onTimeout(cleanup);
+        emitter.onError(e -> cleanup.run());
+        try {
+            PriceRuleResponse current = getRule(eventId);
+            emitter.send(SseEmitter.event().name("price-init").data(current));
+        } catch (Exception e) {
+            log.warn("Could not send initial price for eventId={}: {}", eventId, e.getMessage());
+        }
+        return emitter;
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private void doLock(PriceLockCommand cmd, BigDecimal price) {
+        String key = lockKey(cmd.getTicketId(), cmd.getOrderId());
+        redisTemplate.opsForValue().set(key, price.toPlainString(), Duration.ofMinutes(LOCK_TTL_MINUTES));
+        publisher.publishPricingLocked(new PricingLockedEvent(
+                cmd.getTraceId(), cmd.getSagaId(),
+                cmd.getTicketId(), cmd.getOrderId(), price));
+    }
+
     /**
-     * Dynamic pricing formula:
-     *   - Base: currentPrice
-     *   - Demand factor: soldRatio (0..1) → higher sold % increases price
-     *   - Time factor: < 24h to event → +10% surcharge
-     *   - Result is clamped to [minPrice, maxPrice]
+     * Closes the current price_history record and opens a new one.
+     * Safe to call multiple times — uses a single transaction.
      */
+    private void writeHistory(String eventId, BigDecimal price, String triggeredBy) {
+        Instant now = Instant.now();
+        priceHistoryRepository.closeActive(eventId, now);
+        priceHistoryRepository.save(PriceHistory.builder()
+                .eventId(eventId)
+                .price(price)
+                .validFrom(now)
+                .validTo(null)
+                .triggeredBy(triggeredBy)
+                .build());
+    }
+
     private BigDecimal calculateDynamicPrice(EventPriceRule rule) {
         double demandFactor = computeDemandFactor(rule);
         double timeFactor   = computeTimeFactor(rule);
-
         BigDecimal base = rule.getMinPrice()
                 .add(rule.getMaxPrice().subtract(rule.getMinPrice())
                         .multiply(BigDecimal.valueOf(demandFactor * timeFactor)));
-
-        // Clamp
         if (base.compareTo(rule.getMinPrice()) < 0) base = rule.getMinPrice();
         if (base.compareTo(rule.getMaxPrice()) > 0) base = rule.getMaxPrice();
-
         return base.setScale(2, RoundingMode.HALF_UP);
     }
 
@@ -180,58 +281,6 @@ public class PricingService {
         long hoursToEvent = Duration.between(Instant.now(), rule.getEventDate()).toHours();
         return hoursToEvent < 24 ? 1.10 : 1.0;
     }
-
-    // ── SSE ───────────────────────────────────────────────────────────────────
-
-    public void pushSseUpdate(String eventId, PriceRuleResponse price) {
-        List<SseEmitter> emitters = sseEmitterRegistry.getOrDefault(eventId, List.of());
-        List<SseEmitter> dead = new CopyOnWriteArrayList<>();
-
-        for (SseEmitter emitter : emitters) {
-            try {
-                emitter.send(SseEmitter.event()
-                        .name("price-update")
-                        .data(price));
-            } catch (Exception e) {
-                log.warn("SSE send failed for eventId={}, removing emitter", eventId);
-                dead.add(emitter);
-            }
-        }
-
-        if (!dead.isEmpty()) {
-            sseEmitterRegistry.computeIfPresent(eventId, (k, list) -> {
-                list.removeAll(dead);
-                return list.isEmpty() ? null : list;
-            });
-        }
-    }
-
-    public SseEmitter registerSseEmitter(String eventId) {
-        SseEmitter emitter = new SseEmitter(Long.MAX_VALUE);
-
-        sseEmitterRegistry.computeIfAbsent(eventId, k -> new CopyOnWriteArrayList<>()).add(emitter);
-
-        Runnable cleanup = () -> sseEmitterRegistry.computeIfPresent(eventId, (k, list) -> {
-            list.remove(emitter);
-            return list.isEmpty() ? null : list;
-        });
-
-        emitter.onCompletion(cleanup);
-        emitter.onTimeout(cleanup);
-        emitter.onError(e -> cleanup.run());
-
-        // Send current price immediately on connect
-        try {
-            PriceRuleResponse current = getRule(eventId);
-            emitter.send(SseEmitter.event().name("price-init").data(current));
-        } catch (Exception e) {
-            log.warn("Could not send initial price for eventId={}: {}", eventId, e.getMessage());
-        }
-
-        return emitter;
-    }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private String lockKey(String ticketId, String orderId) {
         return PRICE_LOCK_KEY_PREFIX + ticketId + ":" + orderId;

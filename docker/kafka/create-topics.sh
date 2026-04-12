@@ -31,12 +31,21 @@ create_topic "ticket.confirmed"
 create_topic "order.created"
 create_topic "order.confirmed"
 create_topic "order.failed"
+create_topic "order.cancelled"
+create_topic "order.price.changed"
+create_topic "order.price.confirm"
+create_topic "order.price.cancel"
 
 # Pricing topics
 create_topic "pricing.lock.cmd"
 create_topic "pricing.locked"
 create_topic "pricing.unlock.cmd"
+create_topic "pricing.price.changed"
+create_topic "pricing.failed"
 create_topic "price.updated"
+
+# Event lifecycle
+create_topic "event.status.changed"
 
 # Payment topics
 create_topic "payment.charge.cmd"

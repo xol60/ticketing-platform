@@ -2,8 +2,7 @@ package com.ticketing.order.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.ticketing.common.events.OrderConfirmedEvent;
-import com.ticketing.common.events.OrderFailedEvent;
+import com.ticketing.common.events.*;
 import com.ticketing.order.client.EventValidationClient;
 import com.ticketing.order.domain.model.Order;
 import com.ticketing.order.domain.model.OrderStatus;
@@ -30,8 +29,8 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class OrderService {
 
-    private static final String REDIS_ORDER_KEY_PREFIX = "order:";
-    private static final Duration REDIS_TTL = Duration.ofMinutes(5);
+    private static final String   REDIS_ORDER_KEY_PREFIX = "order:";
+    private static final Duration REDIS_TTL              = Duration.ofMinutes(5);
 
     private final OrderRepository       orderRepository;
     private final OrderMapper           orderMapper;
@@ -42,8 +41,7 @@ public class OrderService {
 
     @Transactional
     public OrderResponse createOrder(String userId, String traceId, CreateOrderRequest request) {
-        // Early guard: reject if ticket-service explicitly reports event closed.
-        // Fails open when ticket-service is unreachable (saga guard is authoritative).
+        // Early guard: reject if ticket-service explicitly says event is closed
         if (!eventValidationClient.isEventOpenForSales(request.getTicketId())) {
             throw new IllegalStateException(
                     "Event is not open for sales for ticket: " + request.getTicketId());
@@ -65,44 +63,28 @@ public class OrderService {
         log.info("Created order orderId={} userId={} ticketId={} sagaId={} traceId={}",
                 orderId, userId, request.getTicketId(), sagaId, traceId);
 
+        // Pass orderCreatedAt (DB-stamped) and userPrice for point-in-time price validation
         eventPublisher.publishOrderCreated(
                 traceId, sagaId, orderId, userId,
-                request.getTicketId(), request.getRequestedPrice());
+                request.getTicketId(), request.getRequestedPrice(),
+                order.getCreatedAt());
 
         return orderMapper.toResponse(order);
     }
 
-    /**
-     * Read with L1 (Caffeine) → L2 (Redis) → DB fallback.
-     * @Cacheable handles L1; Redis is checked manually before DB.
-     */
     @Cacheable(value = "orders", key = "#id")
     @Transactional(readOnly = true)
     public OrderResponse getOrder(String id) {
-        // L2 Redis check
         String redisKey = REDIS_ORDER_KEY_PREFIX + id;
         String cached = redisTemplate.opsForValue().get(redisKey);
         if (cached != null) {
-            try {
-                return objectMapper.readValue(cached, OrderResponse.class);
-            } catch (JsonProcessingException e) {
-                log.warn("Failed to deserialize order from Redis key={}: {}", redisKey, e.getMessage());
-            }
+            try { return objectMapper.readValue(cached, OrderResponse.class); }
+            catch (JsonProcessingException e) { log.warn("Redis deser failed key={}", redisKey); }
         }
-
-        // DB (routed to slave via readOnly transaction)
         Order order = orderRepository.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Order not found: " + id));
-
         OrderResponse response = orderMapper.toResponse(order);
-
-        // Populate L2
-        try {
-            redisTemplate.opsForValue().set(redisKey, objectMapper.writeValueAsString(response), REDIS_TTL);
-        } catch (JsonProcessingException e) {
-            log.warn("Failed to serialize order to Redis key={}: {}", redisKey, e.getMessage());
-        }
-
+        writeL2(redisKey, response);
         return response;
     }
 
@@ -111,42 +93,112 @@ public class OrderService {
         return orderMapper.toResponseList(orderRepository.findByUserId(userId));
     }
 
+    // ── Saga outcome handlers ─────────────────────────────────────────────────
+
     @CacheEvict(value = "orders", key = "#event.orderId")
     @Transactional
     public void handleConfirmed(OrderConfirmedEvent event) {
-        Order order = orderRepository.findById(event.getOrderId())
-                .orElseThrow(() -> new NoSuchElementException("Order not found: " + event.getOrderId()));
-
+        Order order = findOrThrow(event.getOrderId());
         order.setStatus(OrderStatus.CONFIRMED);
         order.setFinalPrice(event.getFinalPrice());
         order.setPaymentReference(event.getPaymentReference());
         orderRepository.save(order);
-
-        evictRedisCache(event.getOrderId());
-
-        log.info("Order confirmed orderId={} paymentReference={}", event.getOrderId(), event.getPaymentReference());
+        evictL2(event.getOrderId());
+        log.info("Order confirmed orderId={}", event.getOrderId());
     }
 
     @CacheEvict(value = "orders", key = "#event.orderId")
     @Transactional
     public void handleFailed(OrderFailedEvent event) {
-        Order order = orderRepository.findById(event.getOrderId())
-                .orElseThrow(() -> new NoSuchElementException("Order not found: " + event.getOrderId()));
-
+        Order order = findOrThrow(event.getOrderId());
         order.setStatus(OrderStatus.FAILED);
         order.setFailureReason(event.getReason());
         orderRepository.save(order);
-
-        evictRedisCache(event.getOrderId());
-
+        evictL2(event.getOrderId());
         log.info("Order failed orderId={} reason={}", event.getOrderId(), event.getReason());
     }
 
-    private void evictRedisCache(String orderId) {
-        try {
-            redisTemplate.delete(REDIS_ORDER_KEY_PREFIX + orderId);
-        } catch (Exception e) {
-            log.warn("Failed to evict Redis cache for orderId={}: {}", orderId, e.getMessage());
+    @CacheEvict(value = "orders", key = "#event.orderId")
+    @Transactional
+    public void handlePriceChanged(OrderPriceChangedEvent event) {
+        Order order = findOrThrow(event.getOrderId());
+        order.setStatus(OrderStatus.PRICE_CHANGED);
+        order.setPendingPrice(event.getNewPrice());
+        orderRepository.save(order);
+        evictL2(event.getOrderId());
+        log.info("Order price changed orderId={} oldPrice={} newPrice={}",
+                event.getOrderId(), event.getOldPrice(), event.getNewPrice());
+    }
+
+    @CacheEvict(value = "orders", key = "#event.orderId")
+    @Transactional
+    public void handleCancelled(OrderCancelledEvent event) {
+        Order order = findOrThrow(event.getOrderId());
+        order.setStatus(OrderStatus.CANCELLED);
+        order.setFailureReason(event.getReason());
+        orderRepository.save(order);
+        evictL2(event.getOrderId());
+        log.info("Order cancelled orderId={} reason={}", event.getOrderId(), event.getReason());
+    }
+
+    // ── User-initiated price confirm/cancel ───────────────────────────────────
+
+    @Transactional
+    public void confirmPrice(String orderId, String userId, String traceId) {
+        Order order = findOrThrow(orderId);
+        validateOwner(order, userId);
+        if (order.getStatus() != OrderStatus.PRICE_CHANGED) {
+            throw new IllegalStateException(
+                    "Order is not awaiting price confirmation: " + order.getStatus());
         }
+        // Put order back to PENDING — will be updated again when saga resumes
+        order.setStatus(OrderStatus.PENDING);
+        orderRepository.save(order);
+        evictL2(orderId);
+        eventPublisher.publishPriceConfirm(traceId, order.getSagaId(), orderId, userId);
+        log.info("User confirmed price for orderId={}", orderId);
+    }
+
+    @Transactional
+    public void cancelPrice(String orderId, String userId, String traceId) {
+        Order order = findOrThrow(orderId);
+        validateOwner(order, userId);
+        if (order.getStatus() != OrderStatus.PRICE_CHANGED) {
+            throw new IllegalStateException(
+                    "Order is not awaiting price confirmation: " + order.getStatus());
+        }
+        // Saga will send the actual CANCELLED event back; we optimistically set CANCELLED
+        order.setStatus(OrderStatus.CANCELLED);
+        order.setFailureReason("User rejected price change");
+        orderRepository.save(order);
+        evictL2(orderId);
+        eventPublisher.publishPriceCancel(traceId, order.getSagaId(), orderId, userId);
+        log.info("User cancelled price for orderId={}", orderId);
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private Order findOrThrow(String orderId) {
+        return orderRepository.findById(orderId)
+                .orElseThrow(() -> new NoSuchElementException("Order not found: " + orderId));
+    }
+
+    private void validateOwner(Order order, String userId) {
+        if (!order.getUserId().equals(userId)) {
+            throw new IllegalArgumentException("Order does not belong to user: " + userId);
+        }
+    }
+
+    private void writeL2(String key, OrderResponse response) {
+        try {
+            redisTemplate.opsForValue().set(key, objectMapper.writeValueAsString(response), REDIS_TTL);
+        } catch (JsonProcessingException e) {
+            log.warn("Failed to write Redis cache key={}", key);
+        }
+    }
+
+    private void evictL2(String orderId) {
+        try { redisTemplate.delete(REDIS_ORDER_KEY_PREFIX + orderId); }
+        catch (Exception e) { log.warn("Failed to evict Redis cache orderId={}", orderId); }
     }
 }

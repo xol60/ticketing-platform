@@ -10,11 +10,7 @@ import java.time.Instant;
 
 @Entity
 @Table(name = "orders")
-@Getter
-@Setter
-@NoArgsConstructor
-@AllArgsConstructor
-@Builder
+@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 public class Order {
 
     @Id
@@ -34,8 +30,13 @@ public class Order {
     @Column(name = "status", nullable = false, length = 20)
     private OrderStatus status;
 
+    /** Price the user submitted — stored for audit. Never used as the actual charge amount. */
     @Column(name = "requested_price", nullable = false, precision = 19, scale = 4)
     private BigDecimal requestedPrice;
+
+    /** New price shown to user during PRICE_CHANGED state, awaiting confirmation. */
+    @Column(name = "pending_price", precision = 19, scale = 4)
+    private BigDecimal pendingPrice;
 
     @Column(name = "final_price", precision = 19, scale = 4)
     private BigDecimal finalPrice;

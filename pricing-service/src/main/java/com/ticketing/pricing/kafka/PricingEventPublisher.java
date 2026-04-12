@@ -14,26 +14,31 @@ public class PricingEventPublisher {
     private final KafkaTemplate<String, DomainEvent> kafkaTemplate;
 
     public void publishPricingLocked(PricingLockedEvent event) {
-        kafkaTemplate.send(Topics.PRICING_LOCKED, event.getTicketId(), event)
-                .whenComplete((result, ex) -> {
-                    if (ex != null) {
-                        log.error("Failed to publish PricingLockedEvent for ticketId={}: {}",
-                                event.getTicketId(), ex.getMessage());
-                    } else {
-                        log.debug("PricingLockedEvent published: ticketId={}, offset={}",
-                                event.getTicketId(), result.getRecordMetadata().offset());
-                    }
-                });
+        send(Topics.PRICING_LOCKED, event.getTicketId(), event);
     }
 
     public void publishPriceUpdated(PriceUpdatedEvent event) {
-        kafkaTemplate.send(Topics.PRICE_UPDATED, event.getEventId(), event)
+        send(Topics.PRICE_UPDATED, event.getEventId(), event);
+    }
+
+    public void publishPriceChanged(PriceChangedEvent event) {
+        send(Topics.PRICING_PRICE_CHANGED, event.getOrderId(), event);
+    }
+
+    public void publishPricingFailed(PricingFailedEvent event) {
+        send(Topics.PRICING_FAILED, event.getOrderId(), event);
+    }
+
+    private void send(String topic, String key, DomainEvent event) {
+        kafkaTemplate.send(topic, key, event)
                 .whenComplete((result, ex) -> {
                     if (ex != null) {
-                        log.error("Failed to publish PriceUpdatedEvent for eventId={}: {}",
-                                event.getEventId(), ex.getMessage());
+                        log.error("Failed to publish {} to topic={}: {}",
+                                event.getClass().getSimpleName(), topic, ex.getMessage());
                     } else {
-                        log.debug("PriceUpdatedEvent published: eventId={}", event.getEventId());
+                        log.debug("Published {} topic={} offset={}",
+                                event.getClass().getSimpleName(), topic,
+                                result.getRecordMetadata().offset());
                     }
                 });
     }
