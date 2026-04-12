@@ -1,0 +1,83 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "full-stack",
+      "runtimeExecutable": "docker-compose",
+      "runtimeArgs": ["up", "--build"],
+      "port": 80
+    },
+    {
+      "name": "infrastructure",
+      "runtimeExecutable": "docker-compose",
+      "runtimeArgs": ["up", "postgres-master", "redis", "kafka", "kafka-init"],
+      "port": 6379
+    },
+    {
+      "name": "api-gateway",
+      "runtimeExecutable": "docker-compose",
+      "runtimeArgs": ["up", "api-gateway"],
+      "port": 8080
+    },
+    {
+      "name": "auth-service",
+      "runtimeExecutable": "docker-compose",
+      "runtimeArgs": ["up", "auth-service"],
+      "port": 8081
+    },
+    {
+      "name": "ticket-service",
+      "runtimeExecutable": "docker-compose",
+      "runtimeArgs": ["up", "ticket-service"],
+      "port": 8082
+    },
+    {
+      "name": "order-service",
+      "runtimeExecutable": "docker-compose",
+      "runtimeArgs": ["up", "order-service"],
+      "port": 8083
+    },
+    {
+      "name": "saga-orchestrator",
+      "runtimeExecutable": "docker-compose",
+      "runtimeArgs": ["up", "saga-orchestrator"],
+      "port": 8084
+    },
+    {
+      "name": "pricing-service",
+      "runtimeExecutable": "docker-compose",
+      "runtimeArgs": ["up", "pricing-service"],
+      "port": 8085
+    },
+    {
+      "name": "reservation-service",
+      "runtimeExecutable": "docker-compose",
+      "runtimeArgs": ["up", "reservation-service"],
+      "port": 8086
+    },
+    {
+      "name": "payment-service",
+      "runtimeExecutable": "docker-compose",
+      "runtimeArgs": ["up", "payment-service"],
+      "port": 8087
+    },
+    {
+      "name": "secondary-market-service",
+      "runtimeExecutable": "docker-compose",
+      "runtimeArgs": ["up", "secondary-market-service"],
+      "port": 8088
+    },
+    {
+      "name": "notification-service",
+      "runtimeExecutable": "docker-compose",
+      "runtimeArgs": ["up", "notification-service"],
+      "port": 8089
+    },
+    {
+      "name": "nginx",
+      "runtimeExecutable": "docker-compose",
+      "runtimeArgs": ["up", "nginx"],
+      "port": 80
+    }
+  ]
+}

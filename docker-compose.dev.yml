@@ -1,0 +1,167 @@
+# ── Development overrides ─────────────────────────────────────────────────────
+# Usage:
+#   docker-compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#
+# What this adds:
+#   - Exposes every service port directly on localhost (useful for IntelliJ, Postman, etc.)
+#   - Enables DEBUG logging + SQL query logging for every service
+#   - Remote JVM debug port (5005+offset) on every service
+#   - All Actuator endpoints exposed
+#   - Relaxed Postgres connection pool for easier local debugging
+
+version: "3.9"
+
+services:
+
+  # ── Infrastructure extras ───────────────────────────────────────────────────
+
+  postgres-master:
+    ports:
+      - "5436:5432"   # already in base; explicit here for clarity
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  kafka:
+    ports:
+      - "29092:29092"
+
+  # ── Application services — expose ports + debug flags ───────────────────────
+
+  api-gateway:
+    ports:
+      - "8090:8090"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      LOGGING_LEVEL_COM_TICKETING: DEBUG
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "*"
+      JAVA_OPTS: >-
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
+        -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
+
+  auth-service:
+    ports:
+      - "8081:8081"
+      - "5081:5005"   # remote debug
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      LOGGING_LEVEL_COM_TICKETING: DEBUG
+      SPRING_JPA_SHOW_SQL: "true"
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "*"
+      JAVA_OPTS: >-
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
+        -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
+
+  ticket-service:
+    ports:
+      - "8082:8082"
+      - "5082:5005"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      LOGGING_LEVEL_COM_TICKETING: DEBUG
+      SPRING_JPA_SHOW_SQL: "true"
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "*"
+      JAVA_OPTS: >-
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
+        -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
+
+  order-service:
+    ports:
+      - "8083:8083"
+      - "5083:5005"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      LOGGING_LEVEL_COM_TICKETING: DEBUG
+      SPRING_JPA_SHOW_SQL: "true"
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "*"
+      JAVA_OPTS: >-
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
+        -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
+
+  saga-orchestrator:
+    ports:
+      - "8084:8084"
+      - "5084:5005"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      LOGGING_LEVEL_COM_TICKETING: DEBUG
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "*"
+      JAVA_OPTS: >-
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
+        -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
+
+  pricing-service:
+    ports:
+      - "8085:8085"
+      - "5085:5005"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      LOGGING_LEVEL_COM_TICKETING: DEBUG
+      SPRING_JPA_SHOW_SQL: "true"
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "*"
+      JAVA_OPTS: >-
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
+        -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
+
+  reservation-service:
+    ports:
+      - "8086:8086"
+      - "5086:5005"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      LOGGING_LEVEL_COM_TICKETING: DEBUG
+      SPRING_JPA_SHOW_SQL: "true"
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "*"
+      JAVA_OPTS: >-
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
+        -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
+
+  payment-service:
+    ports:
+      - "8087:8087"
+      - "5087:5005"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      LOGGING_LEVEL_COM_TICKETING: DEBUG
+      SPRING_JPA_SHOW_SQL: "true"
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "*"
+      JAVA_OPTS: >-
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
+        -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
+
+  secondary-market-service:
+    ports:
+      - "8088:8088"
+      - "5088:5005"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      LOGGING_LEVEL_COM_TICKETING: DEBUG
+      SPRING_JPA_SHOW_SQL: "true"
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "*"
+      JAVA_OPTS: >-
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
+        -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
+
+  notification-service:
+    ports:
+      - "8089:8089"
+      - "5089:5005"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      LOGGING_LEVEL_COM_TICKETING: DEBUG
+      SPRING_JPA_SHOW_SQL: "true"
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "*"
+      JAVA_OPTS: >-
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
+        -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005

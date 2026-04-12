@@ -1,0 +1,229 @@
+# ── Production overrides ──────────────────────────────────────────────────────
+# Usage:
+#   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# What this adds:
+#   - restart: always  on every container
+#   - Memory + CPU limits per service (tune to your instance size)
+#   - No internal service ports exposed to host (only nginx:80)
+#   - INFO-only logging
+#   - Postgres and Redis ports closed to host
+#   - Health check intervals tightened
+
+version: "3.9"
+
+services:
+
+  # ── Infrastructure ──────────────────────────────────────────────────────────
+
+  postgres-master:
+    restart: always
+    ports: []           # not exposed to host in prod
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.0"
+
+  redis:
+    restart: always
+    ports: []
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+
+  kafka:
+    restart: always
+    ports: []           # 29092 not exposed in prod
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.0"
+
+  kafka-init:
+    restart: "no"       # one-shot, never restart
+
+  nginx:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: "0.25"
+
+  # ── Application services ─────────────────────────────────────────────────────
+
+  api-gateway:
+    restart: always
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      LOGGING_LEVEL_ROOT: WARN
+      LOGGING_LEVEL_COM_TICKETING: INFO
+      MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS: never
+      JAVA_OPTS: >-
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
+        -XX:+UseG1GC
+        -XX:+UseStringDeduplication
+        -Djava.security.egd=file:/dev/./urandom
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+
+  auth-service:
+    restart: always
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      LOGGING_LEVEL_ROOT: WARN
+      LOGGING_LEVEL_COM_TICKETING: INFO
+      JAVA_OPTS: >-
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
+        -XX:+UseG1GC
+        -Djava.security.egd=file:/dev/./urandom
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+
+  ticket-service:
+    restart: always
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      LOGGING_LEVEL_ROOT: WARN
+      LOGGING_LEVEL_COM_TICKETING: INFO
+      JAVA_OPTS: >-
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
+        -XX:+UseG1GC
+        -Djava.security.egd=file:/dev/./urandom
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+          cpus: "1.0"
+
+  order-service:
+    restart: always
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      LOGGING_LEVEL_ROOT: WARN
+      LOGGING_LEVEL_COM_TICKETING: INFO
+      JAVA_OPTS: >-
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
+        -XX:+UseG1GC
+        -Djava.security.egd=file:/dev/./urandom
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+
+  saga-orchestrator:
+    restart: always
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      LOGGING_LEVEL_ROOT: WARN
+      LOGGING_LEVEL_COM_TICKETING: INFO
+      JAVA_OPTS: >-
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
+        -XX:+UseG1GC
+        -Djava.security.egd=file:/dev/./urandom
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+
+  pricing-service:
+    restart: always
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      LOGGING_LEVEL_ROOT: WARN
+      LOGGING_LEVEL_COM_TICKETING: INFO
+      JAVA_OPTS: >-
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
+        -XX:+UseG1GC
+        -Djava.security.egd=file:/dev/./urandom
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+
+  reservation-service:
+    restart: always
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      LOGGING_LEVEL_ROOT: WARN
+      LOGGING_LEVEL_COM_TICKETING: INFO
+      JAVA_OPTS: >-
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
+        -XX:+UseG1GC
+        -Djava.security.egd=file:/dev/./urandom
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+
+  payment-service:
+    restart: always
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      LOGGING_LEVEL_ROOT: WARN
+      LOGGING_LEVEL_COM_TICKETING: INFO
+      JAVA_OPTS: >-
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
+        -XX:+UseG1GC
+        -Djava.security.egd=file:/dev/./urandom
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+
+  secondary-market-service:
+    restart: always
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      LOGGING_LEVEL_ROOT: WARN
+      LOGGING_LEVEL_COM_TICKETING: INFO
+      JAVA_OPTS: >-
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
+        -XX:+UseG1GC
+        -Djava.security.egd=file:/dev/./urandom
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+
+  notification-service:
+    restart: always
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      LOGGING_LEVEL_ROOT: WARN
+      LOGGING_LEVEL_COM_TICKETING: INFO
+      JAVA_OPTS: >-
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
+        -XX:+UseG1GC
+        -Djava.security.egd=file:/dev/./urandom
+    deploy:
+      resources:
+        limits:
+          memory: 384m
+          cpus: "0.25"

@@ -1,0 +1,92 @@
+spring:
+  application:
+    name: payment-service
+
+  datasource:
+    url: ${DB_MASTER_URL:jdbc:postgresql://localhost:5432/payment_db}
+    username: ${DB_USER:ticketing}
+    password: ${DB_PASSWORD:ticketing_secret}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: false
+    show-sql: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+
+db:
+  master:
+    url: ${DB_MASTER_URL:jdbc:postgresql://localhost:5432/payment_db}
+  slave:
+    url: ${DB_SLAVE_URL:jdbc:postgresql://localhost:5433/payment_db}
+  username: ${DB_USER:ticketing}
+  password: ${DB_PASSWORD:ticketing_secret}
+
+server:
+  port: 8087
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+logging:
+  level:
+    com.ticketing: INFO
+    org.springframework.kafka: WARN
+
+---
+spring:
+  config:
+    activate:
+      on-profile: docker
+  data:
+    redis:
+      host: redis
+  kafka:
+    bootstrap-servers: kafka:9092
+
+db:
+  master:
+    url: jdbc:postgresql://postgres-master:5432/payment_db
+  slave:
+    url: jdbc:postgresql://postgres-slave:5433/payment_db
+
+---
+spring:
+  config:
+    activate:
+      on-profile: local
+  data:
+    redis:
+      host: localhost
+  kafka:
+    bootstrap-servers: localhost:9092
+
+db:
+  master:
+    url: jdbc:postgresql://localhost:5432/payment_db
+  slave:
+    url: jdbc:postgresql://localhost:5433/payment_db

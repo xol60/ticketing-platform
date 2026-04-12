@@ -1,0 +1,30 @@
+# ── Build stage ──────────────────────────────────────────────────────────────
+FROM maven:3.9.6-eclipse-temurin-21 AS builder
+WORKDIR /build
+
+# Cache dependencies layer separately
+COPY pom.xml .
+RUN mvn dependency:go-offline -q
+
+COPY src ./src
+RUN mvn package -DskipTests -q
+
+# ── Runtime stage ─────────────────────────────────────────────────────────────
+FROM eclipse-temurin:21-jre-alpine
+WORKDIR /app
+
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+USER appuser
+
+COPY --from=builder /build/target/*.jar app.jar
+
+# JVM tuning for containers
+ENV JAVA_OPTS="-XX:+UseContainerSupport \
+    -XX:MaxRAMPercentage=75.0 \
+    -XX:+UseG1GC \
+    -XX:+UseStringDeduplication \
+    -Djava.security.egd=file:/dev/./urandom"
+
+EXPOSE 8090
+
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]

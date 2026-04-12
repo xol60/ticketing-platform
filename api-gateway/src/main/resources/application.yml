@@ -1,0 +1,115 @@
+spring:
+  application:
+    name: api-gateway
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+
+  cloud:
+    gateway:
+      httpclient:
+        connect-timeout: 5000
+        response-timeout: 30s
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
+      globalcors:
+        corsConfigurations:
+          "[/**]":
+            allowedOriginPatterns: "*"
+            allowedMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]
+            allowedHeaders: "*"
+            allowCredentials: true
+
+server:
+  port: 8090
+  netty:
+    connection-timeout: 10s
+
+# ── Gateway properties ─────────────────────────────────────────────────────────
+gateway:
+  jwt:
+    secret: ${JWT_SECRET:changeme_use_a_real_secret_in_production_256bits}
+    access-token-expiry-seconds: 900
+    refresh-token-expiry-seconds: 604800
+  rate-limit:
+    requests-per-second: 20
+    burst-capacity: 40
+    window-seconds: 60
+    path-overrides:
+      /api/auth: 5
+  circuit-breaker:
+    failure-rate-threshold: 50
+    slow-call-rate-threshold: 80
+    slow-call-duration-seconds: 3
+    permitted-calls-in-half-open: 3
+    wait-duration-in-open-seconds: 30
+    sliding-window-size: 20
+  cache:
+    l1-ttl-seconds: 30
+    l1-max-size: 5000
+    l2-ttl-seconds: 300
+  public-paths:
+    - /api/auth/login
+    - /api/auth/register
+    - /api/auth/refresh
+    - /actuator/health
+    - /actuator/circuit-breakers
+    - /health
+
+# ── Actuator ───────────────────────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,circuit-breakers
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: ${spring.application.name}
+
+# ── Logging ────────────────────────────────────────────────────────────────────
+logging:
+  level:
+    com.ticketing.gateway: DEBUG
+    org.springframework.cloud.gateway: INFO
+    io.github.resilience4j: INFO
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+
+---
+# ── Docker profile ─────────────────────────────────────────────────────────────
+spring:
+  config:
+    activate:
+      on-profile: docker
+  data:
+    redis:
+      host: redis
+      port: 6379
+
+logging:
+  level:
+    com.ticketing.gateway: INFO
+
+---
+# ── Local dev profile ──────────────────────────────────────────────────────────
+spring:
+  config:
+    activate:
+      on-profile: local
+  data:
+    redis:
+      host: localhost
+      port: 6379
