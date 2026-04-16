@@ -1,0 +1,18 @@
+spring:
+  kafka:
+    consumer:
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      properties:
+        spring.json.trusted.packages: "com.ticketing.*"
+        spring.json.use.type.headers: false
+        spring.json.value.default.type: com.ticketing.common.events.DomainEvent
+    producer:
+      properties:
+        spring.json.add.type.headers: false
+
+logging:
+  level:
+    com.ticketing.saga: DEBUG
+    org.springframework.kafka: WARN
+    org.testcontainers: WARN

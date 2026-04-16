@@ -313,7 +313,7 @@ class SagaOrchestratorTest {
             SagaState state = buildState(SagaStatus.PRICING_LOCKED);
             when(stateStore.load(SAGA_ID)).thenReturn(state).thenReturn(state);
 
-            var event = new PaymentFailedEvent(TRACE_ID, SAGA_ID, ORDER_ID, USER_ID, TICKET_ID, "Insufficient funds");
+            var event = new PaymentFailedEvent(TRACE_ID, SAGA_ID, ORDER_ID, USER_ID, "Insufficient funds", 1);
             orchestrator.onPaymentFailed(event);
 
             assertThat(state.getStatus()).isEqualTo(SagaStatus.FAILED);
