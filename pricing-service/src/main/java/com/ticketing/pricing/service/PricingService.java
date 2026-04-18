@@ -17,7 +17,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.CachePut;
 import org.springframework.cache.annotation.Cacheable;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -37,8 +36,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
 @Slf4j
 public class PricingService {
 
-    private static final String   PRICE_LOCK_KEY_PREFIX     = "price:lock:";
-    private static final long     LOCK_TTL_MINUTES          = 10;
     /** How far back we search price_history to decide if a price is "stale vs fabricated". */
     private static final Duration HISTORY_VALIDITY_WINDOW   = Duration.ofMinutes(30);
     /** How long a user has to confirm a price change before the saga times out. */
@@ -48,7 +45,6 @@ public class PricingService {
     private final PriceHistoryRepository        priceHistoryRepository;
     private final PriceRuleMapper               mapper;
     private final PricingEventPublisher         publisher;
-    private final RedisTemplate<String, Object> redisTemplate;
     private final ConcurrentHashMap<String, List<SseEmitter>> sseEmitterRegistry;
 
     // ── Admin CRUD ────────────────────────────────────────────────────────────
@@ -108,7 +104,9 @@ public class PricingService {
         // ── Confirmed re-lock: user already agreed to the new price ───────────
         if (cmd.isConfirmed()) {
             BigDecimal currentPrice = rule.getCurrentPrice();
-            doLock(cmd, currentPrice);
+            publisher.publishPricingLocked(new PricingLockedEvent(
+                    cmd.getTraceId(), cmd.getSagaId(),
+                    cmd.getTicketId(), cmd.getOrderId(), currentPrice));
             log.info("Confirmed price lock: sagaId={} price={}", cmd.getSagaId(), currentPrice);
             return;
         }
@@ -142,7 +140,9 @@ public class PricingService {
 
         // Case B — userPrice matches price at order creation time: proceed
         if (cmd.getUserPrice().compareTo(priceAtOrderTime) == 0) {
-            doLock(cmd, priceAtOrderTime);
+            publisher.publishPricingLocked(new PricingLockedEvent(
+                    cmd.getTraceId(), cmd.getSagaId(),
+                    cmd.getTicketId(), cmd.getOrderId(), priceAtOrderTime));
             log.info("Normal price lock: sagaId={} price={}", cmd.getSagaId(), priceAtOrderTime);
             return;
         }
@@ -156,12 +156,6 @@ public class PricingService {
                 cmd.getOrderId(), cmd.getTicketId(),
                 cmd.getUserPrice(), currentPrice,
                 Instant.now().plus(CONFIRM_WINDOW)));
-    }
-
-    public void unlockPrice(PriceUnlockCommand cmd) {
-        String key = lockKey(cmd.getTicketId(), cmd.getOrderId());
-        Boolean deleted = redisTemplate.delete(key);
-        log.info("Price unlocked: key={} deleted={} reason={}", key, deleted, cmd.getReason());
     }
 
     // ── Dynamic pricing ───────────────────────────────────────────────────────
@@ -237,14 +231,6 @@ public class PricingService {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private void doLock(PriceLockCommand cmd, BigDecimal price) {
-        String key = lockKey(cmd.getTicketId(), cmd.getOrderId());
-        redisTemplate.opsForValue().set(key, price.toPlainString(), Duration.ofMinutes(LOCK_TTL_MINUTES));
-        publisher.publishPricingLocked(new PricingLockedEvent(
-                cmd.getTraceId(), cmd.getSagaId(),
-                cmd.getTicketId(), cmd.getOrderId(), price));
-    }
-
     /**
      * Closes the current price_history record and opens a new one.
      * Safe to call multiple times — uses a single transaction.
@@ -283,7 +269,4 @@ public class PricingService {
         return hoursToEvent < 24 ? 1.10 : 1.0;
     }
 
-    private String lockKey(String ticketId, String orderId) {
-        return PRICE_LOCK_KEY_PREFIX + ticketId + ":" + orderId;
-    }
 }

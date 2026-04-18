@@ -1,6 +1,8 @@
 package com.ticketing.pricing.kafka;
 
-import com.ticketing.common.events.*;
+import com.ticketing.common.events.DomainEvent;
+import com.ticketing.common.events.PriceLockCommand;
+import com.ticketing.common.events.Topics;
 import com.ticketing.pricing.service.PricingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,22 +40,4 @@ public class PricingCommandConsumer {
         }
     }
 
-    @KafkaListener(
-            topics = Topics.PRICING_UNLOCK_CMD,
-            groupId = "pricing-service",
-            containerFactory = "kafkaListenerContainerFactory"
-    )
-    public void onPriceUnlockCommand(ConsumerRecord<String, DomainEvent> record, Acknowledgment ack) {
-        try {
-            if (!(record.value() instanceof PriceUnlockCommand cmd)) {
-                log.warn("Unexpected type on {}: {}", Topics.PRICING_UNLOCK_CMD, record.value().getClass().getSimpleName());
-                ack.acknowledge();
-                return;
-            }
-            pricingService.unlockPrice(cmd);
-            ack.acknowledge();
-        } catch (Exception e) {
-            log.error("Error processing PriceUnlockCommand: {}", e.getMessage(), e);
-        }
-    }
 }
