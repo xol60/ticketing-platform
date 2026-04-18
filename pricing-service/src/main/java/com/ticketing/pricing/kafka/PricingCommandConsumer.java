@@ -1,8 +1,7 @@
 package com.ticketing.pricing.kafka;
 
-import com.ticketing.common.events.DomainEvent;
-import com.ticketing.common.events.PriceLockCommand;
-import com.ticketing.common.events.Topics;
+import com.ticketing.common.events.*;
+import com.ticketing.pricing.domain.repository.EventPriceRuleRepository;
 import com.ticketing.pricing.service.PricingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,7 +15,8 @@ import org.springframework.stereotype.Component;
 @Slf4j
 public class PricingCommandConsumer {
 
-    private final PricingService pricingService;
+    private final PricingService            pricingService;
+    private final EventPriceRuleRepository  ruleRepository;
 
     @KafkaListener(
             topics = Topics.PRICING_LOCK_CMD,
@@ -40,4 +40,39 @@ public class PricingCommandConsumer {
         }
     }
 
+    @KafkaListener(
+            topics = Topics.TICKET_RESERVED,
+            groupId = "pricing-service-ticket-reserved",
+            containerFactory = "kafkaListenerContainerFactory"
+    )
+    public void onTicketReserved(ConsumerRecord<String, DomainEvent> record, Acknowledgment ack) {
+        try {
+            if (record.value() instanceof TicketReservedEvent e && e.getEventId() != null) {
+                ruleRepository.incrementSoldTickets(e.getEventId());
+                log.debug("soldTickets++ for eventId={} ticketId={}", e.getEventId(), e.getTicketId());
+            }
+            ack.acknowledge();
+        } catch (Exception e) {
+            log.error("Error processing TicketReservedEvent for soldTickets: {}", e.getMessage(), e);
+            ack.acknowledge();
+        }
+    }
+
+    @KafkaListener(
+            topics = Topics.TICKET_RELEASED,
+            groupId = "pricing-service-ticket-released",
+            containerFactory = "kafkaListenerContainerFactory"
+    )
+    public void onTicketReleased(ConsumerRecord<String, DomainEvent> record, Acknowledgment ack) {
+        try {
+            if (record.value() instanceof TicketReleasedEvent e && e.getEventId() != null) {
+                ruleRepository.decrementSoldTickets(e.getEventId());
+                log.debug("soldTickets-- for eventId={} ticketId={}", e.getEventId(), e.getTicketId());
+            }
+            ack.acknowledge();
+        } catch (Exception e) {
+            log.error("Error processing TicketReleasedEvent for soldTickets: {}", e.getMessage(), e);
+            ack.acknowledge();
+        }
+    }
 }

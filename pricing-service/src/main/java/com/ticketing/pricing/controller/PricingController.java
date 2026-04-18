@@ -2,14 +2,13 @@ package com.ticketing.pricing.controller;
 
 import com.ticketing.pricing.dto.request.CreatePriceRuleRequest;
 import com.ticketing.pricing.dto.request.UpdatePriceRuleRequest;
+import com.ticketing.pricing.dto.response.EffectivePriceResponse;
 import com.ticketing.pricing.dto.response.PriceRuleResponse;
 import com.ticketing.pricing.service.PricingService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @RestController
 @RequestMapping("/api/pricing")
@@ -38,10 +37,14 @@ public class PricingController {
         return ResponseEntity.ok(pricingService.updateRule(eventId, request));
     }
 
-    // ── SSE stream ────────────────────────────────────────────────────────────
+    // ── Effective price ───────────────────────────────────────────────────────
 
-    @GetMapping(value = "/events/{eventId}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter streamPriceUpdates(@PathVariable String eventId) {
-        return pricingService.registerSseEmitter(eventId);
+    /**
+     * Returns the effective price for a specific ticket.
+     * facePrice is fetched from ticket-service (cached 10 min) and multiplied by the current surgeMultiplier.
+     */
+    @GetMapping("/tickets/{ticketId}/price")
+    public ResponseEntity<EffectivePriceResponse> getEffectivePrice(@PathVariable String ticketId) {
+        return ResponseEntity.ok(pricingService.getEffectivePrice(ticketId));
     }
 }

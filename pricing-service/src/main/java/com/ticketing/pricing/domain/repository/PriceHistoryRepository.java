@@ -23,29 +23,29 @@ public interface PriceHistoryRepository extends JpaRepository<PriceHistory, UUID
     int closeActive(@Param("eventId") String eventId, @Param("now") Instant now);
 
     /**
-     * Point-in-time lookup: price that was active at the given instant.
+     * Point-in-time lookup: surge multiplier that was active at the given instant.
      */
     @Query("""
-           SELECT ph.price FROM PriceHistory ph
+           SELECT ph.surgeMultiplier FROM PriceHistory ph
            WHERE ph.eventId    = :eventId
              AND ph.validFrom <= :at
              AND (ph.validTo IS NULL OR ph.validTo > :at)
            ORDER BY ph.validFrom DESC
            """)
-    BigDecimal findPriceAt(@Param("eventId") String eventId, @Param("at") Instant at);
+    BigDecimal findMultiplierAt(@Param("eventId") String eventId, @Param("at") Instant at);
 
     /**
-     * Check if a price value ever existed in history within the given window.
-     * Used to distinguish fabricated prices (never existed) from stale prices (existed but changed).
+     * Check if a multiplier value ever existed in history within the given window.
+     * Used to distinguish fabricated prices from stale prices.
      */
     @Query("""
            SELECT COUNT(ph) > 0 FROM PriceHistory ph
-           WHERE ph.eventId = :eventId
-             AND ph.price   = :price
-             AND ph.validFrom >= :since
+           WHERE ph.eventId        = :eventId
+             AND ph.surgeMultiplier = :multiplier
+             AND ph.validFrom      >= :since
            """)
     boolean existsInRecentHistory(
-            @Param("eventId") String eventId,
-            @Param("price")   BigDecimal price,
-            @Param("since")   Instant since);
+            @Param("eventId")    String eventId,
+            @Param("multiplier") BigDecimal multiplier,
+            @Param("since")      Instant since);
 }

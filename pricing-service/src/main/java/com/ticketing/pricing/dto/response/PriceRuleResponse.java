@@ -13,9 +13,8 @@ public class PriceRuleResponse {
     private String id;
     private String eventId;
     private String eventName;
-    private BigDecimal minPrice;
-    private BigDecimal maxPrice;
-    private BigDecimal currentPrice;
+    private BigDecimal surgeMultiplier;
+    private BigDecimal maxSurge;
     private double demandFactor;
     private int totalTickets;
     private int soldTickets;

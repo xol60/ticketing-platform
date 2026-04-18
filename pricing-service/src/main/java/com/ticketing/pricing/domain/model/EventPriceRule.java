@@ -29,22 +29,29 @@ public class EventPriceRule {
     @Column(name = "event_name")
     private String eventName;
 
-    @Column(name = "min_price", nullable = false, precision = 10, scale = 2)
-    private BigDecimal minPrice;
-
-    @Column(name = "max_price", nullable = false, precision = 10, scale = 2)
-    private BigDecimal maxPrice;
-
-    @Column(name = "current_price", nullable = false, precision = 10, scale = 2)
-    private BigDecimal currentPrice;
+    /**
+     * Current surge multiplier applied to each ticket's facePrice.
+     * 1.0 = no surge, 1.5 = 50% surge.
+     * Effective price = ticket.facePrice * surgeMultiplier.
+     */
+    @Column(name = "surge_multiplier", nullable = false, precision = 6, scale = 4)
+    @Builder.Default
+    private BigDecimal surgeMultiplier = BigDecimal.ONE;
 
     /**
-     * Demand multiplier used in dynamic pricing. Default 1.0 (neutral).
-     * Higher demand → higher factor → higher currentPrice.
+     * Maximum allowed surge multiplier (e.g. 2.0 = price can at most double).
+     */
+    @Column(name = "max_surge", nullable = false, precision = 6, scale = 4)
+    @Builder.Default
+    private BigDecimal maxSurge = new BigDecimal("1.5");
+
+    /**
+     * Demand factor: soldTickets / totalTickets (0.0 → 1.0).
+     * Updated by Kafka listeners when tickets are reserved/released.
      */
     @Column(name = "demand_factor", nullable = false)
     @Builder.Default
-    private double demandFactor = 1.0;
+    private double demandFactor = 0.0;
 
     @Column(name = "total_tickets", nullable = false)
     @Builder.Default

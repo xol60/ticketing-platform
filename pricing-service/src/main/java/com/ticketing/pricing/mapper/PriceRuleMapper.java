@@ -20,8 +20,9 @@ public interface PriceRuleMapper {
     @Mapping(target = "version", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "updatedAt", ignore = true)
-    @Mapping(target = "demandFactor", constant = "1.0")
+    @Mapping(target = "demandFactor", constant = "0.0")
     @Mapping(target = "soldTickets", constant = "0")
+    @Mapping(target = "surgeMultiplier", expression = "java(java.math.BigDecimal.ONE)")
     EventPriceRule toEntity(CreatePriceRuleRequest request);
 
     @Mapping(target = "id", expression = "java(rule.getId().toString())")
@@ -29,9 +30,11 @@ public interface PriceRuleMapper {
 
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "eventId", ignore = true)
+    @Mapping(target = "surgeMultiplier", ignore = true)
     @Mapping(target = "version", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "updatedAt", ignore = true)
     @Mapping(target = "demandFactor", ignore = true)
+    @Mapping(target = "soldTickets", ignore = true)
     void updateEntity(UpdatePriceRuleRequest request, @MappingTarget EventPriceRule rule);
 }

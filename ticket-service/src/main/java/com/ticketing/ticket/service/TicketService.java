@@ -156,7 +156,7 @@ public class TicketService {
             log.warn("Could not acquire lock for ticket={} saga={}", cmd.getTicketId(), cmd.getSagaId());
             eventPublisher.publishReleased(new TicketReleasedEvent(
                     cmd.getTraceId(), cmd.getSagaId(),
-                    cmd.getTicketId(), cmd.getOrderId(), ErrorCode.TICKET_LOCK_CONFLICT.name()));
+                    cmd.getTicketId(), cmd.getOrderId(), null, ErrorCode.TICKET_LOCK_CONFLICT.name()));
             return;
         }
 
@@ -166,9 +166,10 @@ public class TicketService {
 
             if (ticket == null || !ticket.isAvailable()) {
                 log.warn("Ticket unavailable id={} saga={}", cmd.getTicketId(), cmd.getSagaId());
+                String evtId = ticket != null ? ticket.getEventId() : null;
                 eventPublisher.publishReleased(new TicketReleasedEvent(
                         cmd.getTraceId(), cmd.getSagaId(),
-                        cmd.getTicketId(), cmd.getOrderId(), ErrorCode.TICKET_UNAVAILABLE.name()));
+                        cmd.getTicketId(), cmd.getOrderId(), evtId, ErrorCode.TICKET_UNAVAILABLE.name()));
                 return;
             }
 
@@ -178,7 +179,7 @@ public class TicketService {
                 log.warn("Event {} not open for sales, rejecting saga={}", ticket.getEventId(), cmd.getSagaId());
                 eventPublisher.publishReleased(new TicketReleasedEvent(
                         cmd.getTraceId(), cmd.getSagaId(),
-                        cmd.getTicketId(), cmd.getOrderId(), ErrorCode.EVENT_NOT_OPEN.name()));
+                        cmd.getTicketId(), cmd.getOrderId(), ticket.getEventId(), ErrorCode.EVENT_NOT_OPEN.name()));
                 return;
             }
 
@@ -189,7 +190,7 @@ public class TicketService {
             eventPublisher.publishReserved(new TicketReservedEvent(
                     cmd.getTraceId(), cmd.getSagaId(),
                     ticket.getId(), cmd.getOrderId(),
-                    cmd.getUserId(), ticket.getLockedPrice()));
+                    cmd.getUserId(), ticket.getEventId(), ticket.getLockedPrice()));
 
             log.info("Ticket reserved id={} order={}", ticket.getId(), cmd.getOrderId());
         } finally {
@@ -279,7 +280,7 @@ public class TicketService {
         evictL2(ticket.getId(), ticket.getEventId());
 
         eventPublisher.publishReleased(new TicketReleasedEvent(
-                traceId, sagaId, ticketId, orderId, reason));
+                traceId, sagaId, ticketId, orderId, ticket.getEventId(), reason));
 
         log.info("Ticket released id={} order={} reason={}", ticketId, orderId, reason);
     }

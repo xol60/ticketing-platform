@@ -73,6 +73,8 @@ public class SagaOrchestrator {
         if (!isExpectedStatus(state, SagaStatus.STARTED, sagaId)) return;
 
         log.info("Saga step: sagaId={} ticketReserved -> sending price lock", sagaId);
+        state.setLockedPrice(event.getLockedPrice());   // facePrice from ticket
+        state.setEventId(event.getEventId());           // resolved from ticket
         state.setStatus(SagaStatus.TICKET_RESERVED);
         state.setCurrentStep("LOCK_PRICE");
         state.setLastUpdatedAt(Instant.now());
@@ -82,7 +84,8 @@ public class SagaOrchestrator {
         publisher.sendPriceLockCommand(
                 event.getTraceId(), sagaId,
                 state.getTicketId(), state.getOrderId(), state.getEventId(),
-                state.getUserPrice(), state.getOrderCreatedAt(), false);
+                state.getUserPrice(), state.getLockedPrice(),
+                state.getOrderCreatedAt(), false);
     }
 
     // -------------------------------------------------------------------------
@@ -202,7 +205,8 @@ public class SagaOrchestrator {
         publisher.sendPriceLockCommand(
                 cmd.getTraceId(), sagaId,
                 state.getTicketId(), state.getOrderId(), state.getEventId(),
-                state.getPendingPrice(), state.getOrderCreatedAt(), true);
+                state.getPendingPrice(), state.getLockedPrice(),
+                state.getOrderCreatedAt(), true);
     }
 
     // -------------------------------------------------------------------------
@@ -320,15 +324,6 @@ public class SagaOrchestrator {
         }
 
         log.warn("Ticket released during active saga: sagaId={} reason={}", sagaId, event.getReason());
-
-        // If pricing was locked, send unlock command
-        if (state.getStatus() == SagaStatus.PRICING_LOCKED
-                || state.getStatus() == SagaStatus.PAYMENT_CHARGED) {
-            publisher.sendPriceUnlockCommand(
-                    event.getTraceId(), sagaId,
-                    state.getTicketId(), state.getOrderId(),
-                    "Ticket released during saga: " + event.getReason());
-        }
 
         state.setStatus(SagaStatus.FAILED);
         state.setCurrentStep("FAILED");

@@ -15,17 +15,13 @@ public class CreatePriceRuleRequest {
     @NotBlank
     private String eventName;
 
+    /**
+     * Maximum surge multiplier for this event (e.g. 1.5 = price can go up to 50% above facePrice).
+     * Must be >= 1.0.
+     */
     @NotNull
-    @DecimalMin("0.00")
-    private BigDecimal minPrice;
-
-    @NotNull
-    @DecimalMin("0.00")
-    private BigDecimal maxPrice;
-
-    @NotNull
-    @DecimalMin("0.00")
-    private BigDecimal currentPrice;
+    @DecimalMin("1.0")
+    private BigDecimal maxSurge;
 
     @Positive
     private int totalTickets;

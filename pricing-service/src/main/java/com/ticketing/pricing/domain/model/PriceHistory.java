@@ -27,8 +27,8 @@ public class PriceHistory {
     @Column(name = "event_id", nullable = false, length = 255)
     private String eventId;
 
-    @Column(name = "price", nullable = false, precision = 10, scale = 2)
-    private BigDecimal price;
+    @Column(name = "surge_multiplier", nullable = false, precision = 6, scale = 4)
+    private BigDecimal surgeMultiplier;
 
     @Column(name = "valid_from", nullable = false)
     private Instant validFrom;

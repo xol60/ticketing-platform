@@ -11,18 +11,10 @@ public class UpdatePriceRuleRequest {
 
     private String eventName;
 
-    @DecimalMin("0.00")
-    private BigDecimal minPrice;
-
-    @DecimalMin("0.00")
-    private BigDecimal maxPrice;
-
-    @DecimalMin("0.00")
-    private BigDecimal currentPrice;
+    @DecimalMin("1.0")
+    private BigDecimal maxSurge;
 
     private Integer totalTickets;
-
-    private Integer soldTickets;
 
     private Instant eventDate;
 }

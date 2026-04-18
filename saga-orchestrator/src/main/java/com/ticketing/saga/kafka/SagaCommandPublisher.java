@@ -34,9 +34,10 @@ public class SagaCommandPublisher {
      */
     public void sendPriceLockCommand(String traceId, String sagaId,
                                       String ticketId, String orderId, String eventId,
-                                      BigDecimal userPrice, Instant orderCreatedAt, boolean confirmed) {
+                                      BigDecimal userPrice, BigDecimal facePrice,
+                                      Instant orderCreatedAt, boolean confirmed) {
         PriceLockCommand cmd = new PriceLockCommand(
-                traceId, sagaId, ticketId, orderId, eventId, userPrice, orderCreatedAt, confirmed);
+                traceId, sagaId, ticketId, orderId, eventId, userPrice, facePrice, orderCreatedAt, confirmed);
         log.info("Publishing PriceLockCommand: sagaId={} ticketId={} orderId={} confirmed={}",
                 sagaId, ticketId, orderId, confirmed);
         kafkaTemplate.send(Topics.PRICING_LOCK_CMD, orderId, cmd);
@@ -63,14 +64,6 @@ public class SagaCommandPublisher {
         log.info("Publishing TicketReleaseCommand: sagaId={} ticketId={} orderId={} reason={}",
                 sagaId, ticketId, orderId, reason);
         kafkaTemplate.send(Topics.TICKET_RELEASE_CMD, orderId, cmd);
-    }
-
-    public void sendPriceUnlockCommand(String traceId, String sagaId,
-                                        String ticketId, String orderId, String reason) {
-        PriceUnlockCommand cmd = new PriceUnlockCommand(traceId, sagaId, ticketId, orderId, reason);
-        log.info("Publishing PriceUnlockCommand: sagaId={} ticketId={} orderId={} reason={}",
-                sagaId, ticketId, orderId, reason);
-        kafkaTemplate.send(Topics.PRICING_UNLOCK_CMD, orderId, cmd);
     }
 
     public void publishOrderConfirmed(String traceId, String sagaId,
