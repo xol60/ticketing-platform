@@ -1,6 +1,6 @@
 # Ticketing Platform
 
-DDD microservice ticketing system — Java 21 + Spring Boot 3.2 + Kafka + Redis + Postgres.
+Microservice ticketing system — Java 21 + Spring Boot 3.2 + Kafka + Redis + Postgres.
 
 ## Prerequisites
 
@@ -125,35 +125,35 @@ docker-compose up --build --no-deps ticket-service
 
 ## Kafka topics
 
-| Topic                      | Producer                                | Consumer                                    |
-| -------------------------- | --------------------------------------- | ------------------------------------------- |
-| `order.created`            | order-service, secondary-market-service | saga-orchestrator                           |
-| `order.confirmed`          | saga-orchestrator                       | order-service                               |
-| `order.failed`             | saga-orchestrator                       | order-service                               |
-| `order.cancelled`          | saga-orchestrator                       | order-service                               |
-| `order.price.changed`      | saga-orchestrator                       | order-service                               |
-| `order.price.confirm`      | order-service                           | saga-orchestrator                           |
-| `order.price.cancel`       | order-service                           | saga-orchestrator                           |
-| `ticket.reserve.cmd`       | saga-orchestrator                       | ticket-service                              |
-| `ticket.reserved`          | ticket-service                          | saga-orchestrator                           |
-| `ticket.release.cmd`       | saga-orchestrator                       | ticket-service                              |
-| `ticket.released`          | ticket-service                          | saga-orchestrator, reservation-service      |
-| `ticket.confirm.cmd`       | saga-orchestrator                       | ticket-service                              |
-| `ticket.confirmed`         | ticket-service                          | saga-orchestrator, notification-service     |
-| `pricing.lock.cmd`         | saga-orchestrator                       | pricing-service                             |
-| `pricing.locked`           | pricing-service                         | saga-orchestrator                           |
-| `pricing.unlock.cmd`       | saga-orchestrator                       | pricing-service                             |
-| `pricing.price.changed`    | pricing-service                         | saga-orchestrator                           |
-| `pricing.failed`           | pricing-service                         | saga-orchestrator                           |
-| `price.updated`            | pricing-service                         | (SSE push to clients)                       |
-| `payment.charge.cmd`       | saga-orchestrator                       | payment-service                             |
-| `payment.succeeded`        | payment-service                         | saga-orchestrator                           |
-| `payment.failed`           | payment-service                         | saga-orchestrator                           |
-| `payment.dlq`              | payment-service                         | notification-service                        |
-| `saga.compensate`          | saga-orchestrator                       | ticket-service                              |
-| `reservation.promoted`     | reservation-service                     | order-service                               |
-| `event.status.changed`     | ticket-service                          | (subscribers)                               |
-| `notification.send`        | any service                             | notification-service                        |
+| Topic                   | Producer                                | Consumer                                |
+| ----------------------- | --------------------------------------- | --------------------------------------- |
+| `order.created`         | order-service, secondary-market-service | saga-orchestrator                       |
+| `order.confirmed`       | saga-orchestrator                       | order-service                           |
+| `order.failed`          | saga-orchestrator                       | order-service                           |
+| `order.cancelled`       | saga-orchestrator                       | order-service                           |
+| `order.price.changed`   | saga-orchestrator                       | order-service                           |
+| `order.price.confirm`   | order-service                           | saga-orchestrator                       |
+| `order.price.cancel`    | order-service                           | saga-orchestrator                       |
+| `ticket.reserve.cmd`    | saga-orchestrator                       | ticket-service                          |
+| `ticket.reserved`       | ticket-service                          | saga-orchestrator                       |
+| `ticket.release.cmd`    | saga-orchestrator                       | ticket-service                          |
+| `ticket.released`       | ticket-service                          | saga-orchestrator, reservation-service  |
+| `ticket.confirm.cmd`    | saga-orchestrator                       | ticket-service                          |
+| `ticket.confirmed`      | ticket-service                          | saga-orchestrator, notification-service |
+| `pricing.lock.cmd`      | saga-orchestrator                       | pricing-service                         |
+| `pricing.locked`        | pricing-service                         | saga-orchestrator                       |
+| `pricing.unlock.cmd`    | saga-orchestrator                       | pricing-service                         |
+| `pricing.price.changed` | pricing-service                         | saga-orchestrator                       |
+| `pricing.failed`        | pricing-service                         | saga-orchestrator                       |
+| `price.updated`         | pricing-service                         | (SSE push to clients)                   |
+| `payment.charge.cmd`    | saga-orchestrator                       | payment-service                         |
+| `payment.succeeded`     | payment-service                         | saga-orchestrator                       |
+| `payment.failed`        | payment-service                         | saga-orchestrator                       |
+| `payment.dlq`           | payment-service                         | notification-service                    |
+| `saga.compensate`       | saga-orchestrator                       | ticket-service                          |
+| `reservation.promoted`  | reservation-service                     | order-service                           |
+| `event.status.changed`  | ticket-service                          | (subscribers)                           |
+| `notification.send`     | any service                             | notification-service                    |
 
 ## Architecture decisions
 

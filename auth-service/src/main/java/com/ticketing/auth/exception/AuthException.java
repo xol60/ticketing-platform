@@ -1,21 +1,38 @@
 package com.ticketing.auth.exception;
 
-import lombok.Getter;
-import org.springframework.http.HttpStatus;
+import com.ticketing.common.exception.ErrorCode;
+import com.ticketing.common.exception.TicketingException;
 
-@Getter
-public class AuthException extends RuntimeException {
+public class AuthException extends TicketingException {
 
-    private final String    errorCode;
-    private final HttpStatus httpStatus;
-
-    public AuthException(String errorCode, String message) {
-        this(errorCode, message, HttpStatus.BAD_REQUEST);
+    public AuthException(ErrorCode errorCode, String message) {
+        super(errorCode, message);
     }
 
-    public AuthException(String errorCode, String message, HttpStatus httpStatus) {
-        super(message);
-        this.errorCode  = errorCode;
-        this.httpStatus = httpStatus;
+    // ── Factory methods ───────────────────────────────────────────────────────
+
+    public static AuthException invalidCredentials() {
+        return new AuthException(ErrorCode.AUTH_INVALID_CREDENTIALS, "Invalid email/username or password");
+    }
+
+    public static AuthException accountLocked(long secondsRemaining) {
+        return new AuthException(ErrorCode.AUTH_ACCOUNT_LOCKED,
+                "Account is locked. Try again in " + secondsRemaining + " seconds");
+    }
+
+    public static AuthException tokenExpired() {
+        return new AuthException(ErrorCode.AUTH_TOKEN_EXPIRED, "Token has expired");
+    }
+
+    public static AuthException tokenInvalid(String reason) {
+        return new AuthException(ErrorCode.AUTH_TOKEN_INVALID, "Invalid token: " + reason);
+    }
+
+    public static AuthException emailTaken() {
+        return new AuthException(ErrorCode.AUTH_EMAIL_TAKEN, "Email already registered");
+    }
+
+    public static AuthException usernameTaken() {
+        return new AuthException(ErrorCode.AUTH_USERNAME_TAKEN, "Username already taken");
     }
 }

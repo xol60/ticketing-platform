@@ -3,6 +3,7 @@ package com.ticketing.ticket.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ticketing.common.events.*;
+import com.ticketing.common.exception.ErrorCode;
 import com.ticketing.ticket.domain.model.Ticket;
 import com.ticketing.ticket.domain.model.TicketStatus;
 import com.ticketing.ticket.domain.repository.EventRepository;
@@ -155,7 +156,7 @@ public class TicketService {
             log.warn("Could not acquire lock for ticket={} saga={}", cmd.getTicketId(), cmd.getSagaId());
             eventPublisher.publishReleased(new TicketReleasedEvent(
                     cmd.getTraceId(), cmd.getSagaId(),
-                    cmd.getTicketId(), cmd.getOrderId(), "LOCK_CONFLICT"));
+                    cmd.getTicketId(), cmd.getOrderId(), ErrorCode.TICKET_LOCK_CONFLICT.name()));
             return;
         }
 
@@ -167,7 +168,7 @@ public class TicketService {
                 log.warn("Ticket unavailable id={} saga={}", cmd.getTicketId(), cmd.getSagaId());
                 eventPublisher.publishReleased(new TicketReleasedEvent(
                         cmd.getTraceId(), cmd.getSagaId(),
-                        cmd.getTicketId(), cmd.getOrderId(), "TICKET_UNAVAILABLE"));
+                        cmd.getTicketId(), cmd.getOrderId(), ErrorCode.TICKET_UNAVAILABLE.name()));
                 return;
             }
 
@@ -177,7 +178,7 @@ public class TicketService {
                 log.warn("Event {} not open for sales, rejecting saga={}", ticket.getEventId(), cmd.getSagaId());
                 eventPublisher.publishReleased(new TicketReleasedEvent(
                         cmd.getTraceId(), cmd.getSagaId(),
-                        cmd.getTicketId(), cmd.getOrderId(), "EVENT_NOT_OPEN"));
+                        cmd.getTicketId(), cmd.getOrderId(), ErrorCode.EVENT_NOT_OPEN.name()));
                 return;
             }
 
@@ -230,7 +231,7 @@ public class TicketService {
     public void handleCompensation(SagaCompensateEvent event) {
         if (event.getTicketId() == null) return;
         releaseTicket(event.getTicketId(), event.getOrderId(),
-                      event.getTraceId(), event.getSagaId(), "SAGA_COMPENSATION");
+                      event.getTraceId(), event.getSagaId(), ErrorCode.SAGA_COMPENSATION.name());
     }
 
     // ── Internal read for other services ───────────────────────────────────

@@ -6,10 +6,10 @@ import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
-@SpringBootApplication(exclude = {
-        DataSourceAutoConfiguration.class,
-        HibernateJpaAutoConfiguration.class
-})
+@SpringBootApplication(
+    scanBasePackages = {"com.ticketing.saga", "com.ticketing.common"},
+    exclude = {DataSourceAutoConfiguration.class, HibernateJpaAutoConfiguration.class}
+)
 @EnableScheduling
 public class SagaOrchestratorApplication {
 

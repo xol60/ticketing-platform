@@ -5,7 +5,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
-@SpringBootApplication
+@SpringBootApplication(scanBasePackages = {"com.ticketing.auth", "com.ticketing.common"})
 @ConfigurationPropertiesScan
 @EnableScheduling
 public class AuthServiceApplication {

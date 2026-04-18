@@ -1,6 +1,7 @@
 package com.ticketing.saga.service;
 
 import com.ticketing.common.events.*;
+import com.ticketing.common.exception.ErrorCode;
 import com.ticketing.saga.kafka.SagaCommandPublisher;
 import com.ticketing.saga.model.SagaState;
 import com.ticketing.saga.model.SagaStatus;
@@ -159,7 +160,7 @@ public class SagaOrchestrator {
             // Fabricated price — release ticket and cancel the order
             publisher.sendTicketReleaseCommand(
                     event.getTraceId(), sagaId,
-                    state.getTicketId(), state.getOrderId(), "Invalid price submitted");
+                    state.getTicketId(), state.getOrderId(), ErrorCode.INVALID_PRICE.name());
             state.setStatus(SagaStatus.CANCELLED);
             state.setCurrentStep("CANCELLED");
             state.setFailureReason("Fabricated price rejected");
@@ -225,7 +226,7 @@ public class SagaOrchestrator {
 
         publisher.sendTicketReleaseCommand(
                 cmd.getTraceId(), sagaId,
-                state.getTicketId(), state.getOrderId(), "User cancelled price change");
+                state.getTicketId(), state.getOrderId(), ErrorCode.SAGA_COMPENSATION.name());
         publisher.publishOrderCancelled(
                 cmd.getTraceId(), sagaId,
                 state.getOrderId(), state.getUserId(),
@@ -406,7 +407,7 @@ public class SagaOrchestrator {
                         publisher.sendTicketReleaseCommand(
                                 state.getSagaId(), state.getSagaId(),
                                 state.getTicketId(), state.getOrderId(),
-                                "Price confirmation timed out");
+                                ErrorCode.PRICE_CONFIRMATION_TIMEOUT.name());
                         publisher.publishOrderCancelled(
                                 state.getSagaId(), state.getSagaId(),
                                 state.getOrderId(), state.getUserId(),
@@ -432,7 +433,7 @@ public class SagaOrchestrator {
                         state.setStatus(SagaStatus.COMPENSATING);
                         state.setLastUpdatedAt(Instant.now());
                         stateStore.save(state);
-                        compensateSaga(state.getSagaId(), "Saga stuck: no progress for >5 minutes");
+                        compensateSaga(state.getSagaId(), ErrorCode.SAGA_STUCK.name());
                         stuckCount++;
                     } catch (Exception e) {
                         log.error("Watchdog failed to compensate stuck saga sagaId={}: {}",

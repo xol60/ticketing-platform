@@ -1,6 +1,7 @@
 package com.ticketing.pricing.service;
 
 import com.ticketing.common.events.*;
+import com.ticketing.common.exception.ErrorCode;
 import com.ticketing.pricing.config.CacheConfig;
 import com.ticketing.pricing.domain.model.EventPriceRule;
 import com.ticketing.pricing.domain.model.PriceHistory;
@@ -100,7 +101,7 @@ public class PricingService {
             log.warn("No price rule for eventId={}, failing saga sagaId={}", cmd.getEventId(), cmd.getSagaId());
             publisher.publishPricingFailed(new PricingFailedEvent(
                     cmd.getTraceId(), cmd.getSagaId(),
-                    cmd.getOrderId(), cmd.getTicketId(), "NO_PRICE_RULE"));
+                    cmd.getOrderId(), cmd.getTicketId(), ErrorCode.NO_PRICE_RULE.name()));
             return;
         }
 
@@ -135,7 +136,7 @@ public class PricingService {
                     cmd.getUserPrice(), cmd.getEventId(), cmd.getSagaId());
             publisher.publishPricingFailed(new PricingFailedEvent(
                     cmd.getTraceId(), cmd.getSagaId(),
-                    cmd.getOrderId(), cmd.getTicketId(), "INVALID_PRICE"));
+                    cmd.getOrderId(), cmd.getTicketId(), ErrorCode.INVALID_PRICE.name()));
             return;
         }
 

@@ -39,10 +39,10 @@ public class AuthService {
     @Transactional
     public UserResponse register(RegisterRequest request) {
         if (userRepository.existsByEmail(request.getEmail())) {
-            throw new AuthException("EMAIL_TAKEN", "Email already registered");
+            throw AuthException.emailTaken();
         }
         if (userRepository.existsByUsername(request.getUsername())) {
-            throw new AuthException("USERNAME_TAKEN", "Username already taken");
+            throw AuthException.usernameTaken();
         }
 
         User user = User.builder()
@@ -68,21 +68,18 @@ public class AuthService {
         // Find by email or username
         User user = userRepository.findByEmail(request.getEmailOrUsername())
                 .or(() -> userRepository.findByUsername(request.getEmailOrUsername()))
-                .orElseThrow(() -> new AuthException("INVALID_CREDENTIALS",
-                        "Invalid email/username or password"));
+                .orElseThrow(AuthException::invalidCredentials);
 
         if (!user.isEnabled()) {
             throw new AuthException("ACCOUNT_DISABLED", "Account is disabled");
         }
         if (user.isAccountLocked()) {
-            throw new AuthException("ACCOUNT_LOCKED",
-                    "Account temporarily locked due to too many failed attempts");
+            throw AuthException.accountLocked(0);
         }
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
             user.recordFailedLogin();
             userRepository.save(user);
-            throw new AuthException("INVALID_CREDENTIALS",
-                    "Invalid email/username or password");
+            throw AuthException.invalidCredentials();
         }
 
         user.recordSuccessfulLogin();
@@ -98,8 +95,7 @@ public class AuthService {
         String tokenHash = jwtTokenService.hashRefreshToken(request.getRefreshToken());
 
         RefreshToken stored = refreshTokenRepository.findByTokenHash(tokenHash)
-                .orElseThrow(() -> new AuthException("INVALID_REFRESH_TOKEN",
-                        "Refresh token not found"));
+                .orElseThrow(() -> AuthException.tokenInvalid("Refresh token not found"));
 
         if (!stored.isValid()) {
             // Potential token reuse — revoke all tokens for this user (security measure)
@@ -107,7 +103,7 @@ public class AuthService {
                 log.warn("Refresh token reuse detected for userId={}", stored.getUser().getId());
                 refreshTokenRepository.revokeAllForUser(stored.getUser().getId(), Instant.now());
             }
-            throw new AuthException("INVALID_REFRESH_TOKEN", "Refresh token is invalid or expired");
+            throw AuthException.tokenInvalid("Refresh token is invalid or expired");
         }
 
         // Rotate: revoke old token, issue new pair
@@ -156,7 +152,7 @@ public class AuthService {
     public UserResponse getUser(String userId) {
         return userRepository.findActiveById(userId)
                 .map(this::toUserResponse)
-                .orElseThrow(() -> new AuthException("USER_NOT_FOUND", "User not found"));
+                .orElseThrow(() -> AuthException.tokenInvalid("User not found"));
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
