@@ -5,7 +5,8 @@ networks:
     driver: bridge
 
 volumes:
-  postgres-data:
+  postgres-master-data:
+  postgres-slave-data:
   redis-data:
   kafka-data:
 
@@ -23,7 +24,7 @@ services:
       POSTGRES_PASSWORD: ticketing_secret
       POSTGRES_DB: ticketing
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres-master-data:/var/lib/postgresql/data
       - ./docker/postgres/init-master.sql:/docker-entrypoint-initdb.d/01-init.sql
       - ./docker/postgres/postgresql-master.conf:/etc/postgresql/postgresql.conf
     command: postgres -c config_file=/etc/postgresql/postgresql.conf
@@ -36,6 +37,30 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # Streaming replica — serves all DB_SLAVE_URL reads.
+  # init-slave.sh checks for standby.signal (written by pg_basebackup -R)
+  # so it correctly skips re-initialisation on container restarts.
+  postgres-slave:
+    image: postgres:16-alpine
+    container_name: postgres-slave
+    environment:
+      POSTGRES_USER: ticketing
+      POSTGRES_PASSWORD: ticketing_secret
+      POSTGRES_DB: ticketing
+    volumes:
+      - postgres-slave-data:/var/lib/postgresql/data
+      - ./docker/postgres/init-slave.sh:/docker-entrypoint-initdb.d/01-init-slave.sh
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+    networks:
+      - ticketing-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ticketing"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   redis:
     image: redis:7.2-alpine
@@ -148,13 +173,15 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: docker
       DB_MASTER_URL: jdbc:postgresql://postgres-master:5432/auth_db
-      DB_SLAVE_URL: jdbc:postgresql://postgres-master:5432/auth_db
+      DB_SLAVE_URL: jdbc:postgresql://postgres-slave:5432/auth_db
       DB_USER: ticketing
       DB_PASSWORD: ticketing_secret
       REDIS_HOST: redis
       JWT_SECRET: ${JWT_SECRET:-changeme_use_a_real_secret_in_production_256bits}
     depends_on:
       postgres-master:
+        condition: service_healthy
+      postgres-slave:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -169,13 +196,15 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: docker
       DB_MASTER_URL: jdbc:postgresql://postgres-master:5432/ticket_db
-      DB_SLAVE_URL: jdbc:postgresql://postgres-master:5432/ticket_db
+      DB_SLAVE_URL: jdbc:postgresql://postgres-slave:5432/ticket_db
       DB_USER: ticketing
       DB_PASSWORD: ticketing_secret
       REDIS_HOST: redis
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     depends_on:
       postgres-master:
+        condition: service_healthy
+      postgres-slave:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
@@ -192,13 +221,16 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: docker
       DB_MASTER_URL: jdbc:postgresql://postgres-master:5432/order_db
-      DB_SLAVE_URL: jdbc:postgresql://postgres-master:5432/order_db
+      DB_SLAVE_URL: jdbc:postgresql://postgres-slave:5432/order_db
       DB_USER: ticketing
       DB_PASSWORD: ticketing_secret
       REDIS_HOST: redis
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      TICKET_SERVICE_URL: http://ticket-service:8082
     depends_on:
       postgres-master:
+        condition: service_healthy
+      postgres-slave:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
@@ -214,9 +246,14 @@ services:
     container_name: saga-orchestrator
     environment:
       SPRING_PROFILES_ACTIVE: docker
+      DB_URL: jdbc:postgresql://postgres-master:5432/saga_db
+      DB_USER: ticketing
+      DB_PASSWORD: ticketing_secret
       REDIS_HOST: redis
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     depends_on:
+      postgres-master:
+        condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
       redis:
@@ -232,13 +269,16 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: docker
       DB_MASTER_URL: jdbc:postgresql://postgres-master:5432/pricing_db
-      DB_SLAVE_URL: jdbc:postgresql://postgres-master:5432/pricing_db
+      DB_SLAVE_URL: jdbc:postgresql://postgres-slave:5432/pricing_db
       DB_USER: ticketing
       DB_PASSWORD: ticketing_secret
       REDIS_HOST: redis
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      TICKET_SERVICE_URL: http://ticket-service:8082
     depends_on:
       postgres-master:
+        condition: service_healthy
+      postgres-slave:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
@@ -255,13 +295,15 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: docker
       DB_MASTER_URL: jdbc:postgresql://postgres-master:5432/reservation_db
-      DB_SLAVE_URL: jdbc:postgresql://postgres-master:5432/reservation_db
+      DB_SLAVE_URL: jdbc:postgresql://postgres-slave:5432/reservation_db
       DB_USER: ticketing
       DB_PASSWORD: ticketing_secret
       REDIS_HOST: redis
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     depends_on:
       postgres-master:
+        condition: service_healthy
+      postgres-slave:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
@@ -278,13 +320,15 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: docker
       DB_MASTER_URL: jdbc:postgresql://postgres-master:5432/payment_db
-      DB_SLAVE_URL: jdbc:postgresql://postgres-master:5432/payment_db
+      DB_SLAVE_URL: jdbc:postgresql://postgres-slave:5432/payment_db
       DB_USER: ticketing
       DB_PASSWORD: ticketing_secret
       REDIS_HOST: redis
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     depends_on:
       postgres-master:
+        condition: service_healthy
+      postgres-slave:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
@@ -301,13 +345,16 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: docker
       DB_MASTER_URL: jdbc:postgresql://postgres-master:5432/secondary_market_db
-      DB_SLAVE_URL: jdbc:postgresql://postgres-master:5432/secondary_market_db
+      DB_SLAVE_URL: jdbc:postgresql://postgres-slave:5432/secondary_market_db
       DB_USER: ticketing
       DB_PASSWORD: ticketing_secret
       REDIS_HOST: redis
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      TICKET_SERVICE_URL: http://ticket-service:8082
     depends_on:
       postgres-master:
+        condition: service_healthy
+      postgres-slave:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
@@ -324,13 +371,15 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: docker
       DB_MASTER_URL: jdbc:postgresql://postgres-master:5432/notification_db
-      DB_SLAVE_URL: jdbc:postgresql://postgres-master:5432/notification_db
+      DB_SLAVE_URL: jdbc:postgresql://postgres-slave:5432/notification_db
       DB_USER: ticketing
       DB_PASSWORD: ticketing_secret
       REDIS_HOST: redis
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     depends_on:
       postgres-master:
+        condition: service_healthy
+      postgres-slave:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully

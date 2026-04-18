@@ -1,15 +1,22 @@
 #!/bin/bash
 set -e
 
-echo "Starting slave initialization..."
+echo "Replica initialisation check..."
 
-# If data directory already has data, skip
-if [ -f "$PGDATA/PG_VERSION" ]; then
-  echo "Slave data directory already initialized, skipping."
+# standby.signal is written by pg_basebackup -R. It is NOT written by initdb.
+# Checking for it (not PG_VERSION) correctly distinguishes:
+#   - first run after Docker initdb  → no standby.signal → run pg_basebackup
+#   - container restart after backup → standby.signal exists → skip
+if [ -f "$PGDATA/standby.signal" ]; then
+  echo "Replica already initialised, skipping pg_basebackup."
   exit 0
 fi
 
-echo "Running pg_basebackup from master..."
+echo "Running pg_basebackup from postgres-master..."
+
+# Clear any files that Docker's initdb wrote before this script ran
+rm -rf "$PGDATA"/*
+
 PGPASSWORD=replicator_secret pg_basebackup \
   -h postgres-master \
   -D "$PGDATA" \
@@ -18,4 +25,4 @@ PGPASSWORD=replicator_secret pg_basebackup \
   -Xs \
   -R
 
-echo "Slave base backup complete."
+echo "Replica base backup complete."

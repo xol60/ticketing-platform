@@ -39,13 +39,9 @@ create_topic "order.price.cancel"
 # Pricing topics
 create_topic "pricing.lock.cmd"
 create_topic "pricing.locked"
-create_topic "pricing.unlock.cmd"
 create_topic "pricing.price.changed"
 create_topic "pricing.failed"
 create_topic "price.updated"
-
-# Event lifecycle
-create_topic "event.status.changed"
 
 # Payment topics
 create_topic "payment.charge.cmd"
@@ -58,9 +54,6 @@ create_topic "saga.compensate"
 
 # Reservation
 create_topic "reservation.promoted"
-
-# Flash sale
-create_topic "sale.flash"
 
 # Notification
 create_topic "notification.send"
