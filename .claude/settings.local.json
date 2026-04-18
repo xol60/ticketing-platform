@@ -1,4 +1,8 @@
 {
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
   "permissions": {
     "allow": [
       "Bash(grep -n \"<n>\" /Users/xoldat/Downloads/ticketing-platform/*/pom.xml)",

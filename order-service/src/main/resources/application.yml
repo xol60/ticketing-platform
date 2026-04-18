@@ -41,6 +41,8 @@ server:
 clients:
   ticket-service:
     url: ${TICKET_SERVICE_URL:http://localhost:8082}
+    connect-timeout-ms: 500
+    read-timeout-ms: 1000
 
 # ── Database routing (master/slave) ──────────────────────────────────────────
 db:
@@ -93,6 +95,8 @@ db:
 clients:
   ticket-service:
     url: http://ticket-service:8082
+    connect-timeout-ms: 500
+    read-timeout-ms: 1000
 
 logging:
   level:

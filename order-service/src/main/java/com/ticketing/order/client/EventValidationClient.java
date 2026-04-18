@@ -1,7 +1,11 @@
 package com.ticketing.order.client;
 
+import com.ticketing.order.config.ClientProperties;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
+import org.apache.hc.client5.http.config.RequestConfig;
+import org.apache.hc.client5.http.impl.classic.HttpClientBuilder;
+import org.apache.hc.core5.util.Timeout;
+import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
@@ -11,7 +15,7 @@ import org.springframework.web.client.RestClient;
  *
  * Behaviour:
  *  - Returns false if ticket-service explicitly says the event is closed.
- *  - Returns true (fail-open) if ticket-service is unreachable or returns an error,
+ *  - Returns true (fail-open) if ticket-service is unreachable, times out, or errors —
  *    because the saga orchestrator will perform its own guard check once the
  *    reserve command reaches ticket-service.
  */
@@ -21,10 +25,21 @@ public class EventValidationClient {
 
     private final RestClient restClient;
 
-    public EventValidationClient(
-            @Value("${clients.ticket-service.url:http://ticket-service:8082}") String baseUrl) {
+    public EventValidationClient(ClientProperties properties) {
+        ClientProperties.TicketService config = properties.getTicketService();
+
+        RequestConfig requestConfig = RequestConfig.custom()
+                .setConnectionRequestTimeout(Timeout.ofMilliseconds(config.getConnectTimeoutMs()))
+                .setResponseTimeout(Timeout.ofMilliseconds(config.getReadTimeoutMs()))
+                .build();
+
+        var httpClient = HttpClientBuilder.create()
+                .setDefaultRequestConfig(requestConfig)
+                .build();
+
         this.restClient = RestClient.builder()
-                .baseUrl(baseUrl)
+                .baseUrl(config.getUrl())
+                .requestFactory(new HttpComponentsClientHttpRequestFactory(httpClient))
                 .build();
     }
 
