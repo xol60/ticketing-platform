@@ -32,6 +32,8 @@ server:
 clients:
   ticket-service:
     url: ${TICKET_SERVICE_URL:http://localhost:8082}
+    connect-timeout-ms: 500
+    read-timeout-ms: 2000
 
 db:
   master:
@@ -79,6 +81,8 @@ db:
 clients:
   ticket-service:
     url: http://ticket-service:8082
+    connect-timeout-ms: 500
+    read-timeout-ms: 2000
 
 logging:
   level:

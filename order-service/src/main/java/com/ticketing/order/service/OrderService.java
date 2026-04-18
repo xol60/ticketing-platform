@@ -11,6 +11,7 @@ import com.ticketing.order.dto.request.CreateOrderRequest;
 import com.ticketing.order.dto.response.OrderResponse;
 import com.ticketing.order.kafka.OrderEventPublisher;
 import com.ticketing.order.mapper.OrderMapper;
+import com.ticketing.order.sse.OrderSseRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.CacheEvict;
@@ -21,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.UUID;
 
@@ -38,6 +40,7 @@ public class OrderService {
     private final RedisTemplate<String, String> redisTemplate;
     private final ObjectMapper          objectMapper;
     private final EventValidationClient eventValidationClient;
+    private final OrderSseRegistry      sseRegistry;
 
     @Transactional
     public OrderResponse createOrder(String userId, String traceId, CreateOrderRequest request) {
@@ -105,6 +108,12 @@ public class OrderService {
         orderRepository.save(order);
         evictL2(event.getOrderId());
         log.info("Order confirmed orderId={}", event.getOrderId());
+
+        // Terminal event — push and close the stream
+        sseRegistry.complete(event.getOrderId(), "confirmed", Map.of(
+                "orderId",           event.getOrderId(),
+                "finalPrice",        event.getFinalPrice(),
+                "paymentReference",  event.getPaymentReference()));
     }
 
     @CacheEvict(value = "orders", key = "#event.orderId")
@@ -116,6 +125,11 @@ public class OrderService {
         orderRepository.save(order);
         evictL2(event.getOrderId());
         log.info("Order failed orderId={} reason={}", event.getOrderId(), event.getReason());
+
+        // Terminal event — push and close the stream
+        sseRegistry.complete(event.getOrderId(), "failed", Map.of(
+                "orderId", event.getOrderId(),
+                "reason",  event.getReason()));
     }
 
     @CacheEvict(value = "orders", key = "#event.orderId")
@@ -128,6 +142,13 @@ public class OrderService {
         evictL2(event.getOrderId());
         log.info("Order price changed orderId={} oldPrice={} newPrice={}",
                 event.getOrderId(), event.getOldPrice(), event.getNewPrice());
+
+        // Non-terminal — push but keep the stream open for confirm/cancel
+        sseRegistry.push(event.getOrderId(), "price-changed", Map.of(
+                "orderId",           event.getOrderId(),
+                "oldPrice",          event.getOldPrice(),
+                "newPrice",          event.getNewPrice(),
+                "confirmExpiresAt",  event.getConfirmExpiresAt()));
     }
 
     @CacheEvict(value = "orders", key = "#event.orderId")
@@ -139,6 +160,11 @@ public class OrderService {
         orderRepository.save(order);
         evictL2(event.getOrderId());
         log.info("Order cancelled orderId={} reason={}", event.getOrderId(), event.getReason());
+
+        // Terminal event — push and close the stream
+        sseRegistry.complete(event.getOrderId(), "cancelled", Map.of(
+                "orderId", event.getOrderId(),
+                "reason",  event.getReason()));
     }
 
     // ── User-initiated price confirm/cancel ───────────────────────────────────
@@ -174,6 +200,14 @@ public class OrderService {
         evictL2(orderId);
         eventPublisher.publishPriceCancel(traceId, order.getSagaId(), orderId, userId);
         log.info("User cancelled price for orderId={}", orderId);
+    }
+
+    // ── SSE ownership guard ───────────────────────────────────────────────────
+
+    /** Called by the SSE endpoint to confirm the requesting user owns this order. */
+    @Transactional(readOnly = true)
+    public void verifyOwner(String orderId, String userId) {
+        validateOwner(findOrThrow(orderId), userId);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

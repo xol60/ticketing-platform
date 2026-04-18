@@ -37,6 +37,14 @@ public class SagaOrchestrator {
 
     public void startSaga(OrderCreatedEvent event) {
         String sagaId = event.getSagaId() != null ? event.getSagaId() : UUID.randomUUID().toString();
+
+        // Idempotency guard — Kafka at-least-once can redeliver the same event.
+        // Overwriting an in-progress saga would reset it back to STARTED.
+        if (stateStore.load(sagaId) != null) {
+            log.warn("Duplicate OrderCreatedEvent for sagaId={}, ignoring", sagaId);
+            return;
+        }
+
         log.info("Starting saga: sagaId={} orderId={} userId={} ticketId={} userPrice={}",
                 sagaId, event.getOrderId(), event.getUserId(),
                 event.getTicketId(), event.getUserPrice());
@@ -378,17 +386,11 @@ public class SagaOrchestrator {
         Instant stuckThreshold       = Instant.now().minus(STUCK_THRESHOLD);
         Instant priceConfirmThreshold = Instant.now().minus(PRICE_CONFIRM_TIMEOUT);
 
-        List<SagaState> allSagas = stateStore.scanAllSagas();
+        List<SagaState> allSagas = stateStore.scanActiveSagas();
         int stuckCount = 0;
 
         for (SagaState state : allSagas) {
-            // Skip all terminal statuses
-            if (state.getStatus() == SagaStatus.COMPLETED
-                    || state.getStatus() == SagaStatus.FAILED
-                    || state.getStatus() == SagaStatus.CANCELLED) {
-                continue;
-            }
-
+            // scanActiveSagas() already excludes terminal statuses
             Instant lastUpdated = state.getLastUpdatedAt();
             if (lastUpdated == null) continue;
 

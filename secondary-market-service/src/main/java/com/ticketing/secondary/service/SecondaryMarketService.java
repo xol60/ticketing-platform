@@ -18,6 +18,8 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
@@ -28,7 +30,9 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class SecondaryMarketService {
 
-    private static final String L2_PREFIX = "listings:event:";
+    private static final String     L2_PREFIX           = "listings:event:";
+    /** Sellers may not list above 2× the ticket's face price. */
+    private static final BigDecimal MAX_PRICE_MULTIPLIER = new BigDecimal("2.0");
 
     private final ListingRepository             listingRepository;
     private final ListingMapper                 listingMapper;
@@ -39,6 +43,16 @@ public class SecondaryMarketService {
     @Transactional
     @CacheEvict(value = "listings", key = "#request.eventId")
     public ListingResponse createListing(CreateListingRequest request, String sellerId) {
+        // Enforce price cap: askPrice must not exceed 2× face price
+        BigDecimal facePrice   = eventValidationClient.getTicketFacePrice(request.getTicketId());
+        BigDecimal maxAllowed  = facePrice.multiply(MAX_PRICE_MULTIPLIER).setScale(2, RoundingMode.HALF_UP);
+        if (request.getAskPrice().compareTo(maxAllowed) > 0) {
+            throw new IllegalArgumentException(String.format(
+                    "Ask price $%s exceeds maximum allowed $%s (%.0f× face price $%s)",
+                    request.getAskPrice(), maxAllowed,
+                    MAX_PRICE_MULTIPLIER.doubleValue(), facePrice));
+        }
+
         Listing listing = Listing.builder()
                 .ticketId(request.getTicketId())
                 .sellerId(sellerId)
@@ -49,7 +63,8 @@ public class SecondaryMarketService {
                 .build();
         listing = listingRepository.save(listing);
         redisTemplate.delete(L2_PREFIX + request.getEventId());
-        log.info("Created listing id={} ticketId={} seller={}", listing.getId(), listing.getTicketId(), sellerId);
+        log.info("Created listing id={} ticketId={} seller={} askPrice={} facePrice={}",
+                listing.getId(), listing.getTicketId(), sellerId, request.getAskPrice(), facePrice);
         return listingMapper.toResponse(listing);
     }
 
