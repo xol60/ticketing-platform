@@ -16,6 +16,7 @@ import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
 import java.util.UUID;
@@ -43,38 +44,47 @@ public class PaymentService {
     private final PaymentMapper          mapper;
     private final RedisTemplate<String, String> redisTemplate;
     private final ObjectMapper           objectMapper;
+    private final TransactionTemplate    txTemplate;
 
     // -----------------------------------------------------------------------
     // Command handling
     // -----------------------------------------------------------------------
 
-    @Transactional
+    // No @Transactional here — each DB operation opens its own short transaction
     @CacheEvict(value = "payments", key = "#cmd.orderId")
     public void processPayment(PaymentChargeCommand cmd) {
         log.info("[PaymentService] Processing payment for orderId={} sagaId={}", cmd.getOrderId(), cmd.getSagaId());
 
-        Payment payment = Payment.builder()
-                .id(UUID.randomUUID())
-                .orderId(cmd.getOrderId())
-                .userId(cmd.getUserId())
-                .ticketId(cmd.getTicketId())
-                .amount(cmd.getAmount())
-                .status(PaymentStatus.PENDING)
-                .attemptCount(0)
-                .build();
-        paymentRepository.save(payment);
+        // TX 1: save PENDING — short, closes immediately
+        Payment payment = txTemplate.execute(status -> {
+            Payment p = Payment.builder()
+                    .id(UUID.randomUUID())
+                    .orderId(cmd.getOrderId())
+                    .userId(cmd.getUserId())
+                    .ticketId(cmd.getTicketId())
+                    .amount(cmd.getAmount())
+                    .status(PaymentStatus.PENDING)
+                    .attemptCount(0)
+                    .build();
+            return paymentRepository.save(p);
+        });
 
         String lastFailureReason = null;
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
+                // External call — no transaction held open during network I/O
                 ExternalPaymentGateway.PaymentResult result = gateway.charge(cmd.getOrderId(), attempt);
-                payment.setStatus(PaymentStatus.SUCCESS);
-                payment.setPaymentReference(result.reference());
-                payment.setAttemptCount(attempt);
-                paymentRepository.save(payment);
 
-                // Evict stale Redis L2 entry
-                redisTemplate.delete(REDIS_PREFIX + cmd.getOrderId());
+                // TX 2: save SUCCESS — short, closes immediately
+                final int finalAttempt = attempt;
+                txTemplate.execute(status -> {
+                    payment.setStatus(PaymentStatus.SUCCESS);
+                    payment.setPaymentReference(result.reference());
+                    payment.setAttemptCount(finalAttempt);
+                    paymentRepository.save(payment);
+                    redisTemplate.delete(REDIS_PREFIX + cmd.getOrderId());
+                    return null;
+                });
 
                 publisher.publishPaymentSucceeded(cmd, result.reference());
                 log.info("[PaymentService] Payment succeeded orderId={} ref={}", cmd.getOrderId(), result.reference());
@@ -84,25 +94,26 @@ public class PaymentService {
                 lastFailureReason = ex.getMessage();
                 log.warn("[PaymentService] Attempt {}/{} failed for orderId={}: {}",
                         attempt, MAX_ATTEMPTS, cmd.getOrderId(), lastFailureReason);
-
                 if (attempt < MAX_ATTEMPTS) {
                     sleep(BACKOFF_MS[attempt - 1]);
                 }
             }
         }
 
-        // All retries exhausted
-        payment.setStatus(PaymentStatus.FAILED);
-        payment.setFailureReason(lastFailureReason);
-        payment.setAttemptCount(MAX_ATTEMPTS);
-        paymentRepository.save(payment);
+        // TX 3: save FAILED — short, closes immediately
+        final String reason = lastFailureReason;
+        txTemplate.execute(status -> {
+            payment.setStatus(PaymentStatus.FAILED);
+            payment.setFailureReason(reason);
+            payment.setAttemptCount(MAX_ATTEMPTS);
+            paymentRepository.save(payment);
+            redisTemplate.delete(REDIS_PREFIX + cmd.getOrderId());
+            return null;
+        });
 
-        redisTemplate.delete(REDIS_PREFIX + cmd.getOrderId());
-
-        publisher.publishPaymentFailed(cmd, lastFailureReason, MAX_ATTEMPTS);
-        publisher.publishPaymentDlq(cmd, lastFailureReason, MAX_ATTEMPTS);
-        publisher.publishAdminNotification(cmd, lastFailureReason);
-
+        publisher.publishPaymentFailed(cmd, reason, MAX_ATTEMPTS);
+        publisher.publishPaymentDlq(cmd, reason, MAX_ATTEMPTS);
+        publisher.publishAdminNotification(cmd, reason);
         log.error("[PaymentService] Payment failed after {} attempts for orderId={}", MAX_ATTEMPTS, cmd.getOrderId());
     }
 
