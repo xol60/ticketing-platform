@@ -58,3 +58,7 @@ log/
 # ── Docker volumes (if ever mounted locally) ─────────────────────────────────
 docker/postgres/data/
 docker/redis/data/
+
+# ── Frontend ──────────────────────────────────────────────────────────────────
+node_modules/
+dist/

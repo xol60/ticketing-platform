@@ -126,6 +126,19 @@ services:
   # NGINX
   # ─────────────────────────────────────────────
 
+  ticketing-ui:
+    build:
+      context: ./ticketing-ui
+      dockerfile: Dockerfile
+    container_name: ticketing-ui
+    networks:
+      - ticketing-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
   nginx:
     image: nginx:1.25-alpine
     container_name: nginx
@@ -135,6 +148,7 @@ services:
       - "80:80"
     depends_on:
       - api-gateway
+      - ticketing-ui
     networks:
       - ticketing-net
 

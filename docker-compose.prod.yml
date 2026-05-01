@@ -54,6 +54,14 @@ services:
           memory: 128m
           cpus: "0.25"
 
+  ticketing-ui:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+          cpus: "0.25"
+
   # ── Application services ─────────────────────────────────────────────────────
 
   api-gateway:

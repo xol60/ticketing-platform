@@ -27,6 +27,16 @@ services:
     ports:
       - "29092:29092"
 
+  # ── Frontend ────────────────────────────────────────────────────────────────
+  # Production build served by Nginx — accessible at http://localhost:3000 (direct)
+  # or http://localhost (via main Nginx proxy).
+  # For hot-reload during UI development, run outside Docker:
+  #   cd ticketing-ui && npm run dev   → http://localhost:3000
+
+  ticketing-ui:
+    ports:
+      - "3000:80"   # direct UI access, bypasses main nginx
+
   # ── Application services — expose ports + debug flags ───────────────────────
 
   api-gateway:
