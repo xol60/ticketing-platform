@@ -26,6 +26,11 @@ export const ticketsApi = {
   listAll: () =>
     api.get<ApiResponse<Ticket[]>>('/api/tickets').then((r: AxiosResponse<ApiResponse<Ticket[]>>) => r.data.data),
 
+  /** Fetch all tickets for a single event — uses the required ?eventId param. */
+  listByEvent: (eventId: string) =>
+    api.get<ApiResponse<Ticket[]>>('/api/tickets', { params: { eventId } })
+      .then((r: AxiosResponse<ApiResponse<Ticket[]>>) => r.data.data),
+
   getTicket: (id: string) =>
     api.get<ApiResponse<Ticket>>(`/api/tickets/${id}`).then((r: AxiosResponse<ApiResponse<Ticket>>) => r.data.data),
 
@@ -37,4 +42,22 @@ export const ticketsApi = {
 
   deleteTicket: (id: string) =>
     api.delete(`/api/tickets/${id}`),
+
+  /**
+   * Bulk-create tickets from a seat-range definition.
+   * The backend expands rowStart..rowEnd × seatStart..seatEnd and skips
+   * any seats that already exist. Returns only the newly created tickets.
+   */
+  createTicketsBatch: (body: {
+    eventId: string;
+    eventName: string;
+    section?: string;
+    rowStart?: string;
+    rowEnd?: string;
+    seatStart: number;
+    seatEnd: number;
+    facePrice: number;
+  }) =>
+    api.post<ApiResponse<Ticket[]>>('/api/tickets/batch', body)
+      .then((r: AxiosResponse<ApiResponse<Ticket[]>>) => r.data.data),
 };

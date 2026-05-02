@@ -43,6 +43,12 @@ public class SecondaryMarketService {
     @Transactional
     @CacheEvict(value = "listings", key = "#request.eventId")
     public ListingResponse createListing(CreateListingRequest request, String sellerId) {
+        // Guard: only one active listing per ticket at a time
+        if (listingRepository.existsByTicketIdAndStatus(request.getTicketId(), ListingStatus.ACTIVE)) {
+            throw new IllegalArgumentException(
+                    "Ticket " + request.getTicketId() + " already has an active listing");
+        }
+
         // Enforce price cap: askPrice must not exceed 2× face price
         BigDecimal facePrice   = eventValidationClient.getTicketFacePrice(request.getTicketId());
         BigDecimal maxAllowed  = facePrice.multiply(MAX_PRICE_MULTIPLIER).setScale(2, RoundingMode.HALF_UP);

@@ -17,6 +17,9 @@ public interface ListingRepository extends JpaRepository<Listing, String> {
 
     List<Listing> findBySellerIdAndStatus(String sellerId, ListingStatus status);
 
+    /** Fast duplicate check before inserting — backstopped by the partial unique index. */
+    boolean existsByTicketIdAndStatus(String ticketId, ListingStatus status);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT l FROM Listing l WHERE l.id = :id")
     Optional<Listing> findByIdForUpdate(@Param("id") String id);

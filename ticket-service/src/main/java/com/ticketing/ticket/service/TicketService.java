@@ -8,6 +8,7 @@ import com.ticketing.ticket.domain.model.Ticket;
 import com.ticketing.ticket.domain.model.TicketStatus;
 import com.ticketing.ticket.domain.repository.EventRepository;
 import com.ticketing.ticket.domain.repository.TicketRepository;
+import com.ticketing.ticket.dto.request.CreateTicketBatchRequest;
 import com.ticketing.ticket.dto.request.CreateTicketRequest;
 import com.ticketing.ticket.dto.request.UpdateTicketRequest;
 import com.ticketing.ticket.dto.response.EventStatusResponse;
@@ -24,7 +25,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -66,6 +70,121 @@ public class TicketService {
         // L2 evict event list
         redisTemplate.delete(L2_EVT_PREFIX + request.getEventId());
         return response;
+    }
+
+    /**
+     * Bulk-create tickets from a seat-range definition.
+     * Expands (rowStart..rowEnd) × (seatStart..seatEnd) and skips any seat
+     * that already exists for the given event + section combination.
+     * Uses a single {@code saveAll()} call for efficiency.
+     */
+    @Transactional
+    @CacheEvict(value = "tickets-event", key = "#request.eventId")
+    public List<TicketResponse> createTicketsBatch(CreateTicketBatchRequest request) {
+
+        // ── 1. Generate row list ─────────────────────────────────────────────
+        List<String> rows = generateRowRange(request.getRowStart(), request.getRowEnd());
+
+        // ── 2. Generate seat list ────────────────────────────────────────────
+        List<String> seats = new ArrayList<>();
+        for (int s = request.getSeatStart(); s <= request.getSeatEnd(); s++) {
+            seats.add(String.valueOf(s));
+        }
+
+        // ── 3. Build a set of existing (row:seat) keys for this event/section.
+        //       Uses a projection query — only fetches row + seat columns,
+        //       not full Ticket entities, which is much lighter for large events.
+        String section = nullIfBlank(request.getSection());
+        List<TicketRepository.SeatKey> seatKeys = (section == null)
+                ? ticketRepository.findSeatKeysByEventIdAndSectionNull(request.getEventId())
+                : ticketRepository.findSeatKeysByEventIdAndSection(request.getEventId(), section);
+        Set<String> existing = seatKeys.stream()
+                .map(sk -> dupKey(sk.getRow(), sk.getSeat()))
+                .collect(Collectors.toSet());
+
+        // ── 4. Build new Ticket entities, skipping duplicates ────────────────
+        List<Ticket> toSave = new ArrayList<>();
+        for (String row : rows) {
+            String normalizedRow = nullIfBlank(row);
+            for (String seat : seats) {
+                if (!existing.contains(dupKey(normalizedRow, seat))) {
+                    Ticket t = Ticket.builder()
+                            .eventId(request.getEventId())
+                            .eventName(request.getEventName())
+                            .section(section)
+                            .row(normalizedRow)
+                            .seat(seat)
+                            .facePrice(request.getFacePrice())
+                            .status(TicketStatus.AVAILABLE)
+                            .build();
+                    toSave.add(t);
+                }
+            }
+        }
+
+        if (toSave.isEmpty()) {
+            log.info("Batch insert: all {} potential seats already exist for event={}",
+                     rows.size() * seats.size(), request.getEventId());
+            return List.of();
+        }
+
+        // ── 5. Persist in one shot + evict L2 event cache ────────────────────
+        List<Ticket> saved = ticketRepository.saveAll(toSave);
+        redisTemplate.delete(L2_EVT_PREFIX + request.getEventId());
+
+        log.info("Batch insert: created {} tickets for event={} section={}",
+                 saved.size(), request.getEventId(), request.getSection());
+
+        return saved.stream().map(ticketMapper::toResponse).collect(Collectors.toList());
+    }
+
+    // ── Range-generation helpers ─────────────────────────────────────────────
+
+    /**
+     * Expands a row range:
+     * <ul>
+     *   <li>"A"–"D"  → ["A","B","C","D"]  (single-letter alphabetical)</li>
+     *   <li>"1"–"5"  → ["1","2","3","4","5"] (numeric)</li>
+     *   <li>null/blank for both → [""] (no row dimension)</li>
+     * </ul>
+     */
+    private List<String> generateRowRange(String rowStart, String rowEnd) {
+        boolean hasRange = rowStart != null && !rowStart.isBlank()
+                        && rowEnd   != null && !rowEnd.isBlank();
+        if (!hasRange) {
+            return List.of("");   // single iteration, row will be stored as null
+        }
+
+        // Detect alphabetical vs numeric range
+        boolean alphabetic = rowStart.length() == 1 && Character.isLetter(rowStart.charAt(0))
+                          && rowEnd.length()   == 1 && Character.isLetter(rowEnd.charAt(0));
+        List<String> result = new ArrayList<>();
+        if (alphabetic) {
+            char from = Character.toUpperCase(rowStart.charAt(0));
+            char to   = Character.toUpperCase(rowEnd.charAt(0));
+            if (from > to) { char tmp = from; from = to; to = tmp; }   // normalise order
+            for (char c = from; c <= to; c++) {
+                result.add(String.valueOf(c));
+            }
+        } else {
+            // Numeric strings
+            int from = Integer.parseInt(rowStart.strip());
+            int to   = Integer.parseInt(rowEnd.strip());
+            if (from > to) { int tmp = from; from = to; to = tmp; }
+            for (int i = from; i <= to; i++) {
+                result.add(String.valueOf(i));
+            }
+        }
+        return result;
+    }
+
+    /** Composite key used for duplicate detection. */
+    private static String dupKey(String row, String seat) {
+        return (row == null ? "" : row) + ":" + seat;
+    }
+
+    private static String nullIfBlank(String s) {
+        return (s == null || s.isBlank()) ? null : s;
     }
 
     /**

@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
 import { secondaryApi } from '../../api/secondary';
 import { ticketsApi } from '../../api/tickets';
 import { useAuth } from '../../context/AuthContext';
@@ -59,10 +59,27 @@ export function SecondaryMarketPage() {
     queryFn: secondaryApi.listAll,
   });
 
-  const { data: tickets = [], isLoading: ticketsLoading } = useQuery({
-    queryKey: ['tickets'],
-    queryFn: ticketsApi.listAll,
+  // Derive unique eventIds from loaded listings, then fetch tickets per event.
+  // Shares the ['tickets', eventId] cache with EventDetailPage.
+  const uniqueEventIds = useMemo(
+    () => [...new Set(listings.map((l) => l.eventId))],
+    [listings]
+  );
+
+  const ticketQueries = useQueries({
+    queries: uniqueEventIds.map((eventId) => ({
+      queryKey: ['tickets', eventId],
+      queryFn:  () => ticketsApi.listByEvent(eventId),
+    })),
   });
+
+  const tickets: Ticket[] = useMemo(
+    () => ticketQueries.flatMap((q) => q.data ?? []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [JSON.stringify(ticketQueries.map((q) => q.dataUpdatedAt))]
+  );
+
+  const ticketsLoading = ticketQueries.some((q) => q.isLoading);
 
   const purchaseMutation = useMutation({
     mutationFn: (id: string) => secondaryApi.purchase(id),

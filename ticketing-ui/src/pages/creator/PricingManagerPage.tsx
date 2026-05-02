@@ -13,7 +13,11 @@ export function PricingManagerPage() {
   const queryClient = useQueryClient();
 
   const { data: events = [] } = useQuery({ queryKey: ['events'], queryFn: ticketsApi.listEvents });
-  const { data: allTickets = [] } = useQuery({ queryKey: ['tickets'], queryFn: ticketsApi.listAll });
+  const { data: tickets = [] } = useQuery({
+    queryKey: ['tickets', eventId],
+    queryFn:  () => ticketsApi.listByEvent(eventId!),
+    enabled:  !!eventId,
+  });
   const { data: rule, isLoading, isError } = useQuery({
     queryKey: ['pricing-rule', eventId],
     queryFn: () => pricingApi.getRule(eventId!),
@@ -24,8 +28,7 @@ export function PricingManagerPage() {
   const [form, setForm] = useState({ surgeMultiplier: '1.0', maxSurge: '1.5' });
   const [saved, setSaved] = useState(false);
 
-  const event   = events.find((e) => e.id === eventId);
-  const tickets = allTickets.filter((t) => t.eventId === eventId);
+  const event = events.find((e) => e.id === eventId);
 
   const createMut = useMutation({
     mutationFn: () => pricingApi.createRule({

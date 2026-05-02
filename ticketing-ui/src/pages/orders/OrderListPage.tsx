@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueries } from '@tanstack/react-query';
 import { ordersApi } from '../../api/orders';
 import { ticketsApi } from '../../api/tickets';
 import { OrderStatusBadge } from '../../components/ui/Badge';
@@ -46,12 +46,21 @@ export function OrderListPage() {
     queryFn: ordersApi.listMyOrders,
   });
 
-  const { data: tickets = [], isLoading: ticketsLoading } = useQuery({
-    queryKey: ['tickets'],
-    queryFn: ticketsApi.listAll,
+  // Fetch each order's ticket individually — no "get all" endpoint needed.
+  // Results are cached at ['ticket', id] and reused by other pages.
+  const ticketQueries = useQueries({
+    queries: orders.map((order) => ({
+      queryKey: ['ticket', order.ticketId],
+      queryFn:  () => ticketsApi.getTicket(order.ticketId),
+      enabled:  !!order.ticketId,
+    })),
   });
 
-  const isLoading = ordersLoading || ticketsLoading;
+  const tickets: Ticket[] = ticketQueries
+    .map((q) => q.data)
+    .filter((t): t is Ticket => t != null);
+
+  const isLoading = ordersLoading || ticketQueries.some((q) => q.isLoading);
 
   const active   = orders.filter((o) => o.status === 'PENDING' || o.status === 'PRICE_CHANGED');
   const past     = orders.filter((o) => !['PENDING', 'PRICE_CHANGED'].includes(o.status));

@@ -3,6 +3,7 @@ package com.ticketing.common.exception;
 import com.ticketing.common.dto.ApiResponse;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -57,6 +58,21 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(ErrorCode.RESOURCE_NOT_FOUND.getHttpStatus())
                 .body(ApiResponse.error(ErrorCode.RESOURCE_NOT_FOUND.name(), ex.getMessage()));
+    }
+
+    // ── DB unique-constraint violation → 409 Conflict ────────────────────────
+    // Fired when a concurrent request races past the application-level check
+    // and hits the unique index at the DB level (e.g. duplicate seat, duplicate
+    // active listing). Mapped to DUPLICATE_RESOURCE so clients get a clean 409
+    // instead of a generic 500.
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ApiResponse<Void>> handleDataIntegrity(DataIntegrityViolationException ex) {
+        log.warn("Data integrity violation (likely duplicate): {}", ex.getMostSpecificCause().getMessage());
+        return ResponseEntity
+                .status(ErrorCode.DUPLICATE_RESOURCE.getHttpStatus())
+                .body(ApiResponse.error(ErrorCode.DUPLICATE_RESOURCE.name(),
+                        "A resource with the same unique key already exists"));
     }
 
     // ── Generic bad request ───────────────────────────────────────────────────

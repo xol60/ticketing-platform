@@ -12,10 +12,15 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: false
         default_schema: public
+        # ── Batch insert / update support ──────────────────────────────────
+        # order_inserts / order_updates must be at this level (hibernate.*),
+        # NOT nested under jdbc — otherwise Hibernate silently ignores them.
+        order_inserts: true
+        order_updates: true
         jdbc:
-          batch_size: 20
-          order_inserts: true
-          order_updates: true
+          batch_size: 50
+          # Required for batching when entities carry @Version (optimistic lock)
+          batch_versioned_data: true
 
   # ── Flyway ───────────────────────────────────────────────────────────────────
   flyway:

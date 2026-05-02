@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ticketsApi } from '../../api/tickets';
 import { Card, CardHeader, CardBody } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -93,17 +93,25 @@ export function CreatorDashboard() {
     queryFn: ticketsApi.listEvents,
   });
 
-  const { data: allTickets = [] } = useQuery({
-    queryKey: ['tickets'],
-    queryFn: ticketsApi.listAll,
+  // Fetch tickets per event in parallel — one query per event, all cached
+  // at ['tickets', eventId] so TicketManagerPage shares the same cache entry.
+  const ticketQueries = useQueries({
+    queries: events.map((event) => ({
+      queryKey: ['tickets', event.id],
+      queryFn:  () => ticketsApi.listByEvent(event.id),
+    })),
   });
 
+  const ticketsByEvent = Object.fromEntries(
+    events.map((event, i) => [event.id, ticketQueries[i]?.data ?? []])
+  );
+
   const stats = (eventId: string) => {
-    const t = allTickets.filter((t) => t.eventId === eventId);
+    const t = ticketsByEvent[eventId] ?? [];
     return {
-      total: t.length,
+      total:     t.length,
       available: t.filter((t) => t.status === 'AVAILABLE').length,
-      sold: t.filter((t) => t.status === 'CONFIRMED').length,
+      sold:      t.filter((t) => t.status === 'CONFIRMED').length,
     };
   };
 

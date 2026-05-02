@@ -25,4 +25,27 @@ public interface TicketRepository extends JpaRepository<Ticket, String> {
             String eventId, String section, String row, String seat);
 
     long countByEventIdAndStatus(String eventId, TicketStatus status);
+
+    // ── Batch-insert duplicate detection — projection (row + seat only) ───────
+
+    /**
+     * Lightweight projection used by the batch-insert duplicate check.
+     * Fetches only the two fields needed — avoids hydrating full Ticket entities.
+     */
+    interface SeatKey {
+        String getRow();
+        String getSeat();
+    }
+
+    /** Existing seats in the event where section IS NULL. */
+    @Query("SELECT t.row AS row, t.seat AS seat FROM Ticket t " +
+           "WHERE t.eventId = :eventId AND t.section IS NULL")
+    List<SeatKey> findSeatKeysByEventIdAndSectionNull(@Param("eventId") String eventId);
+
+    /** Existing seats in the event for a specific section. */
+    @Query("SELECT t.row AS row, t.seat AS seat FROM Ticket t " +
+           "WHERE t.eventId = :eventId AND t.section = :section")
+    List<SeatKey> findSeatKeysByEventIdAndSection(
+            @Param("eventId") String eventId,
+            @Param("section") String section);
 }

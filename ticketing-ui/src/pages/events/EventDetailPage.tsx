@@ -65,13 +65,13 @@ export function EventDetailPage() {
     queryFn: ticketsApi.listEvents,
   });
 
-  const { data: allTickets = [], isLoading: ticketsLoading } = useQuery({
-    queryKey: ['tickets'],
-    queryFn: ticketsApi.listAll,
+  const { data: tickets = [], isLoading: ticketsLoading } = useQuery({
+    queryKey: ['tickets', eventId],
+    queryFn:  () => ticketsApi.listByEvent(eventId!),
+    enabled:  !!eventId,
   });
 
   const event = events.find((e) => e.id === eventId);
-  const tickets = allTickets.filter((t) => t.eventId === eventId);
   const available = tickets.filter((t) => t.status === 'AVAILABLE');
 
   const isLoading = eventsLoading || ticketsLoading;
