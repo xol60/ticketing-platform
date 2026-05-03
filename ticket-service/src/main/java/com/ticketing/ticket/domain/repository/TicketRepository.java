@@ -26,6 +26,14 @@ public interface TicketRepository extends JpaRepository<Ticket, String> {
 
     long countByEventIdAndStatus(String eventId, TicketStatus status);
 
+    /**
+     * Used by the stuck-reservation watchdog.
+     * Returns every RESERVED ticket whose {@code reservedAt} timestamp is
+     * older than {@code threshold}, meaning the saga that locked it has
+     * almost certainly crashed or timed out.
+     */
+    List<Ticket> findByStatusAndReservedAtBefore(TicketStatus status, java.time.Instant threshold);
+
     // ── Batch-insert duplicate detection — projection (row + seat only) ───────
 
     /**

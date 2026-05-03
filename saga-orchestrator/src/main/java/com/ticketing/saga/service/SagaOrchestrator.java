@@ -21,7 +21,7 @@ public class SagaOrchestrator {
     private static final Logger   log             = LoggerFactory.getLogger(SagaOrchestrator.class);
     private static final Duration STUCK_THRESHOLD = Duration.ofMinutes(5);
     /** How long a user has to confirm a price change before the watchdog cancels the saga. */
-    private static final Duration PRICE_CONFIRM_TIMEOUT = Duration.ofMinutes(6);
+    private static final Duration PRICE_CONFIRM_TIMEOUT = Duration.ofSeconds(30);
 
     private final SagaStateStore       stateStore;
     private final SagaCommandPublisher publisher;

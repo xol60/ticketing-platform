@@ -234,7 +234,7 @@ export function OrderTrackerPage() {
           </div>
           <div className="flex items-center justify-center gap-2 bg-orange-50 rounded-xl px-4 py-2.5">
             <span className="text-orange-600 text-xs">Time remaining to respond:</span>
-            <Countdown seconds={360} />
+            <Countdown seconds={30} />
           </div>
           <p className="text-xs text-gray-400 text-center">
             If you don't respond, the order will be automatically cancelled.

@@ -263,6 +263,50 @@ public class TicketService {
         ticketRepository.delete(ticket);
     }
 
+    // ── Stuck-reservation watchdog ───────────────────────────────────────────
+
+    /**
+     * Called by {@link com.ticketing.ticket.watchdog.TicketReleaseWatchdog} every minute.
+     *
+     * <p>Finds every ticket that has been RESERVED for longer than {@code stuckBefore}
+     * and releases it back to AVAILABLE. This is a safety net for sagas that crashed
+     * at any step without completing the compensation path — even if every other
+     * guard (saga watchdog, compensation event) failed, tickets are freed here.
+     *
+     * <p>Each release is committed in its own transaction (called per-ticket) so that
+     * one bad ticket cannot block the rest of the batch.
+     */
+    @Transactional
+    public int releaseStuckReservations(java.time.Instant stuckBefore) {
+        List<Ticket> stuck = ticketRepository.findByStatusAndReservedAtBefore(
+                TicketStatus.RESERVED, stuckBefore);
+
+        if (stuck.isEmpty()) return 0;
+
+        log.warn("Watchdog: found {} ticket(s) stuck in RESERVED since before {}",
+                stuck.size(), stuckBefore);
+
+        for (Ticket ticket : stuck) {
+            String orderId = ticket.getLockedByOrderId();
+            log.warn("Watchdog releasing: ticketId={} orderId={} reservedAt={}",
+                    ticket.getId(), orderId, ticket.getReservedAt());
+
+            ticket.release();
+            ticketRepository.save(ticket);
+            evictL2(ticket.getId(), ticket.getEventId());
+
+            // Publish TicketReleasedEvent so saga-orchestrator and
+            // reservation-service can react (promote waitlist, fail saga).
+            eventPublisher.publishReleased(new com.ticketing.common.events.TicketReleasedEvent(
+                    null, null,
+                    ticket.getId(), orderId,
+                    ticket.getEventId(), "WATCHDOG_STUCK_RESERVATION"));
+        }
+
+        log.warn("Watchdog released {} stuck reservation(s)", stuck.size());
+        return stuck.size();
+    }
+
     // ── Saga command handlers ────────────────────────────────────────────────
 
     @Transactional
