@@ -28,11 +28,14 @@ public interface TicketRepository extends JpaRepository<Ticket, String> {
 
     /**
      * Used by the stuck-reservation watchdog.
-     * Returns every RESERVED ticket whose {@code reservedAt} timestamp is
-     * older than {@code threshold}, meaning the saga that locked it has
-     * almost certainly crashed or timed out.
+     * Returns every RESERVED ticket whose explicit {@code reservedUntil} deadline
+     * has already passed — meaning the saga that locked it has exceeded its maximum
+     * allowed runtime and can safely be considered crashed or timed out.
+     *
+     * <p>Deadline-based (not age-based) so the watchdog never fires while a payment
+     * is still legitimately in flight: the saga controls the deadline when it reserves.
      */
-    List<Ticket> findByStatusAndReservedAtBefore(TicketStatus status, java.time.Instant threshold);
+    List<Ticket> findByStatusAndReservedUntilBefore(TicketStatus status, java.time.Instant now);
 
     // ── Batch-insert duplicate detection — projection (row + seat only) ───────
 

@@ -1,6 +1,7 @@
 package com.ticketing.payment.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ticketing.common.events.PaymentCancelCommand;
 import com.ticketing.common.events.PaymentChargeCommand;
 import com.ticketing.common.events.NotificationSendCommand;
 import com.ticketing.payment.domain.model.Payment;
@@ -24,19 +25,35 @@ import java.util.UUID;
 /**
  * Core payment processing service.
  *
- * Retry strategy: up to 3 attempts with exponential backoff (1s / 2s / 4s).
+ * <h3>Retry strategy</h3>
+ * Up to 3 attempts with exponential backoff (1 s / 2 s / 4 s).
  * On exhaustion: publishes payment.failed + payment.dlq + notification.send (ADMIN_ALERT).
+ *
+ * <h3>Cancellation / refund handling</h3>
+ * A {@link PaymentCancelCommand} can arrive at any point:
+ * <ul>
+ *   <li><b>While gateway call is in flight (status = PENDING)</b>: the record is
+ *       marked {@code CANCELLATION_REQUESTED}. After {@code gateway.charge()} returns
+ *       success, {@link #processPayment} re-reads the row inside a transaction and,
+ *       if it sees {@code CANCELLATION_REQUESTED}, immediately calls
+ *       {@code gateway.refund()} instead of publishing {@code PaymentSucceededEvent}.
+ *       This prevents the saga from advancing on a charge the orchestrator already
+ *       decided to unwind.</li>
+ *   <li><b>After gateway already returned success (status = SUCCESS)</b>:
+ *       {@link #cancelPayment} calls {@code gateway.refund()} immediately and
+ *       publishes {@code PaymentRefundedEvent}.</li>
+ * </ul>
+ * Both paths are idempotent: a second cancel on a {@code REFUNDED} record is a no-op.
  */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class PaymentService {
 
-    private static final int    MAX_ATTEMPTS   = 3;
-    private static final long[] BACKOFF_MS     = {1_000, 2_000, 4_000};
-    private static final String REDIS_PREFIX   = "payment:";
-    private static final Duration REDIS_TTL    = Duration.ofMinutes(5);
-    private static final String ADMIN_RECIPIENT = "admin@ticketing.com";
+    private static final int    MAX_ATTEMPTS    = 3;
+    private static final long[] BACKOFF_MS      = {1_000, 2_000, 4_000};
+    private static final String REDIS_PREFIX    = "payment:";
+    private static final Duration REDIS_TTL     = Duration.ofMinutes(5);
 
     private final PaymentRepository      paymentRepository;
     private final ExternalPaymentGateway gateway;
@@ -46,48 +63,85 @@ public class PaymentService {
     private final ObjectMapper           objectMapper;
     private final TransactionTemplate    txTemplate;
 
-    // -----------------------------------------------------------------------
-    // Command handling
-    // -----------------------------------------------------------------------
+    // ── Command: charge ──────────────────────────────────────────────────────
 
-    // No @Transactional here — each DB operation opens its own short transaction
+    // No @Transactional — each DB operation opens its own short transaction so
+    // no connection is held open during the blocking external gateway call.
     @CacheEvict(value = "payments", key = "#cmd.orderId")
     public void processPayment(PaymentChargeCommand cmd) {
         log.info("[PaymentService] Processing payment for orderId={} sagaId={}", cmd.getOrderId(), cmd.getSagaId());
 
         // TX 1: save PENDING — short, closes immediately
         Payment payment = txTemplate.execute(status -> {
-            Payment p = Payment.builder()
-                    .id(UUID.randomUUID())
-                    .orderId(cmd.getOrderId())
-                    .userId(cmd.getUserId())
-                    .ticketId(cmd.getTicketId())
-                    .amount(cmd.getAmount())
-                    .status(PaymentStatus.PENDING)
-                    .attemptCount(0)
-                    .build();
-            return paymentRepository.save(p);
+            // Idempotency: if a record already exists (Kafka at-least-once re-delivery),
+            // skip re-creation and work with the existing one.
+            return paymentRepository.findByOrderId(cmd.getOrderId()).orElseGet(() -> {
+                Payment p = Payment.builder()
+                        .id(UUID.randomUUID())
+                        .orderId(cmd.getOrderId())
+                        .userId(cmd.getUserId())
+                        .ticketId(cmd.getTicketId())
+                        .amount(cmd.getAmount())
+                        .status(PaymentStatus.PENDING)
+                        .attemptCount(0)
+                        .build();
+                return paymentRepository.save(p);
+            });
         });
 
+        // If a cancel arrived before we even started, skip the gateway entirely.
+        if (payment.getStatus() == PaymentStatus.CANCELLATION_REQUESTED
+                || payment.getStatus() == PaymentStatus.REFUNDED) {
+            log.warn("[PaymentService] Payment already cancelled before charge attempt for orderId={}", cmd.getOrderId());
+            publisher.publishPaymentRefunded(cmd, null, "CANCELLED_BEFORE_CHARGE");
+            return;
+        }
+
         String lastFailureReason = null;
+
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
                 // External call — no transaction held open during network I/O
                 ExternalPaymentGateway.PaymentResult result = gateway.charge(cmd.getOrderId(), attempt);
-
-                // TX 2: save SUCCESS — short, closes immediately
+                final String ref = result.reference();
                 final int finalAttempt = attempt;
-                txTemplate.execute(status -> {
-                    payment.setStatus(PaymentStatus.SUCCESS);
-                    payment.setPaymentReference(result.reference());
-                    payment.setAttemptCount(finalAttempt);
-                    paymentRepository.save(payment);
-                    redisTemplate.delete(REDIS_PREFIX + cmd.getOrderId());
-                    return null;
-                });
 
-                publisher.publishPaymentSucceeded(cmd, result.reference());
-                log.info("[PaymentService] Payment succeeded orderId={} ref={}", cmd.getOrderId(), result.reference());
+                // TX 2: atomically check for concurrent cancellation and write result.
+                // Re-read within the transaction so we see any CANCELLATION_REQUESTED flag
+                // that a concurrent cancelPayment() may have written while we were waiting
+                // for the gateway to respond.
+                boolean refundImmediately = Boolean.TRUE.equals(txTemplate.execute(txStatus -> {
+                    Payment fresh = paymentRepository.findById(payment.getId()).orElseThrow();
+                    redisTemplate.delete(REDIS_PREFIX + cmd.getOrderId());
+
+                    if (fresh.getStatus() == PaymentStatus.CANCELLATION_REQUESTED) {
+                        // Cancellation arrived while gateway was in flight — mark REFUNDED.
+                        // The actual gateway.refund() call happens outside this TX (below).
+                        fresh.setStatus(PaymentStatus.REFUNDED);
+                        fresh.setPaymentReference(ref);
+                        fresh.setAttemptCount(finalAttempt);
+                        paymentRepository.save(fresh);
+                        return true;
+                    }
+
+                    // Normal success path
+                    fresh.setStatus(PaymentStatus.SUCCESS);
+                    fresh.setPaymentReference(ref);
+                    fresh.setAttemptCount(finalAttempt);
+                    paymentRepository.save(fresh);
+                    return false;
+                }));
+
+                if (refundImmediately) {
+                    // Money moved but cancellation was requested — refund immediately.
+                    log.warn("[PaymentService] Cancellation was requested mid-flight for orderId={} ref={} — refunding",
+                            cmd.getOrderId(), ref);
+                    gateway.refund(cmd.getOrderId(), ref);
+                    publisher.publishPaymentRefunded(cmd, ref, "CANCELLATION_REQUESTED_MID_FLIGHT");
+                } else {
+                    publisher.publishPaymentSucceeded(cmd, ref);
+                    log.info("[PaymentService] Payment succeeded orderId={} ref={}", cmd.getOrderId(), ref);
+                }
                 return;
 
             } catch (ExternalPaymentGateway.PaymentGatewayException ex) {
@@ -117,14 +171,76 @@ public class PaymentService {
         log.error("[PaymentService] Payment failed after {} attempts for orderId={}", MAX_ATTEMPTS, cmd.getOrderId());
     }
 
-    // -----------------------------------------------------------------------
-    // Read path (L1 Caffeine → L2 Redis → DB)
-    // -----------------------------------------------------------------------
+    // ── Command: cancel / refund ─────────────────────────────────────────────
+
+    /**
+     * Handles a {@link PaymentCancelCommand} from the saga orchestrator.
+     *
+     * <p>Idempotent: a second cancel on an already-REFUNDED or FAILED record is a no-op.
+     *
+     * @param cmd the cancel command carrying the orderId and optional paymentReference
+     */
+    @CacheEvict(value = "payments", key = "#cmd.orderId")
+    public void cancelPayment(PaymentCancelCommand cmd) {
+        log.warn("[PaymentService] Cancel requested for orderId={} sagaId={} ref={}",
+                cmd.getOrderId(), cmd.getSagaId(), cmd.getPaymentReference());
+
+        // Capture fields for the post-transaction refund call (avoids holding a DB connection during network I/O).
+        final String[]           refToRefund = {null};
+        final java.math.BigDecimal[] amount  = {null};
+        final String[]           userId      = {null};
+
+        txTemplate.execute(txStatus -> {
+            Payment payment = paymentRepository.findByOrderId(cmd.getOrderId()).orElse(null);
+            if (payment == null) {
+                log.warn("[PaymentService] Cancel: no payment record for orderId={}", cmd.getOrderId());
+                return null;
+            }
+
+            switch (payment.getStatus()) {
+                case PENDING -> {
+                    // Gateway call still in flight — mark so processPayment refunds on success.
+                    log.info("[PaymentService] Cancel: marking CANCELLATION_REQUESTED for orderId={}", cmd.getOrderId());
+                    payment.setStatus(PaymentStatus.CANCELLATION_REQUESTED);
+                    paymentRepository.save(payment);
+                    redisTemplate.delete(REDIS_PREFIX + cmd.getOrderId());
+                }
+                case SUCCESS -> {
+                    // Already charged — refund immediately.
+                    log.warn("[PaymentService] Cancel: payment already succeeded for orderId={} — refunding ref={}",
+                            cmd.getOrderId(), payment.getPaymentReference());
+                    refToRefund[0] = payment.getPaymentReference();
+                    amount[0]      = payment.getAmount();
+                    userId[0]      = payment.getUserId();
+                    payment.setStatus(PaymentStatus.REFUNDED);
+                    paymentRepository.save(payment);
+                    redisTemplate.delete(REDIS_PREFIX + cmd.getOrderId());
+                }
+                case CANCELLATION_REQUESTED, REFUNDED ->
+                    log.info("[PaymentService] Cancel: already in progress/done for orderId={} status={}",
+                            cmd.getOrderId(), payment.getStatus());
+                case FAILED ->
+                    log.info("[PaymentService] Cancel: no-op for orderId={} (payment failed, nothing to refund)",
+                            cmd.getOrderId());
+            }
+            return null;
+        });
+
+        // Call gateway.refund() *outside* the transaction — network I/O should not hold a DB connection.
+        if (refToRefund[0] != null) {
+            gateway.refund(cmd.getOrderId(), refToRefund[0]);
+            publisher.publishPaymentRefundedDirect(
+                    cmd.getTraceId(), cmd.getSagaId(),
+                    cmd.getOrderId(), userId[0],
+                    amount[0], refToRefund[0], "SAGA_CANCEL");
+        }
+    }
+
+    // ── Read path (L1 Caffeine → L2 Redis → DB) ──────────────────────────────
 
     @Transactional(readOnly = true)
     @Cacheable(value = "payments", key = "#orderId")
     public PaymentResponse getPaymentByOrderId(String orderId) {
-        // Try L2 Redis first
         String cached = redisTemplate.opsForValue().get(REDIS_PREFIX + orderId);
         if (cached != null) {
             try {
@@ -139,7 +255,6 @@ public class PaymentService {
 
         PaymentResponse response = mapper.toResponse(payment);
 
-        // Populate L2 Redis
         try {
             redisTemplate.opsForValue().set(REDIS_PREFIX + orderId,
                     objectMapper.writeValueAsString(response), REDIS_TTL);
@@ -150,9 +265,7 @@ public class PaymentService {
         return response;
     }
 
-    // -----------------------------------------------------------------------
-    // Helpers
-    // -----------------------------------------------------------------------
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private void sleep(long ms) {
         try {

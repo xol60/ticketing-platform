@@ -42,6 +42,21 @@ public class TicketService {
     private static final Duration LOCK_TTL    = Duration.ofSeconds(30);
     private static final Duration L2_TTL      = Duration.ofSeconds(30);
 
+    /**
+     * How long a saga may legitimately hold a ticket in RESERVED status.
+     * Must cover the worst-case saga path:
+     *   30 s  price-confirm window
+     * +  7 s  payment retries (3×)
+     * +  5 s  Kafka hops and processing
+     * = ~42 s actual max
+     *
+     * We set 120 s (3× margin) to absorb slow payment gateways, GC pauses,
+     * and any other delays while still releasing truly stuck tickets quickly.
+     * The watchdog releases a ticket only AFTER ticket.reservedUntil passes,
+     * so this constant is the single source of truth for the safety window.
+     */
+    private static final Duration RESERVATION_TIMEOUT = Duration.ofSeconds(120);
+
     private final TicketRepository      ticketRepository;
     private final TicketMapper          ticketMapper;
     private final TicketEventPublisher  eventPublisher;
@@ -266,39 +281,48 @@ public class TicketService {
     // ── Stuck-reservation watchdog ───────────────────────────────────────────
 
     /**
-     * Called by {@link com.ticketing.ticket.watchdog.TicketReleaseWatchdog} every minute.
+     * Called by {@link com.ticketing.ticket.watchdog.TicketReleaseWatchdog} every 60 s.
      *
-     * <p>Finds every ticket that has been RESERVED for longer than {@code stuckBefore}
-     * and releases it back to AVAILABLE. This is a safety net for sagas that crashed
-     * at any step without completing the compensation path — even if every other
-     * guard (saga watchdog, compensation event) failed, tickets are freed here.
+     * <p>Releases every RESERVED ticket whose explicit {@code reservedUntil} deadline
+     * has already passed. Because the deadline is set to
+     * {@code now + RESERVATION_TIMEOUT (120 s)} at reservation time, this watchdog
+     * can never fire while a saga is still legitimately running — only truly orphaned
+     * tickets (saga crashed at every level, including the saga-orchestrator's own
+     * watchdog) are released here.
      *
-     * <p>Each release is committed in its own transaction (called per-ticket) so that
-     * one bad ticket cannot block the rest of the batch.
+     * <p>Contrast with the previous age-based approach ({@code reservedAt < now - threshold}):
+     * that could release a ticket while payment was still in flight if the payment
+     * gateway was slow (>60 s), causing an unnecessary refund of a successful charge.
      */
     @Transactional
-    public int releaseStuckReservations(java.time.Instant stuckBefore) {
-        List<Ticket> stuck = ticketRepository.findByStatusAndReservedAtBefore(
-                TicketStatus.RESERVED, stuckBefore);
+    public int releaseStuckReservations(java.time.Instant now) {
+        List<Ticket> stuck = ticketRepository.findByStatusAndReservedUntilBefore(
+                TicketStatus.RESERVED, now);
 
         if (stuck.isEmpty()) return 0;
 
-        log.warn("Watchdog: found {} ticket(s) stuck in RESERVED since before {}",
-                stuck.size(), stuckBefore);
+        log.warn("Watchdog: found {} ticket(s) past their reservedUntil deadline (now={})",
+                stuck.size(), now);
 
         for (Ticket ticket : stuck) {
             String orderId = ticket.getLockedByOrderId();
-            log.warn("Watchdog releasing: ticketId={} orderId={} reservedAt={}",
-                    ticket.getId(), orderId, ticket.getReservedAt());
+            log.warn("Watchdog releasing: ticketId={} orderId={} reservedUntil={}",
+                    ticket.getId(), orderId, ticket.getReservedUntil());
 
             ticket.release();
             ticketRepository.save(ticket);
             evictL2(ticket.getId(), ticket.getEventId());
 
-            // Publish TicketReleasedEvent so saga-orchestrator and
-            // reservation-service can react (promote waitlist, fail saga).
+            // Publish TicketReleasedEvent so the saga-orchestrator can react:
+            // mark order as FAILED and trigger any compensation (e.g. refund if
+            // payment somehow already completed before the saga timed out).
+            //
+            // IMPORTANT: pass orderId as sagaId — in this system sagaId == orderId.
+            // Without this, onTicketReleased() in the saga orchestrator does
+            // loadOrWarn(null) → returns null immediately and the payment cancel
+            // command is never sent, leaving the customer charged with no ticket.
             eventPublisher.publishReleased(new com.ticketing.common.events.TicketReleasedEvent(
-                    null, null,
+                    null, orderId,          // sagaId = orderId (they are equivalent)
                     ticket.getId(), orderId,
                     ticket.getEventId(), "WATCHDOG_STUCK_RESERVATION"));
         }
@@ -346,7 +370,8 @@ public class TicketService {
                 return;
             }
 
-            ticket.reserve(cmd.getOrderId(), cmd.getUserId(), ticket.getFacePrice());
+            java.time.Instant deadline = java.time.Instant.now().plus(RESERVATION_TIMEOUT);
+            ticket.reserve(cmd.getOrderId(), cmd.getUserId(), ticket.getFacePrice(), deadline);
             ticketRepository.save(ticket);
             evictL2(ticket.getId(), ticket.getEventId());
 
@@ -355,7 +380,7 @@ public class TicketService {
                     ticket.getId(), cmd.getOrderId(),
                     cmd.getUserId(), ticket.getEventId(), ticket.getLockedPrice()));
 
-            log.info("Ticket reserved id={} order={}", ticket.getId(), cmd.getOrderId());
+            log.info("Ticket reserved id={} order={} reservedUntil={}", ticket.getId(), cmd.getOrderId(), deadline);
         } finally {
             redisTemplate.delete(lockKey);
         }
@@ -366,10 +391,38 @@ public class TicketService {
         Ticket ticket = ticketRepository.findByIdForUpdate(cmd.getTicketId())
                 .orElse(null);
 
-        if (ticket == null || ticket.getStatus() != TicketStatus.RESERVED
+        // ── Idempotency: already confirmed by THIS order ───────────────────
+        // Kafka at-least-once may re-deliver the command after we already processed it.
+        // Re-publish the success event so the saga can move forward cleanly.
+        if (ticket != null
+                && ticket.getStatus() == TicketStatus.CONFIRMED
+                && cmd.getOrderId().equals(ticket.getLockedByOrderId())) {
+            log.info("Ticket already confirmed (idempotent retry) id={} order={}", cmd.getTicketId(), cmd.getOrderId());
+            eventPublisher.publishConfirmed(new TicketConfirmedEvent(
+                    cmd.getTraceId(), cmd.getSagaId(),
+                    ticket.getId(), cmd.getOrderId(),
+                    ticket.getLockedByUserId()));
+            return;
+        }
+
+        // ── Cannot confirm: ticket gone, wrong status, or owned by another order ─
+        // This happens when the watchdog already released the ticket (reservedUntil
+        // passed) while payment was in flight, or a compensation path fired first.
+        // We MUST publish a failure event here — silently returning would leave the
+        // saga waiting forever for a TicketConfirmedEvent that will never arrive,
+        // and the payment that already succeeded would never get refunded.
+        if (ticket == null
+                || ticket.getStatus() != TicketStatus.RESERVED
                 || !cmd.getOrderId().equals(ticket.getLockedByOrderId())) {
-            log.warn("Cannot confirm ticket id={} status={}", cmd.getTicketId(),
-                     ticket == null ? "NOT_FOUND" : ticket.getStatus());
+            log.warn("Cannot confirm ticket id={} status={} orderId={} — publishing failure so saga compensates",
+                     cmd.getTicketId(),
+                     ticket == null ? "NOT_FOUND" : ticket.getStatus(),
+                     cmd.getOrderId());
+            eventPublisher.publishReleased(new TicketReleasedEvent(
+                    cmd.getTraceId(), cmd.getSagaId(),
+                    cmd.getTicketId(), cmd.getOrderId(),
+                    ticket != null ? ticket.getEventId() : null,
+                    "CONFIRM_FAILED_WRONG_STATE"));
             return;
         }
 

@@ -94,7 +94,7 @@ class SagaFlowIntegrationTest {
         consumer.subscribe(List.of(
                 Topics.TICKET_RESERVE_CMD,
                 Topics.PRICING_LOCK_CMD,
-                Topics.PAYMENT_CHARGE_CMD,
+                Topics.PAYMENT_CMD,
                 Topics.TICKET_CONFIRM_CMD,
                 Topics.TICKET_RELEASE_CMD,
                 Topics.PRICING_UNLOCK_CMD,
@@ -146,7 +146,7 @@ class SagaFlowIntegrationTest {
                 new PricingLockedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, new BigDecimal("99.00")));
 
         // Orchestrator should send PaymentChargeCommand
-        DomainEvent chargeCmd = pollForEvent(Topics.PAYMENT_CHARGE_CMD, sagaId);
+        DomainEvent chargeCmd = pollForEvent(Topics.PAYMENT_CMD, sagaId);
         assertThat(chargeCmd).isInstanceOf(PaymentChargeCommand.class);
         assertThat(((PaymentChargeCommand) chargeCmd).getAmount()).isEqualByComparingTo("99.00");
         assertSagaStatus(sagaId, SagaStatus.PRICING_LOCKED);
@@ -260,7 +260,7 @@ class SagaFlowIntegrationTest {
                 new PricingLockedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, new BigDecimal("120.00")));
 
         // Payment charged
-        DomainEvent chargeCmd = pollForEvent(Topics.PAYMENT_CHARGE_CMD, sagaId);
+        DomainEvent chargeCmd = pollForEvent(Topics.PAYMENT_CMD, sagaId);
         assertThat(((PaymentChargeCommand) chargeCmd).getAmount()).isEqualByComparingTo("120.00");
         assertSagaStatus(sagaId, SagaStatus.PRICING_LOCKED);
 
@@ -346,7 +346,7 @@ class SagaFlowIntegrationTest {
         publish(Topics.PRICING_LOCKED, TICKET_ID,
                 new PricingLockedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, new BigDecimal("99.00")));
 
-        pollForEvent(Topics.PAYMENT_CHARGE_CMD, sagaId);
+        pollForEvent(Topics.PAYMENT_CMD, sagaId);
 
         // Payment fails
         publish(Topics.PAYMENT_FAILED, ORDER_ID,

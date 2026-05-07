@@ -63,6 +63,17 @@ public class Ticket {
     @Column(name = "reserved_at")
     private Instant reservedAt;
 
+    /**
+     * Explicit deadline set at reservation time.
+     * The stuck-reservation watchdog releases this ticket only after this instant
+     * has passed — never while the saga still has budget to complete its payment.
+     * The service layer sets this to {@code now + RESERVATION_TIMEOUT (120 s)} so
+     * that the worst-case saga (30 s price-confirm + 30 s payment + Kafka overhead)
+     * always finishes well within the window.
+     */
+    @Column(name = "reserved_until")
+    private Instant reservedUntil;
+
     @Column(name = "confirmed_at")
     private Instant confirmedAt;
 
@@ -92,12 +103,17 @@ public class Ticket {
         return status == TicketStatus.AVAILABLE;
     }
 
-    public void reserve(String orderId, String userId, BigDecimal price) {
+    /**
+     * @param reservedUntil deadline after which the watchdog may release this ticket;
+     *                      set by the caller to {@code now + saga-total-timeout}.
+     */
+    public void reserve(String orderId, String userId, BigDecimal price, Instant reservedUntil) {
         this.status          = TicketStatus.RESERVED;
         this.lockedByOrderId = orderId;
         this.lockedByUserId  = userId;
         this.lockedPrice     = price;
         this.reservedAt      = Instant.now();
+        this.reservedUntil   = reservedUntil;
     }
 
     public void confirm(String orderId) {
@@ -111,5 +127,6 @@ public class Ticket {
         this.lockedByUserId  = null;
         this.lockedPrice     = null;
         this.reservedAt      = null;
+        this.reservedUntil   = null;
     }
 }

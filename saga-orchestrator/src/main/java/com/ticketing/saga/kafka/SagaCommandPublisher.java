@@ -48,7 +48,9 @@ public class SagaCommandPublisher {
                                           String ticketId, BigDecimal amount) {
         PaymentChargeCommand cmd = new PaymentChargeCommand(traceId, sagaId, orderId, userId, ticketId, amount);
         log.info("Publishing PaymentChargeCommand: sagaId={} orderId={} amount={}", sagaId, orderId, amount);
-        kafkaTemplate.send(Topics.PAYMENT_CHARGE_CMD, orderId, cmd);
+        // Uses PAYMENT_CMD (unified command topic) so charge and cancel for the same
+        // orderId always land on the same partition → sequential, ordered consumption.
+        kafkaTemplate.send(Topics.PAYMENT_CMD, orderId, cmd);
     }
 
     public void sendTicketConfirmCommand(String traceId, String sagaId,
@@ -112,5 +114,22 @@ public class SagaCommandPublisher {
                 traceId, sagaId, failedStep, orderId, ticketId, reason);
         log.info("Publishing SagaCompensateEvent: sagaId={} failedStep={} orderId={}", sagaId, failedStep, orderId);
         kafkaTemplate.send(Topics.SAGA_COMPENSATE, orderId, event);
+    }
+
+    /**
+     * Tells the payment service to cancel or refund the charge for this order.
+     *
+     * <p>Sent to {@link Topics#PAYMENT_CMD} with the same {@code orderId} key as
+     * {@link #sendPaymentChargeCommand}, guaranteeing they land on the same Kafka
+     * partition and are consumed in the order they were produced.
+     *
+     * @param paymentReference non-null if payment already succeeded (triggers immediate refund);
+     *                         null if payment is still in flight (marks CANCELLATION_REQUESTED)
+     */
+    public void sendPaymentCancelCommand(String traceId, String sagaId,
+                                          String orderId, String paymentReference) {
+        PaymentCancelCommand cmd = new PaymentCancelCommand(traceId, sagaId, orderId, paymentReference);
+        log.warn("Publishing PaymentCancelCommand: sagaId={} orderId={} ref={}", sagaId, orderId, paymentReference);
+        kafkaTemplate.send(Topics.PAYMENT_CMD, orderId, cmd);
     }
 }

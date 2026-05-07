@@ -29,10 +29,20 @@ public final class Topics {
     public static final String PRICING_FAILED        = "pricing.failed";
     public static final String PRICE_UPDATED         = "price.updated";
 
-    // Payment domain
-    public static final String PAYMENT_CHARGE_CMD   = "payment.charge.cmd";
+    // Payment domain — commands
+    //
+    // ALL commands to the payment service use a single topic keyed by orderId.
+    // This guarantees that PaymentChargeCommand and PaymentCancelCommand for the
+    // same order always land on the same partition and are consumed sequentially.
+    // Two separate topics (payment.charge.cmd / payment.cancel.cmd) would allow
+    // the cancel consumer to process its message before the charge consumer does,
+    // silently dropping the cancellation and leaving the customer charged.
+    public static final String PAYMENT_CMD           = "payment.cmd";
+
+    // Payment domain — events (read by saga-orchestrator and other consumers)
     public static final String PAYMENT_SUCCEEDED     = "payment.succeeded";
     public static final String PAYMENT_FAILED        = "payment.failed";
+    public static final String PAYMENT_REFUNDED      = "payment.refunded";
     public static final String PAYMENT_DLQ           = "payment.dlq";
 
     // Saga

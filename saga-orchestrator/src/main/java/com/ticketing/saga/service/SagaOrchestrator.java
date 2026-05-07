@@ -254,6 +254,20 @@ public class SagaOrchestrator {
         SagaState state = loadOrWarn(sagaId);
         if (state == null) return;
 
+        // ── Late success: saga already failed (watchdog or ticket release fired first) ──
+        // The ticket was released before this event arrived.  We cannot advance the saga,
+        // but we MUST refund the charge — otherwise the customer is billed with no ticket.
+        if (state.getStatus() == SagaStatus.FAILED
+                || state.getStatus() == SagaStatus.CANCELLED
+                || state.getStatus() == SagaStatus.COMPENSATING) {
+            log.warn("Late PaymentSucceededEvent for terminal saga sagaId={} status={} — issuing refund",
+                    sagaId, state.getStatus());
+            publisher.sendPaymentCancelCommand(
+                    event.getTraceId(), sagaId,
+                    state.getOrderId(), event.getPaymentReference());
+            return;
+        }
+
         if (!isExpectedStatus(state, SagaStatus.PRICING_LOCKED, sagaId)) return;
 
         log.info("Saga step: sagaId={} paymentSucceeded paymentReference={}", sagaId, event.getPaymentReference());
@@ -315,7 +329,7 @@ public class SagaOrchestrator {
     }
 
     // -------------------------------------------------------------------------
-    // Compensation: ticket.released during saga -> unlock price if locked
+    // Compensation: ticket.released during saga
     // -------------------------------------------------------------------------
 
     public void onTicketReleased(TicketReleasedEvent event) {
@@ -323,7 +337,7 @@ public class SagaOrchestrator {
         SagaState state = loadOrWarn(sagaId);
         if (state == null) return;
 
-        // Ignore terminal statuses — this can fire as part of compensation
+        // Ignore terminal statuses — this fires as part of normal compensation
         if (state.getStatus() == SagaStatus.COMPLETED
                 || state.getStatus() == SagaStatus.FAILED
                 || state.getStatus() == SagaStatus.CANCELLED) {
@@ -331,7 +345,25 @@ public class SagaOrchestrator {
             return;
         }
 
-        log.warn("Ticket released during active saga: sagaId={} reason={}", sagaId, event.getReason());
+        log.warn("Ticket released during active saga: sagaId={} status={} reason={}",
+                sagaId, state.getStatus(), event.getReason());
+
+        // ── Payment safety net ────────────────────────────────────────────────
+        // If payment was already in flight (PRICING_LOCKED) or already charged (PAYMENT_CHARGED),
+        // send a cancel/refund command BEFORE marking the saga terminal.
+        // Without this, the customer gets charged with no ticket and no refund.
+        if (state.getStatus() == SagaStatus.PRICING_LOCKED) {
+            // Payment in flight — paymentReference is null; service will set CANCELLATION_REQUESTED
+            // and refund when the gateway eventually responds with success.
+            log.warn("Saga in PRICING_LOCKED when ticket released — sending payment cancel (in-flight) sagaId={}", sagaId);
+            publisher.sendPaymentCancelCommand(
+                    event.getTraceId(), sagaId, state.getOrderId(), null);
+        } else if (state.getStatus() == SagaStatus.PAYMENT_CHARGED) {
+            // Payment already succeeded — send reference for immediate refund.
+            log.warn("Saga in PAYMENT_CHARGED when ticket released — sending payment cancel (refund) sagaId={}", sagaId);
+            publisher.sendPaymentCancelCommand(
+                    event.getTraceId(), sagaId, state.getOrderId(), state.getPaymentReference());
+        }
 
         state.setStatus(SagaStatus.FAILED);
         state.setCurrentStep("FAILED");
@@ -347,14 +379,26 @@ public class SagaOrchestrator {
     }
 
     // -------------------------------------------------------------------------
-    // Compensate saga: release ticket, unlock price, publish OrderFailedEvent
+    // Compensate saga: release ticket, cancel payment if in flight, publish OrderFailedEvent
     // -------------------------------------------------------------------------
 
     public void compensateSaga(String sagaId, String reason) {
         SagaState state = loadOrWarn(sagaId);
         if (state == null) return;
 
-        log.warn("Compensating saga: sagaId={} reason={}", sagaId, reason);
+        log.warn("Compensating saga: sagaId={} status={} reason={}", sagaId, state.getStatus(), reason);
+
+        // ── Payment safety net ────────────────────────────────────────────────
+        // compensateSaga() is called by the saga watchdog for sagas stuck in ANY active
+        // state — including PRICING_LOCKED (payment in flight) and PAYMENT_CHARGED
+        // (payment done but ticket not yet confirmed).  Both require a cancel/refund.
+        if (state.getStatus() == SagaStatus.PRICING_LOCKED) {
+            log.warn("compensateSaga: PRICING_LOCKED — sending payment cancel (in-flight) sagaId={}", sagaId);
+            publisher.sendPaymentCancelCommand(sagaId, sagaId, state.getOrderId(), null);
+        } else if (state.getStatus() == SagaStatus.PAYMENT_CHARGED) {
+            log.warn("compensateSaga: PAYMENT_CHARGED — sending payment cancel (refund) sagaId={}", sagaId);
+            publisher.sendPaymentCancelCommand(sagaId, sagaId, state.getOrderId(), state.getPaymentReference());
+        }
 
         publisher.publishSagaCompensate(
                 sagaId, sagaId,
