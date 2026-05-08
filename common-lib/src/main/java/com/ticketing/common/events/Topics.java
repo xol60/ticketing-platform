@@ -4,12 +4,18 @@ public final class Topics {
 
     private Topics() {}
 
-    // Ticket domain
-    public static final String TICKET_RESERVE_CMD   = "ticket.reserve.cmd";
+    // Ticket domain — commands
+    //
+    // ALL commands to the ticket service use a single topic keyed by orderId.
+    // TicketReserveCommand, TicketConfirmCommand, and TicketReleaseCommand for the
+    // same order always land on the same partition → consumed sequentially by one thread.
+    // Split topics would allow a release command to be processed before a confirm command,
+    // causing the confirm to find an AVAILABLE ticket and publish a spurious failure event.
+    public static final String TICKET_CMD            = "ticket.cmd";
+
+    // Ticket domain — events (read by saga-orchestrator and other consumers)
     public static final String TICKET_RESERVED       = "ticket.reserved";
-    public static final String TICKET_RELEASE_CMD   = "ticket.release.cmd";
     public static final String TICKET_RELEASED       = "ticket.released";
-    public static final String TICKET_CONFIRM_CMD   = "ticket.confirm.cmd";
     public static final String TICKET_CONFIRMED      = "ticket.confirmed";
 
     // Order domain

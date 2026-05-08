@@ -24,7 +24,9 @@ public class SagaCommandPublisher {
                                          String ticketId, String orderId, String userId) {
         TicketReserveCommand cmd = new TicketReserveCommand(traceId, sagaId, ticketId, orderId, userId);
         log.info("Publishing TicketReserveCommand: sagaId={} ticketId={} orderId={}", sagaId, ticketId, orderId);
-        kafkaTemplate.send(Topics.TICKET_RESERVE_CMD, orderId, cmd);
+        // Uses TICKET_CMD (unified command topic) — all ticket commands for the same orderId
+        // land on the same partition → reserve, confirm, and release are consumed in order.
+        kafkaTemplate.send(Topics.TICKET_CMD, orderId, cmd);
     }
 
     /**
@@ -57,7 +59,7 @@ public class SagaCommandPublisher {
                                           String ticketId, String orderId) {
         TicketConfirmCommand cmd = new TicketConfirmCommand(traceId, sagaId, ticketId, orderId);
         log.info("Publishing TicketConfirmCommand: sagaId={} ticketId={} orderId={}", sagaId, ticketId, orderId);
-        kafkaTemplate.send(Topics.TICKET_CONFIRM_CMD, orderId, cmd);
+        kafkaTemplate.send(Topics.TICKET_CMD, orderId, cmd);
     }
 
     public void sendTicketReleaseCommand(String traceId, String sagaId,
@@ -65,7 +67,7 @@ public class SagaCommandPublisher {
         TicketReleaseCommand cmd = new TicketReleaseCommand(traceId, sagaId, ticketId, orderId, reason);
         log.info("Publishing TicketReleaseCommand: sagaId={} ticketId={} orderId={} reason={}",
                 sagaId, ticketId, orderId, reason);
-        kafkaTemplate.send(Topics.TICKET_RELEASE_CMD, orderId, cmd);
+        kafkaTemplate.send(Topics.TICKET_CMD, orderId, cmd);
     }
 
     public void publishOrderConfirmed(String traceId, String sagaId,

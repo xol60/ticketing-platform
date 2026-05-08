@@ -388,10 +388,10 @@ public class SagaOrchestrator {
 
         log.warn("Compensating saga: sagaId={} status={} reason={}", sagaId, state.getStatus(), reason);
 
-        // ── Payment safety net ────────────────────────────────────────────────
-        // compensateSaga() is called by the saga watchdog for sagas stuck in ANY active
-        // state — including PRICING_LOCKED (payment in flight) and PAYMENT_CHARGED
-        // (payment done but ticket not yet confirmed).  Both require a cancel/refund.
+        // ── Payment safety net ───────────────────────────────────────────────
+        // compensateSaga() is called for sagas stuck in ANY active state — including
+        // PRICING_LOCKED (payment in flight) and PAYMENT_CHARGED (payment done, ticket
+        // not yet confirmed).  Both require a cancel/refund command.
         if (state.getStatus() == SagaStatus.PRICING_LOCKED) {
             log.warn("compensateSaga: PRICING_LOCKED — sending payment cancel (in-flight) sagaId={}", sagaId);
             publisher.sendPaymentCancelCommand(sagaId, sagaId, state.getOrderId(), null);
@@ -400,12 +400,20 @@ public class SagaOrchestrator {
             publisher.sendPaymentCancelCommand(sagaId, sagaId, state.getOrderId(), state.getPaymentReference());
         }
 
-        publisher.publishSagaCompensate(
-                sagaId, sagaId,
-                state.getCurrentStep(),
-                state.getOrderId(),
-                state.getTicketId(),
-                reason);
+        // ── Ticket release ───────────────────────────────────────────────────
+        // Explicit TicketReleaseCommand on ticket.cmd (unified topic, same orderId key)
+        // so this command is always consumed AFTER any pending TicketConfirmCommand for
+        // the same order — Kafka guarantees ordering within a single partition.
+        //
+        // Previously this was done via SagaCompensateEvent on saga.compensate, which
+        // the ticket service consumed independently. That was a split-topic race: the
+        // release could arrive and be processed before an in-flight confirm command,
+        // causing the confirm to find an AVAILABLE ticket and fire a spurious failure.
+        if (state.getTicketId() != null) {
+            publisher.sendTicketReleaseCommand(
+                    sagaId, sagaId,
+                    state.getTicketId(), state.getOrderId(), reason);
+        }
 
         publisher.publishOrderFailed(
                 sagaId, sagaId,

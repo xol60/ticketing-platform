@@ -92,11 +92,9 @@ class SagaFlowIntegrationTest {
         producer = buildProducer();
         consumer = buildConsumer("saga-it-verifier-" + UUID.randomUUID());
         consumer.subscribe(List.of(
-                Topics.TICKET_RESERVE_CMD,
+                Topics.TICKET_CMD,          // reserve + confirm + release (unified)
                 Topics.PRICING_LOCK_CMD,
-                Topics.PAYMENT_CMD,
-                Topics.TICKET_CONFIRM_CMD,
-                Topics.TICKET_RELEASE_CMD,
+                Topics.PAYMENT_CMD,         // charge + cancel (unified)
                 Topics.PRICING_UNLOCK_CMD,
                 Topics.ORDER_CONFIRMED,
                 Topics.ORDER_FAILED,
@@ -127,7 +125,7 @@ class SagaFlowIntegrationTest {
                         TICKET_ID, new BigDecimal("99.00"), Instant.now()));
 
         // Orchestrator should send TicketReserveCommand
-        DomainEvent reserveCmd = pollForEvent(Topics.TICKET_RESERVE_CMD, sagaId);
+        DomainEvent reserveCmd = pollForEvent(Topics.TICKET_CMD, sagaId);
         assertThat(reserveCmd).isInstanceOf(TicketReserveCommand.class);
         assertSagaStatus(sagaId, SagaStatus.STARTED);
 
@@ -157,7 +155,7 @@ class SagaFlowIntegrationTest {
                         new BigDecimal("99.00"), "PAY-REF-001"));
 
         // Orchestrator should send TicketConfirmCommand
-        DomainEvent confirmCmd = pollForEvent(Topics.TICKET_CONFIRM_CMD, sagaId);
+        DomainEvent confirmCmd = pollForEvent(Topics.TICKET_CMD, sagaId);
         assertThat(confirmCmd).isInstanceOf(TicketConfirmCommand.class);
         assertSagaStatus(sagaId, SagaStatus.PAYMENT_CHARGED);
 
@@ -191,7 +189,7 @@ class SagaFlowIntegrationTest {
                         TICKET_ID, new BigDecimal("1.00"), Instant.now())); // fake price
 
         // Wait for TicketReserveCommand
-        pollForEvent(Topics.TICKET_RESERVE_CMD, sagaId);
+        pollForEvent(Topics.TICKET_CMD, sagaId);
 
         // Simulate ticket reserved
         publish(Topics.TICKET_RESERVED, TICKET_ID,
@@ -202,7 +200,7 @@ class SagaFlowIntegrationTest {
                 new PricingFailedEvent(TRACE_ID, sagaId, ORDER_ID, TICKET_ID, "INVALID_PRICE"));
 
         // Orchestrator should release the ticket
-        DomainEvent releaseCmd = pollForEvent(Topics.TICKET_RELEASE_CMD, sagaId);
+        DomainEvent releaseCmd = pollForEvent(Topics.TICKET_CMD, sagaId);
         assertThat(releaseCmd).isInstanceOf(TicketReleaseCommand.class);
 
         // Orchestrator should publish OrderCancelledEvent
@@ -227,7 +225,7 @@ class SagaFlowIntegrationTest {
                 new OrderCreatedEvent(TRACE_ID, sagaId, ORDER_ID, USER_ID,
                         TICKET_ID, new BigDecimal("99.00"), Instant.now()));
 
-        pollForEvent(Topics.TICKET_RESERVE_CMD, sagaId);
+        pollForEvent(Topics.TICKET_CMD, sagaId);
 
         publish(Topics.TICKET_RESERVED, TICKET_ID,
                 new TicketReservedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, new BigDecimal("99.00")));
@@ -268,7 +266,7 @@ class SagaFlowIntegrationTest {
                 new PaymentSucceededEvent(TRACE_ID, sagaId, ORDER_ID, USER_ID,
                         new BigDecimal("120.00"), "PAY-REF-002"));
 
-        pollForEvent(Topics.TICKET_CONFIRM_CMD, sagaId);
+        pollForEvent(Topics.TICKET_CMD, sagaId);
 
         publish(Topics.TICKET_CONFIRMED, TICKET_ID,
                 new TicketConfirmedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID));
@@ -293,7 +291,7 @@ class SagaFlowIntegrationTest {
                 new OrderCreatedEvent(TRACE_ID, sagaId, ORDER_ID, USER_ID,
                         TICKET_ID, new BigDecimal("99.00"), Instant.now()));
 
-        pollForEvent(Topics.TICKET_RESERVE_CMD, sagaId);
+        pollForEvent(Topics.TICKET_CMD, sagaId);
 
         publish(Topics.TICKET_RESERVED, TICKET_ID,
                 new TicketReservedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, new BigDecimal("99.00")));
@@ -311,7 +309,7 @@ class SagaFlowIntegrationTest {
                 new OrderPriceCancelCommand(TRACE_ID, sagaId, ORDER_ID, USER_ID));
 
         // Ticket must be released
-        DomainEvent releaseCmd = pollForEvent(Topics.TICKET_RELEASE_CMD, sagaId);
+        DomainEvent releaseCmd = pollForEvent(Topics.TICKET_CMD, sagaId);
         assertThat(releaseCmd).isInstanceOf(TicketReleaseCommand.class);
 
         // Order cancelled event published
@@ -336,7 +334,7 @@ class SagaFlowIntegrationTest {
                 new OrderCreatedEvent(TRACE_ID, sagaId, ORDER_ID, USER_ID,
                         TICKET_ID, new BigDecimal("99.00"), Instant.now()));
 
-        pollForEvent(Topics.TICKET_RESERVE_CMD, sagaId);
+        pollForEvent(Topics.TICKET_CMD, sagaId);
 
         publish(Topics.TICKET_RESERVED, TICKET_ID,
                 new TicketReservedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, new BigDecimal("99.00")));
@@ -373,7 +371,7 @@ class SagaFlowIntegrationTest {
                 new OrderCreatedEvent(TRACE_ID, sagaId, ORDER_ID, USER_ID,
                         TICKET_ID, new BigDecimal("99.00"), Instant.now()));
 
-        pollForEvent(Topics.TICKET_RESERVE_CMD, sagaId);
+        pollForEvent(Topics.TICKET_CMD, sagaId);
 
         publish(Topics.TICKET_RESERVED, TICKET_ID,
                 new TicketReservedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, new BigDecimal("99.00")));
