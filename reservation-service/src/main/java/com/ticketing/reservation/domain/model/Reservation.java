@@ -47,6 +47,15 @@ public class Reservation {
     @Column(name = "expires_at", nullable = false)
     private Instant expiresAt;
 
+    /**
+     * Set when status transitions to PROMOTED.
+     * The watchdog uses this to advance the queue if the promoted user
+     * does not place an order before this deadline.
+     * Null for non-PROMOTED records.
+     */
+    @Column(name = "promote_expires_at")
+    private Instant promoteExpiresAt;
+
     @Version
     @Column(name = "version", nullable = false)
     private Long version;

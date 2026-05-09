@@ -19,4 +19,18 @@ public interface ReservationRepository extends JpaRepository<Reservation, UUID> 
             String userId, String ticketId, ReservationStatus status);
 
     List<Reservation> findByStatusAndExpiresAtBefore(ReservationStatus status, Instant threshold);
+
+    /**
+     * Returns all QUEUED reservations that have not yet expired, ordered by join time (FIFO).
+     * Used by the startup recovery job to rebuild Redis Sorted Sets from PostgreSQL.
+     */
+    List<Reservation> findByStatusAndExpiresAtAfterOrderByQueuedAtAsc(
+            ReservationStatus status, Instant threshold);
+
+    /**
+     * Returns PROMOTED reservations whose exclusive window has passed.
+     * Used by the stale-promotion watchdog to advance the queue automatically.
+     */
+    List<Reservation> findByStatusAndPromoteExpiresAtBefore(
+            ReservationStatus status, Instant threshold);
 }
