@@ -65,4 +65,7 @@ public final class Topics {
 
     // Notification
     public static final String NOTIFICATION_SEND     = "notification.send";
+
+    // Security
+    public static final String AUTH_SECURITY_ALERT   = "auth.security.alert";
 }

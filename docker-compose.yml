@@ -193,6 +193,7 @@ services:
       DB_PASSWORD: ticketing_secret
       REDIS_HOST: redis
       JWT_SECRET: ${JWT_SECRET:-changeme_use_a_real_secret_in_production_256bits}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     depends_on:
       postgres-master:
         condition: service_healthy
@@ -200,6 +201,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     networks:
       - ticketing-net
 

@@ -17,6 +17,9 @@ import reactor.core.publisher.Mono;
  *   Cold path (full JWT validation + revocation check)
  *     ↓ valid
  *   Write-back to L2 then L1
+ *     ↓
+ *   Generation check — compare identity.tokenGeneration against Redis token_gen:{userId}
+ *   (L1 gen cache TTL 5 s to bound staleness after a security event)
  */
 @Slf4j
 @Service
@@ -26,10 +29,11 @@ public class TokenCacheService {
     private final L1TokenCache  l1;
     private final L2TokenCache  l2;
     private final JwtService    jwtService;
+    private final TokenGenCache tokenGenCache;
 
     /**
      * Resolves a raw bearer token to a TokenIdentity.
-     * Returns empty Mono if the token is invalid or revoked.
+     * Returns empty Mono if the token is invalid, revoked, or its generation is stale.
      */
     public Mono<TokenIdentity> resolve(String rawToken) {
         String cacheKey = jwtService.cacheKey(rawToken);
@@ -49,7 +53,9 @@ public class TokenCacheService {
                           // ── Step 3: Cold path — full JWT validation ───────────
                           coldValidate(rawToken, cacheKey)
                       )
-                );
+                )
+                // ── Step 4: Generation check (applies to cache hits AND cold path) ──
+                .flatMap(identity -> validateGeneration(identity, cacheKey));
     }
 
     private Mono<TokenIdentity> coldValidate(String rawToken, String cacheKey) {
@@ -85,5 +91,30 @@ public class TokenCacheService {
         return l2.revoke(cacheKey, 86400L) // keep revocation record for 24 h
                  .then(l2.invalidate(cacheKey))
                  .then();
+    }
+
+    // ── Private ───────────────────────────────────────────────────────────────
+
+    /**
+     * Validates the token generation claim against the current counter in Redis.
+     *
+     * If the counters match → pass the identity through unchanged.
+     * If they diverge (counter was incremented by a security event) → evict the
+     * stale entry from both cache layers and return empty (→ 401 at AuthFilter).
+     */
+    private Mono<TokenIdentity> validateGeneration(TokenIdentity identity, String cacheKey) {
+        return tokenGenCache.getGeneration(identity.getUserId())
+                .flatMap(currentGen -> {
+                    if (identity.getTokenGeneration() == currentGen) {
+                        return Mono.just(identity);
+                    }
+                    log.warn("Token generation mismatch — possible stolen token. " +
+                                    "userId={} tokenGen={} currentGen={}",
+                            identity.getUserId(), identity.getTokenGeneration(), currentGen);
+                    // Evict stale entry so it is not served again from any layer
+                    l1.invalidate(cacheKey);
+                    tokenGenCache.invalidate(identity.getUserId());
+                    return l2.invalidate(cacheKey).then(Mono.empty());
+                });
     }
 }

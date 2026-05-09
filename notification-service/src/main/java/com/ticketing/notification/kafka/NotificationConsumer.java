@@ -1,6 +1,7 @@
 package com.ticketing.notification.kafka;
 
 import com.ticketing.common.events.*;
+import com.ticketing.common.events.SecurityAlertEvent;
 import com.ticketing.notification.service.NotificationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -57,6 +58,22 @@ public class NotificationConsumer {
             ack.acknowledge();
         } catch (Exception e) {
             log.error("Error processing NOTIFICATION_SEND key={}", record.key(), e);
+            ack.acknowledge();
+        }
+    }
+
+    @KafkaListener(topics = Topics.AUTH_SECURITY_ALERT, groupId = "notification-service",
+                   containerFactory = "kafkaListenerContainerFactory")
+    public void onSecurityAlert(ConsumerRecord<String, DomainEvent> record, Acknowledgment ack) {
+        try {
+            if (record.value() instanceof SecurityAlertEvent event) {
+                log.warn("Received AUTH_SECURITY_ALERT userId={} type={} ip={}",
+                        event.getUserId(), event.getAlertType(), event.getIpAddress());
+                notificationService.sendSecurityAlert(event);
+            }
+            ack.acknowledge();
+        } catch (Exception e) {
+            log.error("Error processing AUTH_SECURITY_ALERT key={}", record.key(), e);
             ack.acknowledge();
         }
     }

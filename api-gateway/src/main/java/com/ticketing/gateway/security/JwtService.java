@@ -38,11 +38,17 @@ public class JwtService {
                     .parseSignedClaims(token)
                     .getPayload();
 
+            // "gen" claim was added after initial release; default to 0 for older tokens
+            // so they remain valid until a security event increments the counter.
+            Long genClaim = claims.get("gen", Long.class);
+            long gen = genClaim != null ? genClaim : 0L;
+
             var identity = new TokenIdentity(
                     claims.getSubject(),
                     claims.get("role",     String.class),
                     claims.get("tenantId", String.class),
-                    claims.getExpiration().toInstant()
+                    claims.getExpiration().toInstant(),
+                    gen
             );
 
             if (identity.isExpired()) {

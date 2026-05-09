@@ -11,10 +11,13 @@ import com.ticketing.auth.dto.request.RegisterRequest;
 import com.ticketing.auth.dto.response.AuthResponse;
 import com.ticketing.auth.dto.response.UserResponse;
 import com.ticketing.auth.exception.AuthException;
+import com.ticketing.auth.kafka.SecurityEventProducer;
 import com.ticketing.auth.security.JwtTokenService;
 import com.ticketing.auth.security.TokenRevocationStore;
+import com.ticketing.common.events.SecurityAlertEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,12 +30,16 @@ import java.util.List;
 @RequiredArgsConstructor
 public class AuthService {
 
+    private static final String TOKEN_GEN_PREFIX = "token_gen:";
+
     private final UserRepository         userRepository;
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtTokenService        jwtTokenService;
     private final TokenRevocationStore   revocationStore;
     private final PasswordEncoder        passwordEncoder;
     private final AuthProperties         properties;
+    private final StringRedisTemplate    stringRedisTemplate;
+    private final SecurityEventProducer  securityEventProducer;
 
     // ── Register ──────────────────────────────────────────────────────────────
 
@@ -98,10 +105,24 @@ public class AuthService {
                 .orElseThrow(() -> AuthException.tokenInvalid("Refresh token not found"));
 
         if (!stored.isValid()) {
-            // Potential token reuse — revoke all tokens for this user (security measure)
             if (stored.isRevoked()) {
-                log.warn("Refresh token reuse detected for userId={}", stored.getUser().getId());
-                refreshTokenRepository.revokeAllForUser(stored.getUser().getId(), Instant.now());
+                // A previously rotated token was presented again — strong signal of token theft.
+                // Nuclear option: increment generation counter to invalidate ALL active access
+                // tokens for this user immediately, then revoke all refresh tokens.
+                String userId = stored.getUser().getId();
+                log.warn("Refresh token reuse detected userId={} ip={}", userId, ipAddress);
+
+                stringRedisTemplate.opsForValue().increment(TOKEN_GEN_PREFIX + userId);
+                refreshTokenRepository.revokeAllForUser(userId, Instant.now());
+
+                securityEventProducer.publishAlert(new SecurityAlertEvent(
+                        null,
+                        userId,
+                        stored.getUser().getEmail(),
+                        "REFRESH_TOKEN_REUSE",
+                        ipAddress,
+                        deviceInfo
+                ));
             }
             throw AuthException.tokenInvalid("Refresh token is invalid or expired");
         }
@@ -161,8 +182,14 @@ public class AuthService {
         // Enforce max active refresh tokens per user — evict oldest
         evictOldestIfNeeded(user);
 
+        // Read the current token generation counter so it can be embedded in the JWT.
+        // The gateway compares this claim against Redis on every request; incrementing
+        // the counter (on reuse detection) immediately invalidates all outstanding tokens.
+        String genStr = stringRedisTemplate.opsForValue().get(TOKEN_GEN_PREFIX + user.getId());
+        long currentGen = genStr != null ? Long.parseLong(genStr) : 0L;
+
         String rawRefreshToken = jwtTokenService.generateRefreshToken();
-        String accessToken     = jwtTokenService.generateAccessToken(user);
+        String accessToken     = jwtTokenService.generateAccessToken(user, currentGen);
 
         RefreshToken refreshToken = RefreshToken.builder()
                 .tokenHash(jwtTokenService.hashRefreshToken(rawRefreshToken))

@@ -25,7 +25,13 @@ public class JwtTokenService {
 
     // ── Token generation ──────────────────────────────────────────────────────
 
-    public String generateAccessToken(User user) {
+    /**
+     * Generates a signed access token embedding the caller-supplied token generation counter.
+     * The gateway validates this counter against Redis on every request — incrementing it
+     * (via TokenGenerationStore) immediately invalidates all previously issued tokens for
+     * the user without waiting for natural expiry.
+     */
+    public String generateAccessToken(User user, long tokenGeneration) {
         var jwt = properties.getJwt();
         Instant now    = Instant.now();
         Instant expiry = now.plusSeconds(jwt.getAccessTokenExpirySeconds());
@@ -39,6 +45,7 @@ public class JwtTokenService {
                 .claim("email",    user.getEmail())
                 .claim("username", user.getUsername())
                 .claim("tenantId", user.getTenantId())
+                .claim("gen",      tokenGeneration)
                 .signWith(secretKey())
                 .compact();
     }

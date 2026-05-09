@@ -2,6 +2,7 @@ package com.ticketing.notification.service;
 
 import com.ticketing.common.events.NotificationSendCommand;
 import com.ticketing.common.events.PaymentFailedEvent;
+import com.ticketing.common.events.SecurityAlertEvent;
 import com.ticketing.common.events.TicketConfirmedEvent;
 import com.ticketing.notification.domain.model.NotificationLog;
 import com.ticketing.notification.domain.repository.NotificationLogRepository;
@@ -102,6 +103,57 @@ public class NotificationService {
         repository.save(entry);
 
         log.info("[Notification] {} logged id={} recipient={}", cmd.getType(), entry.getId(), entry.getRecipient());
+    }
+
+    // -----------------------------------------------------------------------
+    // Security alert → notify user AND admin
+    // -----------------------------------------------------------------------
+
+    @Transactional
+    public void sendSecurityAlert(SecurityAlertEvent event) {
+        log.warn("[Notification] sendSecurityAlert: userId={} type={} ip={}",
+                event.getUserId(), event.getAlertType(), event.getIpAddress());
+
+        // Alert to the affected user
+        String userSubject = "Security alert: suspicious activity on your account";
+        String userBody = String.format(
+                "We detected suspicious activity on your account (userId=%s). " +
+                "All active sessions have been invalidated as a precaution. " +
+                "If this was not you, please change your password immediately. " +
+                "Details: type=%s ip=%s device=%s",
+                event.getUserId(), event.getAlertType(),
+                event.getIpAddress(), event.getDeviceInfo());
+
+        NotificationLog userAlert = NotificationLog.builder()
+                .id(UUID.randomUUID())
+                .type("EMAIL")
+                .recipient(event.getUserId())
+                .subject(userSubject)
+                .body(userBody)
+                .referenceId(event.getEventId())
+                .status("SENT")
+                .build();
+
+        // Alert to admin
+        String adminSubject = "SECURITY ALERT: " + event.getAlertType() + " for userId=" + event.getUserId();
+        String adminBody = String.format(
+                "Security event detected.\n" +
+                "Type:   %s\nUserId: %s\nEmail:  %s\nIP:     %s\nDevice: %s\nTime:   %s",
+                event.getAlertType(), event.getUserId(), event.getUserEmail(),
+                event.getIpAddress(), event.getDeviceInfo(), event.getOccurredAt());
+
+        NotificationLog adminAlert = NotificationLog.builder()
+                .id(UUID.randomUUID())
+                .type("ADMIN_ALERT")
+                .recipient("admin@ticketing.com")
+                .subject(adminSubject)
+                .body(adminBody)
+                .referenceId(event.getEventId())
+                .status("SENT")
+                .build();
+
+        repository.saveAll(List.of(userAlert, adminAlert));
+        log.warn("[Notification] SECURITY_ALERT logged for userId={}", event.getUserId());
     }
 
     // -----------------------------------------------------------------------

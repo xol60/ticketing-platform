@@ -10,6 +10,11 @@ import java.time.Instant;
 /**
  * Resolved identity stored in L1 (in-process) and L2 (Redis) caches.
  * Produced by JWT validation; consumed by the identity-injection filter.
+ *
+ * tokenGeneration mirrors the "gen" claim in the JWT and is checked against
+ * Redis token_gen:{userId} on every request. When the counter is incremented
+ * (e.g. on refresh-token reuse detection) all cached identities with an older
+ * generation are rejected immediately without waiting for natural token expiry.
  */
 @Data
 @NoArgsConstructor
@@ -20,6 +25,7 @@ public class TokenIdentity implements Serializable {
     private String role;
     private String tenantId;
     private Instant expiresAt;
+    private long    tokenGeneration;
 
     public boolean isExpired() {
         return Instant.now().isAfter(expiresAt);
