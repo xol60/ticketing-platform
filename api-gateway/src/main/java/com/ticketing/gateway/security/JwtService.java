@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.Optional;
 
@@ -62,14 +63,23 @@ public class JwtService {
     }
 
     /**
-     * Builds a deterministic cache key from the token.
-     * We hash to avoid storing the raw bearer token as a Redis key.
+     * Builds a deterministic cache key from the token using SHA-256.
+     * SHA-256 is a one-way cryptographic hash — it cannot be reversed to recover the
+     * original token, produces no collisions, and matches the key format that
+     * auth-service writes to TokenRevocationStore (revoked:token:{sha256}).
      */
     public String cacheKey(String token) {
-        // Simple prefix + last 16 chars of token is NOT secure enough for production.
-        // Use SHA-256 in production — kept simple here for readability.
-        int hash = token.hashCode();
-        return "token:" + Integer.toUnsignedString(hash, 16);
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(token.getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder();
+            for (byte b : hash) {
+                hex.append(String.format("%02x", b));
+            }
+            return "token:" + hex;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to compute SHA-256 cache key", e);
+        }
     }
 
     /** Key used to mark a token as revoked in Redis. */

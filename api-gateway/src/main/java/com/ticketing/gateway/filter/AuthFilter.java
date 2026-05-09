@@ -69,7 +69,7 @@ public class AuthFilter implements GlobalFilter, Ordered {
         String token = authHeader.substring(7);
 
         return tokenCacheService.resolve(token)
-                .flatMap(identity -> forwardWithIdentity(exchange, chain, identity, traceId))
+                .flatMap(identity -> forwardWithIdentity(exchange, chain, identity, traceId, token))
                 .switchIfEmpty(
                     Mono.defer(() -> rejectWith401(exchange, traceId, "Invalid or expired token"))
                 );
@@ -78,7 +78,8 @@ public class AuthFilter implements GlobalFilter, Ordered {
     private Mono<Void> forwardWithIdentity(ServerWebExchange exchange,
                                            GatewayFilterChain chain,
                                            TokenIdentity identity,
-                                           String traceId) {
+                                           String traceId,
+                                           String rawToken) {
         log.debug("Auth OK userId={} role={} trace={}",
                 identity.getUserId(), identity.getRole(), traceId);
 
@@ -95,7 +96,21 @@ public class AuthFilter implements GlobalFilter, Ordered {
                 })
                 .build();
 
-        return chain.filter(exchange.mutate().request(mutatedRequest).build());
+        Mono<Void> downstream = chain.filter(exchange.mutate().request(mutatedRequest).build());
+
+        // On logout, regardless of whether auth-service succeeds or fails,
+        // evict the token from both L1 and L2 cache immediately —
+        // prevents a revoked token from remaining alive in cache for up to 30 seconds.
+        if (isLogoutPath(exchange.getRequest().getPath().value())) {
+            return downstream.then(tokenCacheService.revoke(rawToken))
+                    .doOnSuccess(v -> log.info("Cache invalidated on logout userId={}", identity.getUserId()));
+        }
+
+        return downstream;
+    }
+
+    private boolean isLogoutPath(String path) {
+        return path.startsWith("/api/auth/logout");
     }
 
     private Mono<Void> rejectWith401(ServerWebExchange exchange,
