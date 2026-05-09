@@ -49,13 +49,16 @@ class PricingServiceTest {
 
     private EventPriceRule rule;
 
+    // facePrice used in all commands — effective price = facePrice * surgeMultiplier
+    private static final BigDecimal FACE_PRICE = new BigDecimal("100.00");
+
     @BeforeEach
     void setUp() {
+        // surgeMultiplier=1.2 → effectivePrice = 100 * 1.2 = 120.00
         rule = EventPriceRule.builder()
                 .eventId(EVENT_ID)
-                .minPrice(new BigDecimal("80.00"))
-                .maxPrice(new BigDecimal("150.00"))
-                .currentPrice(new BigDecimal("120.00"))
+                .surgeMultiplier(new BigDecimal("1.2"))
+                .maxSurge(new BigDecimal("2.0"))
                 .build();
 
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
@@ -72,12 +75,15 @@ class PricingServiceTest {
         @Test
         @DisplayName("publishes PricingFailedEvent with INVALID_PRICE reason")
         void fabricated_price_publishes_failed_event() {
-            BigDecimal fakePrice = new BigDecimal("1.00"); // never in history
+            // userPrice=1.00, facePrice=100 → claimedMultiplier=0.01, never in history
+            BigDecimal fakePrice = new BigDecimal("1.00");
             PriceLockCommand cmd = buildCmd(fakePrice, false);
 
             when(ruleRepository.findByEventId(EVENT_ID)).thenReturn(Optional.of(rule));
-            when(historyRepository.findPriceAt(eq(EVENT_ID), any())).thenReturn(new BigDecimal("120.00"));
-            when(historyRepository.existsInRecentHistory(eq(EVENT_ID), eq(fakePrice), any()))
+            when(historyRepository.findMultiplierAt(eq(EVENT_ID), any()))
+                    .thenReturn(new BigDecimal("1.2")); // current multiplier at order time
+            BigDecimal claimedMultiplier = fakePrice.divide(FACE_PRICE, 4, java.math.RoundingMode.HALF_UP);
+            when(historyRepository.existsInRecentHistory(eq(EVENT_ID), eq(claimedMultiplier), any()))
                     .thenReturn(false); // never existed
 
             pricingService.lockPrice(cmd);
@@ -97,7 +103,7 @@ class PricingServiceTest {
             PriceLockCommand cmd = buildCmd(new BigDecimal("0.01"), false);
 
             when(ruleRepository.findByEventId(EVENT_ID)).thenReturn(Optional.of(rule));
-            when(historyRepository.findPriceAt(any(), any())).thenReturn(new BigDecimal("120.00"));
+            when(historyRepository.findMultiplierAt(any(), any())).thenReturn(new BigDecimal("1.2"));
             when(historyRepository.existsInRecentHistory(any(), any(), any())).thenReturn(false);
 
             pricingService.lockPrice(cmd);
@@ -117,12 +123,15 @@ class PricingServiceTest {
         @Test
         @DisplayName("publishes PricingLockedEvent with the matched price")
         void matching_price_locks_and_publishes() {
+            // userPrice=120, facePrice=100 → claimedMultiplier=1.2 → matches history
             BigDecimal correctPrice = new BigDecimal("120.00");
+            BigDecimal multiplier = new BigDecimal("1.2");
             PriceLockCommand cmd = buildCmd(correctPrice, false);
 
             when(ruleRepository.findByEventId(EVENT_ID)).thenReturn(Optional.of(rule));
-            when(historyRepository.findPriceAt(eq(EVENT_ID), any())).thenReturn(correctPrice);
-            when(historyRepository.existsInRecentHistory(eq(EVENT_ID), eq(correctPrice), any()))
+            when(historyRepository.findMultiplierAt(eq(EVENT_ID), any())).thenReturn(multiplier);
+            BigDecimal claimedMultiplier = correctPrice.divide(FACE_PRICE, 4, java.math.RoundingMode.HALF_UP);
+            when(historyRepository.existsInRecentHistory(eq(EVENT_ID), eq(claimedMultiplier), any()))
                     .thenReturn(true);
 
             pricingService.lockPrice(cmd);
@@ -143,7 +152,7 @@ class PricingServiceTest {
             PriceLockCommand cmd = buildCmd(correctPrice, false);
 
             when(ruleRepository.findByEventId(EVENT_ID)).thenReturn(Optional.of(rule));
-            when(historyRepository.findPriceAt(any(), any())).thenReturn(correctPrice);
+            when(historyRepository.findMultiplierAt(any(), any())).thenReturn(new BigDecimal("1.2"));
             when(historyRepository.existsInRecentHistory(any(), any(), any())).thenReturn(true);
 
             pricingService.lockPrice(cmd);
@@ -166,16 +175,19 @@ class PricingServiceTest {
         @Test
         @DisplayName("publishes PriceChangedEvent with old and new prices")
         void stale_price_publishes_price_changed() {
-            BigDecimal oldPrice = new BigDecimal("99.00"); // what user saw
-            BigDecimal newPrice = new BigDecimal("120.00"); // current
-            rule.setCurrentPrice(newPrice);
+            // User paid at multiplier 0.99 (price=99), current is 1.2 (price=120)
+            BigDecimal oldPrice = new BigDecimal("99.00");     // userPrice
+            BigDecimal oldMultiplier = new BigDecimal("0.9900"); // userPrice/facePrice
+            BigDecimal currentMultiplier = new BigDecimal("1.2");
+            BigDecimal newPrice = new BigDecimal("120.00");    // facePrice * currentMultiplier
             PriceLockCommand cmd = buildCmd(oldPrice, false);
 
             when(ruleRepository.findByEventId(EVENT_ID)).thenReturn(Optional.of(rule));
-            when(historyRepository.findPriceAt(eq(EVENT_ID), any()))
-                    .thenReturn(newPrice); // price at order time is already newPrice
-            when(historyRepository.existsInRecentHistory(eq(EVENT_ID), eq(oldPrice), any()))
-                    .thenReturn(true); // oldPrice did exist in history
+            // At order time the multiplier was already 1.2 (price changed since user saw 0.99)
+            when(historyRepository.findMultiplierAt(eq(EVENT_ID), any()))
+                    .thenReturn(currentMultiplier);
+            when(historyRepository.existsInRecentHistory(eq(EVENT_ID), eq(oldMultiplier), any()))
+                    .thenReturn(true); // oldMultiplier did exist in history
 
             pricingService.lockPrice(cmd);
 
@@ -197,7 +209,7 @@ class PricingServiceTest {
             PriceLockCommand cmd = buildCmd(oldPrice, false);
 
             when(ruleRepository.findByEventId(EVENT_ID)).thenReturn(Optional.of(rule));
-            when(historyRepository.findPriceAt(any(), any())).thenReturn(new BigDecimal("120.00"));
+            when(historyRepository.findMultiplierAt(any(), any())).thenReturn(new BigDecimal("1.2"));
             when(historyRepository.existsInRecentHistory(any(), any(), any())).thenReturn(true);
 
             pricingService.lockPrice(cmd);
@@ -217,6 +229,7 @@ class PricingServiceTest {
         @Test
         @DisplayName("skips validation and locks at current price when confirmed=true")
         void confirmed_lock_skips_validation() {
+            // facePrice=100, surgeMultiplier=1.2 → expectedLockedPrice=120
             BigDecimal currentPrice = new BigDecimal("120.00");
             PriceLockCommand cmd = buildCmd(currentPrice, true); // confirmed = true
 
@@ -225,7 +238,7 @@ class PricingServiceTest {
             pricingService.lockPrice(cmd);
 
             // no history queries at all
-            verify(historyRepository, never()).findPriceAt(any(), any());
+            verify(historyRepository, never()).findMultiplierAt(any(), any());
             verify(historyRepository, never()).existsInRecentHistory(any(), any(), any());
 
             // locks immediately at current price
@@ -264,6 +277,6 @@ class PricingServiceTest {
     private PriceLockCommand buildCmd(BigDecimal userPrice, boolean confirmed) {
         return new PriceLockCommand(
                 TRACE_ID, SAGA_ID, TICKET_ID, ORDER_ID, EVENT_ID,
-                userPrice, Instant.now().minusSeconds(30), confirmed);
+                userPrice, FACE_PRICE, Instant.now().minusSeconds(30), confirmed);
     }
 }

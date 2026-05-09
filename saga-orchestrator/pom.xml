@@ -36,10 +36,8 @@
       <groupId>org.flywaydb</groupId>
       <artifactId>flyway-core</artifactId>
     </dependency>
-    <dependency>
-      <groupId>org.flywaydb</groupId>
-      <artifactId>flyway-database-postgresql</artifactId>
-    </dependency>
+    <!-- flyway-database-postgresql is a Flyway 10+ artifact; Spring Boot 3.2.x
+         ships Flyway 9.x where postgres support is built into flyway-core. -->
     <dependency>
       <groupId>org.springframework.kafka</groupId>
       <artifactId>spring-kafka</artifactId>

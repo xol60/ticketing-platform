@@ -6,7 +6,7 @@ spring:
     name: saga-orchestrator
 
   datasource:
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/saga_db}
+    url: ${DB_URL:jdbc:postgresql://localhost:5436/saga_db}
     username: ${DB_USER:ticketing}
     password: ${DB_PASSWORD:ticketing_secret}
     driver-class-name: org.postgresql.Driver
@@ -32,7 +32,7 @@ spring:
     baseline-on-migrate: true
 
   kafka:
-    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
@@ -101,10 +101,10 @@ spring:
       on-profile: local
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/saga_db
+    url: jdbc:postgresql://localhost:5436/saga_db
 
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: localhost:29092
 
   data:
     redis:

@@ -1,28 +1,52 @@
 #!/bin/bash
+# Custom entrypoint for the postgres-slave container.
+# Bypasses docker-entrypoint.sh entirely to avoid the pg_ctl stop failure
+# that occurs when pg_basebackup replaces PGDATA mid-init.
+
 set -e
 
-echo "Replica initialisation check..."
+PGDATA="${PGDATA:-/var/lib/postgresql/data}"
 
-# standby.signal is written by pg_basebackup -R. It is NOT written by initdb.
-# Checking for it (not PG_VERSION) correctly distinguishes:
-#   - first run after Docker initdb  → no standby.signal → run pg_basebackup
-#   - container restart after backup → standby.signal exists → skip
-if [ -f "$PGDATA/standby.signal" ]; then
-  echo "Replica already initialised, skipping pg_basebackup."
-  exit 0
+# ── Step 1: fix ownership (Docker volume starts as root-owned) then drop to postgres ──
+if [ "$(id -u)" = '0' ]; then
+    mkdir -p "$PGDATA"
+    chown -R postgres:postgres "$PGDATA"
+    chmod 700 "$PGDATA"
+    exec gosu postgres "$0" "$@"
 fi
 
-echo "Running pg_basebackup from postgres-master..."
+# ── Running as postgres user from here ──────────────────────────────────────
 
-# Clear any files that Docker's initdb wrote before this script ran
-rm -rf "$PGDATA"/*
+echo "Replica: checking initialisation state..."
 
-PGPASSWORD=replicator_secret pg_basebackup \
-  -h postgres-master \
-  -D "$PGDATA" \
-  -U replicator \
-  -P \
-  -Xs \
-  -R
+if [ -f "$PGDATA/standby.signal" ]; then
+    echo "Replica: standby.signal found — already initialised, skipping pg_basebackup."
+else
+    echo "Replica: first start — running pg_basebackup from postgres-master..."
 
-echo "Replica base backup complete."
+    # pg_basebackup requires an empty target directory
+    rm -rf "$PGDATA"/*
+
+    PGPASSWORD=replicator_secret pg_basebackup \
+        -h postgres-master \
+        -D "$PGDATA" \
+        -U replicator \
+        -P \
+        -Xs \
+        -R
+
+    echo "Replica: base backup complete."
+fi
+
+echo "Replica: starting PostgreSQL..."
+# Append to postgresql.auto.conf (highest-priority, overrides postgresql.conf):
+#   - listen_addresses: initdb default is 'localhost'; app services reach slave over Docker network
+#   - max_connections: must be >= master's value (200) or hot-standby recovery aborts
+#   - wal_level/hot_standby: ensure replica accepts read connections
+cat >> "$PGDATA/postgresql.auto.conf" << 'EOF'
+listen_addresses = '*'
+max_connections = 200
+hot_standby = on
+EOF
+
+exec postgres -D "$PGDATA"

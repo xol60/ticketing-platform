@@ -12,6 +12,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
+import java.math.BigDecimal;
+
 
 /**
  * Validates that an event exists in ticket-service before a price rule is created.

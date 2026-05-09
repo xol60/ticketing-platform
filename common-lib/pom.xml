@@ -37,6 +37,11 @@
       <artifactId>spring-boot-starter-web</artifactId>
       <scope>provided</scope>
     </dependency>
+    <!-- GlobalExceptionHandler uses @Slf4j; slf4j-api must be on compile classpath -->
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+    </dependency>
     <dependency>
       <groupId>jakarta.persistence</groupId>
       <artifactId>jakarta.persistence-api</artifactId>

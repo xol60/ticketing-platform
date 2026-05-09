@@ -30,9 +30,9 @@ server:
 
 db:
   master:
-    url: ${DB_MASTER_URL:jdbc:postgresql://localhost:5432/notification_db}
+    url: ${DB_MASTER_URL:jdbc:postgresql://localhost:5436/notification_db}
   slave:
-    url: ${DB_SLAVE_URL:jdbc:postgresql://localhost:5433/notification_db}
+    url: ${DB_SLAVE_URL:jdbc:postgresql://localhost:5436/notification_db}
   username: ${DB_USER:ticketing}
   password: ${DB_PASSWORD:ticketing_secret}
 
@@ -88,6 +88,6 @@ spring:
 
 db:
   master:
-    url: jdbc:postgresql://localhost:5432/notification_db
+    url: jdbc:postgresql://localhost:5436/notification_db
   slave:
-    url: jdbc:postgresql://localhost:5433/notification_db
+    url: jdbc:postgresql://localhost:5436/notification_db

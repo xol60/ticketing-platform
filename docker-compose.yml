@@ -27,16 +27,17 @@ services:
       - postgres-master-data:/var/lib/postgresql/data
       - ./docker/postgres/init-master.sql:/docker-entrypoint-initdb.d/01-init.sql
       - ./docker/postgres/postgresql-master.conf:/etc/postgresql/postgresql.conf
+      - ./docker/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf
     command: postgres -c config_file=/etc/postgresql/postgresql.conf
     ports:
       - "5436:5432"
     networks:
       - ticketing-net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ticketing"]
+      test: ["CMD-SHELL", "pg_isready -U ticketing -d ticketing && psql -U ticketing -d ticketing -tAc \"SELECT 1 FROM pg_database WHERE datname='secondary_market_db'\" | grep -q 1"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 15
 
   # Streaming replica — serves all DB_SLAVE_URL reads.
   # init-slave.sh checks for standby.signal (written by pg_basebackup -R)
@@ -45,22 +46,22 @@ services:
     image: postgres:16-alpine
     container_name: postgres-slave
     environment:
-      POSTGRES_USER: ticketing
-      POSTGRES_PASSWORD: ticketing_secret
-      POSTGRES_DB: ticketing
+      PGDATA: /var/lib/postgresql/data
     volumes:
       - postgres-slave-data:/var/lib/postgresql/data
-      - ./docker/postgres/init-slave.sh:/docker-entrypoint-initdb.d/01-init-slave.sh
+      - ./docker/postgres/init-slave.sh:/init-slave.sh
+      - ./docker/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf
+    entrypoint: ["/bin/bash", "/init-slave.sh"]
     depends_on:
       postgres-master:
         condition: service_healthy
     networks:
       - ticketing-net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ticketing"]
+      test: ["CMD-SHELL", "pg_isready -U ticketing -d ticketing && psql -U ticketing -d ticketing -tAc \"SELECT 1 FROM pg_database WHERE datname='secondary_market_db'\" | grep -q 1"]
       interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 20
 
   redis:
     image: redis:7.2-alpine
@@ -134,7 +135,7 @@ services:
     networks:
       - ticketing-net
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3

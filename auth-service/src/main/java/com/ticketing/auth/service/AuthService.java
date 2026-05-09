@@ -71,7 +71,7 @@ public class AuthService {
                 .orElseThrow(AuthException::invalidCredentials);
 
         if (!user.isEnabled()) {
-            throw new AuthException("ACCOUNT_DISABLED", "Account is disabled");
+            throw AuthException.accountDisabled();
         }
         if (user.isAccountLocked()) {
             throw AuthException.accountLocked(0);

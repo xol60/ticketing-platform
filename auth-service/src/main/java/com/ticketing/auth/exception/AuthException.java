@@ -15,6 +15,10 @@ public class AuthException extends TicketingException {
         return new AuthException(ErrorCode.AUTH_INVALID_CREDENTIALS, "Invalid email/username or password");
     }
 
+    public static AuthException accountDisabled() {
+        return new AuthException(ErrorCode.AUTH_ACCOUNT_DISABLED, "Account is disabled");
+    }
+
     public static AuthException accountLocked(long secondsRemaining) {
         return new AuthException(ErrorCode.AUTH_ACCOUNT_LOCKED,
                 "Account is locked. Try again in " + secondsRemaining + " seconds");

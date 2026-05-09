@@ -132,7 +132,8 @@ public class SecondaryMarketService {
         redisTemplate.delete(L2_PREFIX + listing.getEventId());
 
         eventPublisher.publishOrderCreated(new OrderCreatedEvent(
-                traceId, sagaId, orderId, buyerId, listing.getTicketId(), listing.getAskPrice()));
+                traceId, sagaId, orderId, buyerId, listing.getTicketId(), listing.getAskPrice(),
+                java.time.Instant.now()));
 
         log.info("Secondary purchase: listingId={} buyer={} orderId={}", id, buyerId, orderId);
         return listingMapper.toResponse(listing);

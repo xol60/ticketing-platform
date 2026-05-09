@@ -32,6 +32,7 @@ public enum ErrorCode {
 
     // ── Auth domain ───────────────────────────────────────────────────────────
     AUTH_INVALID_CREDENTIALS(401),
+    AUTH_ACCOUNT_DISABLED(403),
     AUTH_ACCOUNT_LOCKED(423),
     AUTH_TOKEN_EXPIRED(401),
     AUTH_TOKEN_INVALID(401),

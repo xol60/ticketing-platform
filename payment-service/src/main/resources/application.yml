@@ -3,7 +3,7 @@ spring:
     name: payment-service
 
   datasource:
-    url: ${DB_MASTER_URL:jdbc:postgresql://localhost:5432/payment_db}
+    url: ${DB_MASTER_URL:jdbc:postgresql://localhost:5436/payment_db}
     username: ${DB_USER:ticketing}
     password: ${DB_PASSWORD:ticketing_secret}
 
@@ -26,13 +26,13 @@ spring:
       port: ${REDIS_PORT:6379}
 
   kafka:
-    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
 
 db:
   master:
-    url: ${DB_MASTER_URL:jdbc:postgresql://localhost:5432/payment_db}
+    url: ${DB_MASTER_URL:jdbc:postgresql://localhost:5436/payment_db}
   slave:
-    url: ${DB_SLAVE_URL:jdbc:postgresql://localhost:5433/payment_db}
+    url: ${DB_SLAVE_URL:jdbc:postgresql://localhost:5436/payment_db}
   username: ${DB_USER:ticketing}
   password: ${DB_PASSWORD:ticketing_secret}
 
@@ -72,7 +72,7 @@ db:
   master:
     url: jdbc:postgresql://postgres-master:5432/payment_db
   slave:
-    url: jdbc:postgresql://postgres-slave:5433/payment_db
+    url: jdbc:postgresql://postgres-slave:5432/payment_db
 
 ---
 spring:
@@ -83,10 +83,10 @@ spring:
     redis:
       host: localhost
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: localhost:29092
 
 db:
   master:
-    url: jdbc:postgresql://localhost:5432/payment_db
+    url: jdbc:postgresql://localhost:5436/payment_db
   slave:
-    url: jdbc:postgresql://localhost:5433/payment_db
+    url: jdbc:postgresql://localhost:5436/payment_db

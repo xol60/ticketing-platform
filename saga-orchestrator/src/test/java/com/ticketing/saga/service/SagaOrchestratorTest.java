@@ -80,14 +80,14 @@ class SagaOrchestratorTest {
             SagaState state = buildState(SagaStatus.STARTED);
             when(stateStore.load(SAGA_ID)).thenReturn(state);
 
-            var event = new TicketReservedEvent(TRACE_ID, SAGA_ID, TICKET_ID, ORDER_ID, new BigDecimal("99.00"));
+            var event = new TicketReservedEvent(TRACE_ID, SAGA_ID, TICKET_ID, ORDER_ID, USER_ID, EVENT_ID, new BigDecimal("99.00"));
 
             orchestrator.onTicketReserved(event);
 
             assertThat(state.getStatus()).isEqualTo(SagaStatus.TICKET_RESERVED);
             verify(publisher).sendPriceLockCommand(
                     eq(TRACE_ID), eq(SAGA_ID), eq(TICKET_ID), eq(ORDER_ID),
-                    any(), any(), any(), eq(false));
+                    any(), any(), any(), any(), eq(false));
         }
 
         @Test
@@ -96,10 +96,10 @@ class SagaOrchestratorTest {
             SagaState state = buildState(SagaStatus.PRICING_LOCKED); // wrong
             when(stateStore.load(SAGA_ID)).thenReturn(state);
 
-            var event = new TicketReservedEvent(TRACE_ID, SAGA_ID, TICKET_ID, ORDER_ID, new BigDecimal("99.00"));
+            var event = new TicketReservedEvent(TRACE_ID, SAGA_ID, TICKET_ID, ORDER_ID, USER_ID, EVENT_ID, new BigDecimal("99.00"));
             orchestrator.onTicketReserved(event);
 
-            verify(publisher, never()).sendPriceLockCommand(any(), any(), any(), any(), any(), any(), any(), anyBoolean());
+            verify(publisher, never()).sendPriceLockCommand(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean());
         }
     }
 
@@ -244,7 +244,7 @@ class SagaOrchestratorTest {
 
             verify(publisher).sendPriceLockCommand(
                     eq(TRACE_ID), eq(SAGA_ID), eq(TICKET_ID), eq(ORDER_ID),
-                    any(), eq(new BigDecimal("120.00")), any(), eq(true)); // confirmed=true
+                    any(), eq(new BigDecimal("120.00")), any(), any(), eq(true)); // confirmed=true
         }
 
         @Test
@@ -256,7 +256,7 @@ class SagaOrchestratorTest {
             var cmd = new OrderPriceConfirmCommand(TRACE_ID, SAGA_ID, ORDER_ID, USER_ID);
             orchestrator.onPriceConfirmReceived(cmd);
 
-            verify(publisher, never()).sendPriceLockCommand(any(), any(), any(), any(), any(), any(), any(), anyBoolean());
+            verify(publisher, never()).sendPriceLockCommand(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean());
         }
     }
 
@@ -335,11 +335,12 @@ class SagaOrchestratorTest {
             SagaState state = buildState(SagaStatus.PRICING_LOCKED);
             when(stateStore.load(SAGA_ID)).thenReturn(state);
 
-            var event = new TicketReleasedEvent(TRACE_ID, SAGA_ID, TICKET_ID, ORDER_ID, "Admin released");
+            var event = new TicketReleasedEvent(TRACE_ID, SAGA_ID, TICKET_ID, ORDER_ID, EVENT_ID, "Admin released");
             orchestrator.onTicketReleased(event);
 
             assertThat(state.getStatus()).isEqualTo(SagaStatus.FAILED);
-            verify(publisher).sendPriceUnlockCommand(any(), any(), any(), any(), anyString());
+            // PRICING_LOCKED = payment may be in-flight → send cancel (null ref = not yet charged)
+            verify(publisher).sendPaymentCancelCommand(any(), any(), eq(ORDER_ID), isNull());
             verify(publisher).publishOrderFailed(any(), any(), eq(ORDER_ID), any(), any(), anyString());
         }
 
@@ -349,11 +350,11 @@ class SagaOrchestratorTest {
             SagaState state = buildState(SagaStatus.COMPLETED);
             when(stateStore.load(SAGA_ID)).thenReturn(state);
 
-            var event = new TicketReleasedEvent(TRACE_ID, SAGA_ID, TICKET_ID, ORDER_ID, "Admin released");
+            var event = new TicketReleasedEvent(TRACE_ID, SAGA_ID, TICKET_ID, ORDER_ID, EVENT_ID, "Admin released");
             orchestrator.onTicketReleased(event);
 
             verify(publisher, never()).publishOrderFailed(any(), any(), any(), any(), any(), any());
-            verify(publisher, never()).sendPriceUnlockCommand(any(), any(), any(), any(), any());
+            verify(publisher, never()).sendPaymentCancelCommand(any(), any(), any(), any());
         }
 
         @Test
@@ -362,7 +363,7 @@ class SagaOrchestratorTest {
             SagaState state = buildState(SagaStatus.CANCELLED);
             when(stateStore.load(SAGA_ID)).thenReturn(state);
 
-            var event = new TicketReleasedEvent(TRACE_ID, SAGA_ID, TICKET_ID, ORDER_ID, "User cancelled");
+            var event = new TicketReleasedEvent(TRACE_ID, SAGA_ID, TICKET_ID, ORDER_ID, EVENT_ID, "User cancelled");
             orchestrator.onTicketReleased(event);
 
             verify(publisher, never()).publishOrderFailed(any(), any(), any(), any(), any(), any());
@@ -382,10 +383,10 @@ class SagaOrchestratorTest {
         void ignores_unknown_saga_on_ticket_reserved() {
             when(stateStore.load(SAGA_ID)).thenReturn(null);
 
-            var event = new TicketReservedEvent(TRACE_ID, SAGA_ID, TICKET_ID, ORDER_ID, new BigDecimal("99.00"));
+            var event = new TicketReservedEvent(TRACE_ID, SAGA_ID, TICKET_ID, ORDER_ID, USER_ID, EVENT_ID, new BigDecimal("99.00"));
             orchestrator.onTicketReserved(event);
 
-            verify(publisher, never()).sendPriceLockCommand(any(), any(), any(), any(), any(), any(), any(), anyBoolean());
+            verify(publisher, never()).sendPriceLockCommand(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean());
         }
 
         @Test

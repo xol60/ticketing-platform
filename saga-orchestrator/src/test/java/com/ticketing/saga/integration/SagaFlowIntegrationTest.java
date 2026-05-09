@@ -131,7 +131,7 @@ class SagaFlowIntegrationTest {
 
         // Step 2: simulate ticket-service response
         publish(Topics.TICKET_RESERVED, TICKET_ID,
-                new TicketReservedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, new BigDecimal("99.00")));
+                new TicketReservedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, USER_ID, EVENT_ID, new BigDecimal("99.00")));
 
         // Orchestrator should send PriceLockCommand
         DomainEvent lockCmd = pollForEvent(Topics.PRICING_LOCK_CMD, sagaId);
@@ -161,7 +161,7 @@ class SagaFlowIntegrationTest {
 
         // Step 5: simulate ticket-service confirmation
         publish(Topics.TICKET_CONFIRMED, TICKET_ID,
-                new TicketConfirmedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID));
+                new TicketConfirmedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, USER_ID));
 
         // Orchestrator should publish OrderConfirmedEvent
         DomainEvent orderConfirmed = pollForEvent(Topics.ORDER_CONFIRMED, sagaId);
@@ -193,7 +193,7 @@ class SagaFlowIntegrationTest {
 
         // Simulate ticket reserved
         publish(Topics.TICKET_RESERVED, TICKET_ID,
-                new TicketReservedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, new BigDecimal("1.00")));
+                new TicketReservedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, USER_ID, EVENT_ID, new BigDecimal("1.00")));
 
         // Pricing service detects fabricated price
         publish(Topics.PRICING_FAILED, ORDER_ID,
@@ -228,7 +228,7 @@ class SagaFlowIntegrationTest {
         pollForEvent(Topics.TICKET_CMD, sagaId);
 
         publish(Topics.TICKET_RESERVED, TICKET_ID,
-                new TicketReservedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, new BigDecimal("99.00")));
+                new TicketReservedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, USER_ID, EVENT_ID, new BigDecimal("99.00")));
 
         // Pricing detects stale price
         publish(Topics.PRICING_PRICE_CHANGED, ORDER_ID,
@@ -269,7 +269,7 @@ class SagaFlowIntegrationTest {
         pollForEvent(Topics.TICKET_CMD, sagaId);
 
         publish(Topics.TICKET_CONFIRMED, TICKET_ID,
-                new TicketConfirmedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID));
+                new TicketConfirmedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, USER_ID));
 
         DomainEvent orderConfirmed = pollForEvent(Topics.ORDER_CONFIRMED, sagaId);
         assertThat(((OrderConfirmedEvent) orderConfirmed).getFinalPrice())
@@ -294,7 +294,7 @@ class SagaFlowIntegrationTest {
         pollForEvent(Topics.TICKET_CMD, sagaId);
 
         publish(Topics.TICKET_RESERVED, TICKET_ID,
-                new TicketReservedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, new BigDecimal("99.00")));
+                new TicketReservedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, USER_ID, EVENT_ID, new BigDecimal("99.00")));
 
         publish(Topics.PRICING_PRICE_CHANGED, ORDER_ID,
                 new PriceChangedEvent(TRACE_ID, sagaId, ORDER_ID, TICKET_ID,
@@ -337,7 +337,7 @@ class SagaFlowIntegrationTest {
         pollForEvent(Topics.TICKET_CMD, sagaId);
 
         publish(Topics.TICKET_RESERVED, TICKET_ID,
-                new TicketReservedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, new BigDecimal("99.00")));
+                new TicketReservedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, USER_ID, EVENT_ID, new BigDecimal("99.00")));
 
         pollForEvent(Topics.PRICING_LOCK_CMD, sagaId);
 
@@ -374,7 +374,7 @@ class SagaFlowIntegrationTest {
         pollForEvent(Topics.TICKET_CMD, sagaId);
 
         publish(Topics.TICKET_RESERVED, TICKET_ID,
-                new TicketReservedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, new BigDecimal("99.00")));
+                new TicketReservedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, USER_ID, EVENT_ID, new BigDecimal("99.00")));
 
         pollForEvent(Topics.PRICING_LOCK_CMD, sagaId);
 
@@ -383,7 +383,7 @@ class SagaFlowIntegrationTest {
 
         // Ticket gets released externally while saga is at PRICING_LOCKED
         publish(Topics.TICKET_RELEASED, TICKET_ID,
-                new TicketReleasedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, "Admin override"));
+                new TicketReleasedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, EVENT_ID, "Admin override"));
 
         // Must send price unlock command
         DomainEvent unlockCmd = pollForEvent(Topics.PRICING_UNLOCK_CMD, sagaId);

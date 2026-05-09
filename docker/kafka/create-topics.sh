@@ -20,12 +20,17 @@ echo "Waiting for Kafka to be ready..."
 sleep 5
 
 # Ticket topics
-create_topic "ticket.reserve.cmd"
+# Unified command topic — reserve, confirm, release all keyed by orderId so they
+# land on the same partition and are consumed in order (replaces split cmd topics).
+create_topic "ticket.cmd"
 create_topic "ticket.reserved"
-create_topic "ticket.release.cmd"
 create_topic "ticket.released"
-create_topic "ticket.confirm.cmd"
 create_topic "ticket.confirmed"
+# Legacy split topics kept so existing offsets / DLQ consumers aren't orphaned;
+# new code never produces to these but they must exist for broker compatibility.
+create_topic "ticket.reserve.cmd"
+create_topic "ticket.release.cmd"
+create_topic "ticket.confirm.cmd"
 
 # Order topics
 create_topic "order.created"
@@ -44,10 +49,14 @@ create_topic "pricing.failed"
 create_topic "price.updated"
 
 # Payment topics
-create_topic "payment.charge.cmd"
+# Unified command topic — charge and cancel keyed by orderId → same partition.
+create_topic "payment.cmd"
 create_topic "payment.succeeded"
+create_topic "payment.refunded"
 create_topic "payment.failed"
 create_topic "payment.dlq" 1   # DLQ single partition for ordering
+# Legacy split topic kept for broker compatibility.
+create_topic "payment.charge.cmd"
 
 # Saga
 create_topic "saga.compensate"

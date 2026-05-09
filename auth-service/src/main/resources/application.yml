@@ -40,9 +40,9 @@ server:
 # ── Database routing (master/slave) ──────────────────────────────────────────
 db:
   master:
-    url: ${DB_MASTER_URL:jdbc:postgresql://localhost:5432/auth_db}
+    url: ${DB_MASTER_URL:jdbc:postgresql://localhost:5436/auth_db}
   slave:
-    url: ${DB_SLAVE_URL:jdbc:postgresql://localhost:5433/auth_db}
+    url: ${DB_SLAVE_URL:jdbc:postgresql://localhost:5436/auth_db}
   username: ${DB_USER:ticketing}
   password: ${DB_PASSWORD:ticketing_secret}
 
@@ -108,6 +108,6 @@ spring:
       host: localhost
 db:
   master:
-    url: jdbc:postgresql://localhost:5432/auth_db
+    url: jdbc:postgresql://localhost:5436/auth_db
   slave:
-    url: jdbc:postgresql://localhost:5433/auth_db
+    url: jdbc:postgresql://localhost:5436/auth_db
