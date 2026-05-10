@@ -29,8 +29,7 @@ services:
       - ./docker/postgres/postgresql-master.conf:/etc/postgresql/postgresql.conf
       - ./docker/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf
     command: postgres -c config_file=/etc/postgresql/postgresql.conf
-    ports:
-      - "5436:5432"
+    # ports: not exposed in base — use docker-compose.dev.yml for local access
     networks:
       - ticketing-net
     healthcheck:
@@ -70,8 +69,7 @@ services:
     volumes:
       - redis-data:/data
       - ./docker/redis/redis.conf:/usr/local/etc/redis/redis.conf
-    ports:
-      - "6379:6379"
+    # ports: not exposed in base — use docker-compose.dev.yml for local access
     networks:
       - ticketing-net
     healthcheck:
@@ -101,8 +99,7 @@ services:
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
     volumes:
       - kafka-data:/var/lib/kafka/data
-    ports:
-      - "29092:29092"
+    # ports: not exposed in base — use docker-compose.dev.yml for local access
     networks:
       - ticketing-net
     healthcheck:
@@ -167,8 +164,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       JWT_SECRET: ${JWT_SECRET:-changeme_use_a_real_secret_in_production_256bits}
-    ports:
-      - "8090:8090"
+    # ports: not exposed in base — Nginx reaches gateway via internal DNS
     depends_on:
       redis:
         condition: service_healthy

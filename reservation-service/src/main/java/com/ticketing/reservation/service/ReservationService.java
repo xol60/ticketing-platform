@@ -178,6 +178,12 @@ public class ReservationService {
 
         log.info("User {} joined queue for ticket {} reservationId={} depth≤{}",
                 userId, ticketId, reservation.getId(), MAX_QUEUE_DEPTH);
+
+        // Speculatively try to promote: if this is the first person in an empty queue
+        // (no exclusive hold) they get promoted immediately. If someone already holds
+        // the exclusive window, doPromoteNext() returns early — safe to call always.
+        doPromoteNext(ticketId, null);
+
         return reservation;
     }
 
@@ -289,12 +295,20 @@ public class ReservationService {
      * If the queue is empty the exclusive hold is cleared so no ghost key lingers.
      */
     private void doPromoteNext(String ticketId, String traceId) {
-        String queueKey = QUEUE_PREFIX + ticketId;
+        String queueKey     = QUEUE_PREFIX + ticketId;
+        String exclusiveKey = EXCLUSIVE_PREFIX + ticketId;
+
+        // Guard: if someone is already holding the exclusive window, don't double-promote.
+        // This makes doPromoteNext() safe to call speculatively (e.g. right after joinQueue).
+        if (Boolean.TRUE.equals(redisTemplate.hasKey(exclusiveKey))) {
+            log.debug("Exclusive hold active for ticket={} — skipping promote", ticketId);
+            return;
+        }
 
         Set<String> top = redisTemplate.opsForZSet().range(queueKey, 0, 0);
         if (top == null || top.isEmpty()) {
             log.info("Queue empty for ticket={} — clearing exclusive hold if any", ticketId);
-            redisTemplate.delete(EXCLUSIVE_PREFIX + ticketId);
+            redisTemplate.delete(exclusiveKey);
             return;
         }
 

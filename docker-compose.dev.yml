@@ -17,7 +17,7 @@ services:
 
   postgres-master:
     ports:
-      - "5436:5432"   # already in base; explicit here for clarity
+      - "5436:5432"   # dev only — connect via DBeaver/pgAdmin on localhost:5436
 
   redis:
     ports:

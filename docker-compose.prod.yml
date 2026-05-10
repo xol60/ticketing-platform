@@ -18,7 +18,7 @@ services:
 
   postgres-master:
     restart: always
-    ports: []           # not exposed to host in prod
+    # ports: not declared in base — no host exposure by design
     deploy:
       resources:
         limits:
@@ -27,7 +27,6 @@ services:
 
   redis:
     restart: always
-    ports: []
     deploy:
       resources:
         limits:
@@ -36,7 +35,6 @@ services:
 
   kafka:
     restart: always
-    ports: []           # 29092 not exposed in prod
     deploy:
       resources:
         limits:

@@ -40,7 +40,8 @@ public class CircuitBreakerManager {
             "pricing-service",
             "reservation-service",
             "payment-service",
-            "notification-service"
+            "notification-service",
+            "secondary-market-service"
     };
 
     @PostConstruct
@@ -95,12 +96,27 @@ public class CircuitBreakerManager {
     }
 
     private String resolveService(String path) {
+        // ── Regular routes ───────────────────────────────────────────────────
         if (path.startsWith("/api/auth"))          return "auth-service";
         if (path.startsWith("/api/tickets"))       return "ticket-service";
         if (path.startsWith("/api/orders"))        return "order-service";
         if (path.startsWith("/api/pricing"))       return "pricing-service";
         if (path.startsWith("/api/reservations"))  return "reservation-service";
         if (path.startsWith("/api/payments"))      return "payment-service";
-        return "ticket-service"; // default fallback
+        if (path.startsWith("/api/secondary"))     return "secondary-market-service";
+
+        // ── Admin routes — map to the owning service ─────────────────────────
+        if (path.startsWith("/api/admin/users"))         return "auth-service";
+        if (path.startsWith("/api/admin/events"))        return "ticket-service";
+        if (path.startsWith("/api/admin/tickets"))       return "ticket-service";
+        if (path.startsWith("/api/admin/orders"))        return "order-service";
+        if (path.startsWith("/api/admin/payments"))      return "payment-service";
+        if (path.startsWith("/api/admin/sagas"))         return "saga-orchestrator";
+        if (path.startsWith("/api/admin/price-rules"))   return "pricing-service";
+        if (path.startsWith("/api/admin/reservations"))  return "reservation-service";
+        if (path.startsWith("/api/admin/listings"))      return "secondary-market-service";
+        if (path.startsWith("/api/admin/notifications")) return "notification-service";
+
+        return "ticket-service"; // conservative fallback
     }
 }

@@ -70,5 +70,14 @@ create_topic "notification.send"
 # Security — single partition to preserve per-user ordering
 create_topic "auth.security.alert" 1
 
+# Event lifecycle
+create_topic "event.status.changed"
+
+# Flash sale
+create_topic "sale.flash"
+
+# Pricing unlock command
+create_topic "pricing.unlock.cmd"
+
 echo "All topics created successfully"
 kafka-topics --bootstrap-server $KAFKA --list
