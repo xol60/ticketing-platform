@@ -20,13 +20,46 @@ public class SagaCommandPublisher {
         this.kafkaTemplate = kafkaTemplate;
     }
 
+    // ── Internal helper ───────────────────────────────────────────────────────
+
+    /**
+     * Send a command/event and attach a completion callback for observability.
+     *
+     * <p><b>On success:</b> debug-logs the broker partition and offset — useful for
+     * end-to-end tracing and lag monitoring.
+     *
+     * <p><b>On failure:</b> error-logs with enough context for ops to identify which
+     * saga is stuck. Previously all sends were fire-and-forget with no callback, so a
+     * Kafka produce error would only surface five minutes later when the watchdog
+     * cancelled the saga. With this callback the problem is visible immediately.
+     *
+     * <p><b>Why not block on the future?</b> Blocking would hold the Kafka consumer
+     * thread open for the full broker round-trip (~5–30 ms), halving throughput for
+     * that partition. The callback runs on the Kafka producer I/O thread instead.
+     */
+    private void send(String topic, String key, DomainEvent event, String label) {
+        kafkaTemplate.send(topic, key, event)
+                .whenComplete((result, ex) -> {
+                    if (ex != null) {
+                        log.error("PUBLISH FAILED [{}] topic={} key={} — saga stuck until watchdog fires: {}",
+                                label, topic, key, ex.getMessage());
+                    } else {
+                        log.debug("Published [{}] topic={} key={} partition={} offset={}",
+                                label, topic, key,
+                                result.getRecordMetadata().partition(),
+                                result.getRecordMetadata().offset());
+                    }
+                });
+    }
+
+    // ── Commands ──────────────────────────────────────────────────────────────
+
     public void sendTicketReserveCommand(String traceId, String sagaId,
                                          String ticketId, String orderId, String userId) {
         TicketReserveCommand cmd = new TicketReserveCommand(traceId, sagaId, ticketId, orderId, userId);
         log.info("Publishing TicketReserveCommand: sagaId={} ticketId={} orderId={}", sagaId, ticketId, orderId);
-        // Uses TICKET_CMD (unified command topic) — all ticket commands for the same orderId
-        // land on the same partition → reserve, confirm, and release are consumed in order.
-        kafkaTemplate.send(Topics.TICKET_CMD, orderId, cmd);
+        // TICKET_CMD keyed by orderId → reserve/confirm/release for same order on same partition.
+        send(Topics.TICKET_CMD, orderId, cmd, "TicketReserveCommand sagaId=" + sagaId);
     }
 
     /**
@@ -42,7 +75,7 @@ public class SagaCommandPublisher {
                 traceId, sagaId, ticketId, orderId, eventId, userPrice, facePrice, orderCreatedAt, confirmed);
         log.info("Publishing PriceLockCommand: sagaId={} ticketId={} orderId={} confirmed={}",
                 sagaId, ticketId, orderId, confirmed);
-        kafkaTemplate.send(Topics.PRICING_LOCK_CMD, orderId, cmd);
+        send(Topics.PRICING_LOCK_CMD, orderId, cmd, "PriceLockCommand sagaId=" + sagaId);
     }
 
     public void sendPaymentChargeCommand(String traceId, String sagaId,
@@ -50,72 +83,23 @@ public class SagaCommandPublisher {
                                           String ticketId, BigDecimal amount) {
         PaymentChargeCommand cmd = new PaymentChargeCommand(traceId, sagaId, orderId, userId, ticketId, amount);
         log.info("Publishing PaymentChargeCommand: sagaId={} orderId={} amount={}", sagaId, orderId, amount);
-        // Uses PAYMENT_CMD (unified command topic) so charge and cancel for the same
-        // orderId always land on the same partition → sequential, ordered consumption.
-        kafkaTemplate.send(Topics.PAYMENT_CMD, orderId, cmd);
+        // PAYMENT_CMD keyed by orderId → charge and cancel for same order are ordered.
+        send(Topics.PAYMENT_CMD, orderId, cmd, "PaymentChargeCommand sagaId=" + sagaId);
     }
 
     public void sendTicketConfirmCommand(String traceId, String sagaId,
                                           String ticketId, String orderId) {
         TicketConfirmCommand cmd = new TicketConfirmCommand(traceId, sagaId, ticketId, orderId);
         log.info("Publishing TicketConfirmCommand: sagaId={} ticketId={} orderId={}", sagaId, ticketId, orderId);
-        kafkaTemplate.send(Topics.TICKET_CMD, orderId, cmd);
+        send(Topics.TICKET_CMD, orderId, cmd, "TicketConfirmCommand sagaId=" + sagaId);
     }
 
     public void sendTicketReleaseCommand(String traceId, String sagaId,
                                           String ticketId, String orderId, String reason) {
         TicketReleaseCommand cmd = new TicketReleaseCommand(traceId, sagaId, ticketId, orderId, reason);
         log.info("Publishing TicketReleaseCommand: sagaId={} ticketId={} orderId={} reason={}",
-                sagaId, ticketId, orderId, reason);
-        kafkaTemplate.send(Topics.TICKET_CMD, orderId, cmd);
-    }
-
-    public void publishOrderConfirmed(String traceId, String sagaId,
-                                       String orderId, String userId,
-                                       String ticketId, BigDecimal finalPrice,
-                                       String paymentReference) {
-        OrderConfirmedEvent event = new OrderConfirmedEvent(
-                traceId, sagaId, orderId, userId, ticketId, finalPrice, paymentReference);
-        log.info("Publishing OrderConfirmedEvent: sagaId={} orderId={}", sagaId, orderId);
-        kafkaTemplate.send(Topics.ORDER_CONFIRMED, orderId, event);
-    }
-
-    public void publishOrderFailed(String traceId, String sagaId,
-                                    String orderId, String userId,
-                                    String ticketId, String reason) {
-        OrderFailedEvent event = new OrderFailedEvent(traceId, sagaId, orderId, userId, ticketId, reason);
-        log.info("Publishing OrderFailedEvent: sagaId={} orderId={} reason={}", sagaId, orderId, reason);
-        kafkaTemplate.send(Topics.ORDER_FAILED, orderId, event);
-    }
-
-    public void publishOrderCancelled(String traceId, String sagaId,
-                                       String orderId, String userId,
-                                       String ticketId, String reason) {
-        OrderCancelledEvent event = new OrderCancelledEvent(
-                traceId, sagaId, orderId, userId, ticketId, reason);
-        log.info("Publishing OrderCancelledEvent: sagaId={} orderId={} reason={}", sagaId, orderId, reason);
-        kafkaTemplate.send(Topics.ORDER_CANCELLED, orderId, event);
-    }
-
-    /** Notifies order-service that the price changed and user confirmation is required. */
-    public void publishOrderPriceChanged(String traceId, String sagaId,
-                                          String orderId, String userId,
-                                          BigDecimal oldPrice, BigDecimal newPrice,
-                                          Instant confirmExpiresAt) {
-        OrderPriceChangedEvent event = new OrderPriceChangedEvent(
-                traceId, sagaId, orderId, userId, oldPrice, newPrice, confirmExpiresAt);
-        log.info("Publishing OrderPriceChangedEvent: sagaId={} orderId={} oldPrice={} newPrice={}",
-                sagaId, orderId, oldPrice, newPrice);
-        kafkaTemplate.send(Topics.ORDER_PRICE_CHANGED, orderId, event);
-    }
-
-    public void publishSagaCompensate(String traceId, String sagaId,
-                                       String failedStep, String orderId,
-                                       String ticketId, String reason) {
-        SagaCompensateEvent event = new SagaCompensateEvent(
-                traceId, sagaId, failedStep, orderId, ticketId, reason);
-        log.info("Publishing SagaCompensateEvent: sagaId={} failedStep={} orderId={}", sagaId, failedStep, orderId);
-        kafkaTemplate.send(Topics.SAGA_COMPENSATE, orderId, event);
+                sagaId, orderId, reason);
+        send(Topics.TICKET_CMD, orderId, cmd, "TicketReleaseCommand sagaId=" + sagaId);
     }
 
     /**
@@ -132,6 +116,56 @@ public class SagaCommandPublisher {
                                           String orderId, String paymentReference) {
         PaymentCancelCommand cmd = new PaymentCancelCommand(traceId, sagaId, orderId, paymentReference);
         log.warn("Publishing PaymentCancelCommand: sagaId={} orderId={} ref={}", sagaId, orderId, paymentReference);
-        kafkaTemplate.send(Topics.PAYMENT_CMD, orderId, cmd);
+        send(Topics.PAYMENT_CMD, orderId, cmd, "PaymentCancelCommand sagaId=" + sagaId);
+    }
+
+    // ── Events ────────────────────────────────────────────────────────────────
+
+    public void publishOrderConfirmed(String traceId, String sagaId,
+                                       String orderId, String userId,
+                                       String ticketId, BigDecimal finalPrice,
+                                       String paymentReference) {
+        OrderConfirmedEvent event = new OrderConfirmedEvent(
+                traceId, sagaId, orderId, userId, ticketId, finalPrice, paymentReference);
+        log.info("Publishing OrderConfirmedEvent: sagaId={} orderId={}", sagaId, orderId);
+        send(Topics.ORDER_CONFIRMED, orderId, event, "OrderConfirmedEvent sagaId=" + sagaId);
+    }
+
+    public void publishOrderFailed(String traceId, String sagaId,
+                                    String orderId, String userId,
+                                    String ticketId, String reason) {
+        OrderFailedEvent event = new OrderFailedEvent(traceId, sagaId, orderId, userId, ticketId, reason);
+        log.info("Publishing OrderFailedEvent: sagaId={} orderId={} reason={}", sagaId, orderId, reason);
+        send(Topics.ORDER_FAILED, orderId, event, "OrderFailedEvent sagaId=" + sagaId);
+    }
+
+    public void publishOrderCancelled(String traceId, String sagaId,
+                                       String orderId, String userId,
+                                       String ticketId, String reason) {
+        OrderCancelledEvent event = new OrderCancelledEvent(
+                traceId, sagaId, orderId, userId, ticketId, reason);
+        log.info("Publishing OrderCancelledEvent: sagaId={} orderId={} reason={}", sagaId, orderId, reason);
+        send(Topics.ORDER_CANCELLED, orderId, event, "OrderCancelledEvent sagaId=" + sagaId);
+    }
+
+    /** Notifies order-service that the price changed and user confirmation is required. */
+    public void publishOrderPriceChanged(String traceId, String sagaId,
+                                          String orderId, String userId,
+                                          BigDecimal oldPrice, BigDecimal newPrice,
+                                          Instant confirmExpiresAt) {
+        OrderPriceChangedEvent event = new OrderPriceChangedEvent(
+                traceId, sagaId, orderId, userId, oldPrice, newPrice, confirmExpiresAt);
+        log.info("Publishing OrderPriceChangedEvent: sagaId={} orderId={} oldPrice={} newPrice={}",
+                sagaId, orderId, oldPrice, newPrice);
+        send(Topics.ORDER_PRICE_CHANGED, orderId, event, "OrderPriceChangedEvent sagaId=" + sagaId);
+    }
+
+    public void publishSagaCompensate(String traceId, String sagaId,
+                                       String failedStep, String orderId,
+                                       String ticketId, String reason) {
+        SagaCompensateEvent event = new SagaCompensateEvent(
+                traceId, sagaId, failedStep, orderId, ticketId, reason);
+        log.info("Publishing SagaCompensateEvent: sagaId={} failedStep={} orderId={}", sagaId, failedStep, orderId);
+        send(Topics.SAGA_COMPENSATE, orderId, event, "SagaCompensateEvent sagaId=" + sagaId);
     }
 }

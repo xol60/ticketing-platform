@@ -42,6 +42,11 @@ public class KafkaConfig {
         props.put(ProducerConfig.ACKS_CONFIG, "all");
         props.put(ProducerConfig.RETRIES_CONFIG, 3);
         props.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
+        // Batch messages for up to 5 ms before sending — improves throughput under burst load
+        // while adding negligible latency relative to the ~200 ms end-to-end saga duration.
+        props.put(ProducerConfig.LINGER_MS_CONFIG, 5);
+        props.put(ProducerConfig.BATCH_SIZE_CONFIG, 32_768);       // 32 KB batch
+        props.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, "snappy");
         props.put(JsonSerializer.ADD_TYPE_INFO_HEADERS, false);
         return new DefaultKafkaProducerFactory<>(props, new StringSerializer(),
                 new JsonSerializer<>(kafkaObjectMapper()));

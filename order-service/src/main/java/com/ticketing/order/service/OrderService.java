@@ -15,6 +15,7 @@ import com.ticketing.order.mapper.OrderMapper;
 import com.ticketing.order.sse.OrderSseRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -26,36 +27,66 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class OrderService {
 
     private static final String   REDIS_ORDER_KEY_PREFIX = "order:";
     private static final Duration REDIS_TTL              = Duration.ofMinutes(5);
 
-    private final OrderRepository       orderRepository;
-    private final OrderMapper           orderMapper;
-    private final OrderEventPublisher   eventPublisher;
+    private final OrderRepository         orderRepository;
+    private final OrderMapper             orderMapper;
+    private final OrderEventPublisher     eventPublisher;
     private final RedisTemplate<String, String> redisTemplate;
-    private final ObjectMapper          objectMapper;
+    private final ObjectMapper            objectMapper;
     private final EventValidationClient   eventValidationClient;
     private final ReservationAccessClient reservationAccessClient;
     private final OrderSseRegistry        sseRegistry;
+    private final Executor                guardCheckExecutor;
+
+    public OrderService(OrderRepository orderRepository,
+                        OrderMapper orderMapper,
+                        OrderEventPublisher eventPublisher,
+                        RedisTemplate<String, String> redisTemplate,
+                        ObjectMapper objectMapper,
+                        EventValidationClient eventValidationClient,
+                        ReservationAccessClient reservationAccessClient,
+                        OrderSseRegistry sseRegistry,
+                        @Qualifier("guardCheckExecutor") Executor guardCheckExecutor) {
+        this.orderRepository         = orderRepository;
+        this.orderMapper             = orderMapper;
+        this.eventPublisher          = eventPublisher;
+        this.redisTemplate           = redisTemplate;
+        this.objectMapper            = objectMapper;
+        this.eventValidationClient   = eventValidationClient;
+        this.reservationAccessClient = reservationAccessClient;
+        this.sseRegistry             = sseRegistry;
+        this.guardCheckExecutor      = guardCheckExecutor;
+    }
 
     @Transactional
     public OrderResponse createOrder(String userId, String traceId, CreateOrderRequest request) {
-        // Guard 1: reject if ticket-service explicitly says event is closed
-        if (!eventValidationClient.isEventOpenForSales(request.getTicketId())) {
+        // Guards 1 & 2 — run in parallel (saves ~15 ms vs serial execution).
+        // Both clients are fail-open on exception, so the futures never complete exceptionally.
+        CompletableFuture<Boolean> eventOpenFuture = CompletableFuture.supplyAsync(
+                () -> eventValidationClient.isEventOpenForSales(request.getTicketId()),
+                guardCheckExecutor);
+        CompletableFuture<Boolean> queueAccessFuture = CompletableFuture.supplyAsync(
+                () -> reservationAccessClient.isAllowedToPurchase(request.getTicketId(), userId),
+                guardCheckExecutor);
+
+        // Block until both finish — total wait = max(guard1, guard2), not sum.
+        boolean eventOpen    = eventOpenFuture.join();
+        boolean queueAllowed = queueAccessFuture.join();
+
+        if (!eventOpen) {
             throw new IllegalStateException(
                     "Event is not open for sales for ticket: " + request.getTicketId());
         }
-
-        // Guard 2: queue fairness — reject if another user holds the exclusive purchase window.
-        // Fail-open: if reservation-service is down we allow the order (ticket-service
-        // pessimistic lock is the final overselling guard; queue is a fairness mechanism).
-        if (!reservationAccessClient.isAllowedToPurchase(request.getTicketId(), userId)) {
+        if (!queueAllowed) {
             throw new IllegalStateException(
                     "A different user currently holds the exclusive purchase window for ticket: "
                     + request.getTicketId()
