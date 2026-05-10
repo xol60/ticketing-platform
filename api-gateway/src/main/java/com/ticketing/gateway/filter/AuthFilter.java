@@ -69,7 +69,15 @@ public class AuthFilter implements GlobalFilter, Ordered {
         String token = authHeader.substring(7);
 
         return tokenCacheService.resolve(token)
-                .flatMap(identity -> forwardWithIdentity(exchange, chain, identity, traceId, token))
+                .flatMap(identity -> {
+                    // Admin-only paths: reject non-ADMIN users with 403
+                    if (path.startsWith("/api/admin/") && !"ADMIN".equals(identity.getRole())) {
+                        log.warn("Forbidden admin access: userId={} role={} path={}",
+                                identity.getUserId(), identity.getRole(), path);
+                        return rejectWith403(exchange, traceId, "Admin access required");
+                    }
+                    return forwardWithIdentity(exchange, chain, identity, traceId, token);
+                })
                 .switchIfEmpty(
                     Mono.defer(() -> rejectWith401(exchange, traceId, "Invalid or expired token"))
                 );
@@ -118,6 +126,22 @@ public class AuthFilter implements GlobalFilter, Ordered {
         exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
         exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
 
+        try {
+            byte[] body = objectMapper.writeValueAsBytes(Map.of(
+                    "success", false,
+                    "message", reason,
+                    "traceId", Optional.ofNullable(traceId).orElse("")
+            ));
+            DataBuffer buffer = exchange.getResponse().bufferFactory().wrap(body);
+            return exchange.getResponse().writeWith(Mono.just(buffer));
+        } catch (Exception e) {
+            return exchange.getResponse().setComplete();
+        }
+    }
+
+    private Mono<Void> rejectWith403(ServerWebExchange exchange, String traceId, String reason) {
+        exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
+        exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
         try {
             byte[] body = objectMapper.writeValueAsBytes(Map.of(
                     "success", false,

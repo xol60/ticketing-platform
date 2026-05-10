@@ -2,6 +2,8 @@ package com.ticketing.reservation.domain.repository;
 
 import com.ticketing.reservation.domain.model.Reservation;
 import com.ticketing.reservation.domain.model.ReservationStatus;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -19,6 +21,9 @@ public interface ReservationRepository extends JpaRepository<Reservation, UUID> 
             String userId, String ticketId, ReservationStatus status);
 
     List<Reservation> findByStatusAndExpiresAtBefore(ReservationStatus status, Instant threshold);
+
+    /** Paginated filter by status — used by the admin read API. */
+    Page<Reservation> findByStatus(ReservationStatus status, Pageable pageable);
 
     /**
      * Returns all QUEUED reservations that have not yet expired, ordered by join time (FIFO).

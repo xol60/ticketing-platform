@@ -147,7 +147,7 @@ class AuthServiceTest {
             when(userRepository.findByEmail("alice@example.com"))
                     .thenReturn(Optional.of(activeUser));
             when(passwordEncoder.matches("Password@1234", "hashed")).thenReturn(true);
-            when(jwtTokenService.generateAccessToken(activeUser)).thenReturn("access.token");
+            when(jwtTokenService.generateAccessToken(eq(activeUser), anyLong())).thenReturn("access.token");
             when(jwtTokenService.generateRefreshToken()).thenReturn("raw-refresh-token");
             when(jwtTokenService.hashRefreshToken("raw-refresh-token")).thenReturn("hashed-rt");
             when(jwtTokenService.refreshTokenExpirySeconds()).thenReturn(604800L);
@@ -228,7 +228,7 @@ class AuthServiceTest {
             when(jwtTokenService.hashRefreshToken("raw-refresh-token")).thenReturn("hashed-rt");
             when(refreshTokenRepository.findByTokenHash("hashed-rt"))
                     .thenReturn(Optional.of(stored));
-            when(jwtTokenService.generateAccessToken(user)).thenReturn("new-access");
+            when(jwtTokenService.generateAccessToken(eq(user), anyLong())).thenReturn("new-access");
             when(jwtTokenService.generateRefreshToken()).thenReturn("new-raw-refresh");
             when(jwtTokenService.hashRefreshToken("new-raw-refresh")).thenReturn("new-hashed-rt");
             when(jwtTokenService.refreshTokenExpirySeconds()).thenReturn(604800L);
