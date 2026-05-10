@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ticketing.common.events.*;
 import com.ticketing.order.client.EventValidationClient;
+import com.ticketing.order.client.ReservationAccessClient;
 import com.ticketing.order.domain.model.Order;
 import com.ticketing.order.domain.model.OrderStatus;
 import com.ticketing.order.domain.repository.OrderRepository;
@@ -39,15 +40,26 @@ public class OrderService {
     private final OrderEventPublisher   eventPublisher;
     private final RedisTemplate<String, String> redisTemplate;
     private final ObjectMapper          objectMapper;
-    private final EventValidationClient eventValidationClient;
-    private final OrderSseRegistry      sseRegistry;
+    private final EventValidationClient   eventValidationClient;
+    private final ReservationAccessClient reservationAccessClient;
+    private final OrderSseRegistry        sseRegistry;
 
     @Transactional
     public OrderResponse createOrder(String userId, String traceId, CreateOrderRequest request) {
-        // Early guard: reject if ticket-service explicitly says event is closed
+        // Guard 1: reject if ticket-service explicitly says event is closed
         if (!eventValidationClient.isEventOpenForSales(request.getTicketId())) {
             throw new IllegalStateException(
                     "Event is not open for sales for ticket: " + request.getTicketId());
+        }
+
+        // Guard 2: queue fairness — reject if another user holds the exclusive purchase window.
+        // Fail-open: if reservation-service is down we allow the order (ticket-service
+        // pessimistic lock is the final overselling guard; queue is a fairness mechanism).
+        if (!reservationAccessClient.isAllowedToPurchase(request.getTicketId(), userId)) {
+            throw new IllegalStateException(
+                    "A different user currently holds the exclusive purchase window for ticket: "
+                    + request.getTicketId()
+                    + ". Please join the queue via POST /api/reservations and wait for your turn.");
         }
 
         String orderId = UUID.randomUUID().toString();

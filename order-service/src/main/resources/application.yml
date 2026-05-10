@@ -43,6 +43,10 @@ clients:
     url: ${TICKET_SERVICE_URL:http://localhost:8082}
     connect-timeout-ms: 500
     read-timeout-ms: 1000
+  reservation-service:
+    url: ${RESERVATION_SERVICE_URL:http://localhost:8086}
+    connect-timeout-ms: 300
+    read-timeout-ms: 800
 
 # ── Database routing (master/slave) ──────────────────────────────────────────
 db:
@@ -97,6 +101,10 @@ clients:
     url: http://ticket-service:8082
     connect-timeout-ms: 500
     read-timeout-ms: 1000
+  reservation-service:
+    url: http://reservation-service:8086
+    connect-timeout-ms: 300
+    read-timeout-ms: 800
 
 logging:
   level:

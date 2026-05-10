@@ -1,5 +1,6 @@
 package com.ticketing.reservation.service;
 
+import com.ticketing.common.events.OrderConfirmedEvent;
 import com.ticketing.common.events.ReservationPromotedEvent;
 import com.ticketing.common.events.TicketReleasedEvent;
 import com.ticketing.reservation.domain.model.Reservation;
@@ -280,6 +281,82 @@ public class ReservationService {
         if (!expired.isEmpty()) {
             log.info("Expired {} stale reservations", expired.size());
         }
+    }
+
+    // ── Order-confirmed lifecycle ─────────────────────────────────────────────
+
+    /**
+     * Called when {@code order.confirmed} arrives — the promoted user has successfully
+     * purchased the ticket.
+     *
+     * <p>Transitions the PROMOTED reservation to PURCHASED and immediately removes
+     * the Redis exclusive hold so the key does not linger until TTL expiry.
+     *
+     * <p>Without this, the watchdog ({@link #advanceStalePromotions()}) would fire
+     * at {@code promoteExpiresAt}, find the reservation still PROMOTED, expire it,
+     * and promote the next person in queue — even though the ticket is already sold.
+     * That causes a spurious promotion followed by a failed order for the next user.
+     */
+    @Transactional
+    public void onOrderConfirmed(OrderConfirmedEvent event) {
+        reservationRepository
+                .findByUserIdAndTicketIdAndStatus(event.getUserId(), event.getTicketId(), ReservationStatus.PROMOTED)
+                .ifPresentOrElse(
+                        r -> {
+                            r.setStatus(ReservationStatus.PURCHASED);
+                            reservationRepository.save(r);
+                            // Eagerly remove the exclusive hold — ticket is sold, queue should drain cleanly.
+                            redisTemplate.delete(EXCLUSIVE_PREFIX + event.getTicketId());
+                            log.info("Reservation PURCHASED userId={} ticketId={} reservationId={}",
+                                    event.getUserId(), event.getTicketId(), r.getId());
+                        },
+                        () -> log.warn("onOrderConfirmed: no PROMOTED reservation found for " +
+                                       "userId={} ticketId={} — may have been concurrently expired",
+                                       event.getUserId(), event.getTicketId())
+                );
+    }
+
+    // ── Internal access check ─────────────────────────────────────────────────
+
+    /**
+     * Called by order-service (via internal HTTP) before creating an order to
+     * enforce queue fairness without adding a direct DB dependency.
+     *
+     * <p>Decision logic (based solely on the Redis exclusive hold key):
+     * <ul>
+     *   <li>Key absent → no active queue contention; ticket is freely purchasable.</li>
+     *   <li>Key present, value == userId → this user is PROMOTED; allow.</li>
+     *   <li>Key present, value != userId → another user holds the window; deny.</li>
+     * </ul>
+     *
+     * <p>Why Redis and not the DB?
+     * <ol>
+     *   <li>The exclusive hold key is the canonical source of truth for who may
+     *       purchase right now — it is written atomically when a user is promoted.</li>
+     *   <li>O(1) lookup with no DB round-trip.</li>
+     *   <li>If Redis is unavailable all hold keys are gone, meaning no contention
+     *       can be proved → fail-open is correct (the ticket-service pessimistic lock
+     *       is the final overselling guard).</li>
+     * </ol>
+     *
+     * @param ticketId the ticket the user wants to purchase
+     * @param userId   the user requesting to purchase
+     * @return {@code true} if the user may proceed, {@code false} if the window
+     *         belongs to a different user
+     */
+    public boolean checkPromotionAccess(String ticketId, String userId) {
+        String exclusiveKey = EXCLUSIVE_PREFIX + ticketId;
+        String holder = redisTemplate.opsForValue().get(exclusiveKey);
+        if (holder == null) {
+            // No active contention — no queue or queue just drained; open for all.
+            return true;
+        }
+        boolean allowed = holder.equals(userId);
+        if (!allowed) {
+            log.warn("Queue bypass attempt blocked: userId={} tried to order ticketId={} but exclusiveHolder={}",
+                    userId, ticketId, holder);
+        }
+        return allowed;
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

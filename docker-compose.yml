@@ -241,6 +241,7 @@ services:
       REDIS_HOST: redis
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       TICKET_SERVICE_URL: http://ticket-service:8082
+      RESERVATION_SERVICE_URL: http://reservation-service:8086
     depends_on:
       postgres-master:
         condition: service_healthy

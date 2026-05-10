@@ -17,6 +17,9 @@ public class ClientProperties {
     @Valid
     private TicketService ticketService = new TicketService();
 
+    @Valid
+    private ReservationService reservationService = new ReservationService();
+
     @Getter
     @Setter
     public static class TicketService {
@@ -29,5 +32,20 @@ public class ClientProperties {
 
         @Positive
         private int readTimeoutMs = 1000;
+    }
+
+    @Getter
+    @Setter
+    public static class ReservationService {
+
+        @NotBlank(message = "clients.reservation-service.url must be configured")
+        private String url;
+
+        @Positive
+        private int connectTimeoutMs = 300;
+
+        /** Kept short — this is a Redis-backed check, should be sub-millisecond on the server side. */
+        @Positive
+        private int readTimeoutMs = 800;
     }
 }
