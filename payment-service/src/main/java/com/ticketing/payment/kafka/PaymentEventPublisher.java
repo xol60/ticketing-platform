@@ -82,6 +82,47 @@ public class PaymentEventPublisher {
         log.warn("[Publisher] PaymentRefunded sent for orderId={} reason={}", orderId, reason);
     }
 
+    // ── Watchdog direct-field variants ────────────────────────────────────────
+    // Used by PaymentService.attemptRetry() / markFailed() where the original
+    // PaymentChargeCommand is no longer on the call stack.
+
+    public void publishPaymentSucceededDirect(String traceId, String sagaId,
+                                               String orderId, String userId,
+                                               BigDecimal amount, String reference) {
+        var event = new PaymentSucceededEvent(traceId, sagaId, orderId, userId, amount, reference);
+        send(Topics.PAYMENT_SUCCEEDED, orderId, event);
+        log.info("[Publisher] PaymentSucceeded (watchdog) sent for orderId={}", orderId);
+    }
+
+    public void publishPaymentFailedDirect(String traceId, String sagaId,
+                                            String orderId, String userId,
+                                            String reason, int attemptCount) {
+        var event = new PaymentFailedEvent(traceId, sagaId, orderId, userId, reason, attemptCount);
+        send(Topics.PAYMENT_FAILED, orderId, event);
+        log.warn("[Publisher] PaymentFailed (watchdog) sent for orderId={}", orderId);
+    }
+
+    public void publishPaymentDlqDirect(String traceId, String sagaId,
+                                         String orderId, String userId,
+                                         String reason, int attemptCount) {
+        var event = new PaymentFailedEvent(traceId, sagaId, orderId, userId, reason, attemptCount);
+        send(Topics.PAYMENT_DLQ, orderId, event);
+    }
+
+    public void publishAdminNotificationDirect(String traceId, String sagaId,
+                                                String orderId, String userId,
+                                                String reason) {
+        var notification = new NotificationSendCommand(
+                traceId, sagaId,
+                "ADMIN_ALERT", ADMIN_RECIPIENT,
+                "Payment failed for order " + orderId,
+                "Payment for orderId=" + orderId
+                        + " userId=" + userId
+                        + " failed after 3 attempts. Reason: " + reason,
+                orderId);
+        send(Topics.NOTIFICATION_SEND, orderId, notification);
+    }
+
     private void send(String topic, String key, DomainEvent event) {
         kafkaTemplate.send(topic, key, event)
                 .whenComplete((result, ex) -> {

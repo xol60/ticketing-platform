@@ -435,59 +435,67 @@ public class SagaOrchestrator {
     @Scheduled(fixedDelay = 60_000)
     public void watchdogScanForStuckSagas() {
         log.debug("Watchdog: scanning for stuck sagas...");
-        Instant stuckThreshold       = Instant.now().minus(STUCK_THRESHOLD);
-        Instant priceConfirmThreshold = Instant.now().minus(PRICE_CONFIRM_TIMEOUT);
+        Instant now                  = Instant.now();
+        Instant stuckThreshold       = now.minus(STUCK_THRESHOLD);
+        Instant priceConfirmThreshold = now.minus(PRICE_CONFIRM_TIMEOUT);
 
-        List<SagaState> allSagas = stateStore.scanActiveSagas();
+        // Use the shorter of the two thresholds so both saga types are captured
+        // in a single DB query.  The per-saga status check below separates them.
+        //
+        // Previously: scanActiveSagas() loaded ALL active sagas, deserialised every
+        // JSON blob in Java, then filtered by lastUpdatedAt → O(N) per tick.
+        //
+        // Now: Postgres applies the updated_at filter via idx_saga_states_active_stale
+        // (partial index on active rows).  Only genuinely idle sagas are returned;
+        // under normal load the result set is empty and the query is essentially free.
+        Instant earlierThreshold = priceConfirmThreshold.isBefore(stuckThreshold)
+                ? priceConfirmThreshold : stuckThreshold;
+
+        List<SagaState> staleSagas = stateStore.scanStaleSagas(earlierThreshold);
         int stuckCount = 0;
 
-        for (SagaState state : allSagas) {
-            // scanActiveSagas() already excludes terminal statuses
+        for (SagaState state : staleSagas) {
             Instant lastUpdated = state.getLastUpdatedAt();
             if (lastUpdated == null) continue;
 
-            // AWAITING_PRICE_CONFIRMATION has a longer timeout (user has 5+ minutes to respond)
-            boolean isStuck;
+            // AWAITING_PRICE_CONFIRMATION uses the shorter price-confirm timeout.
+            // All other active statuses use the general stuck-saga threshold.
             if (state.getStatus() == SagaStatus.AWAITING_PRICE_CONFIRMATION) {
-                isStuck = lastUpdated.isBefore(priceConfirmThreshold);
-                if (isStuck) {
-                    log.warn("Watchdog: price confirm timed out for sagaId={}", state.getSagaId());
-                    try {
-                        publisher.sendTicketReleaseCommand(
-                                state.getSagaId(), state.getSagaId(),
-                                state.getTicketId(), state.getOrderId(),
-                                ErrorCode.PRICE_CONFIRMATION_TIMEOUT.name());
-                        publisher.publishOrderCancelled(
-                                state.getSagaId(), state.getSagaId(),
-                                state.getOrderId(), state.getUserId(),
-                                state.getTicketId(), "Price confirmation window expired");
-                        state.setStatus(SagaStatus.CANCELLED);
-                        state.setCurrentStep("CANCELLED");
-                        state.setFailureReason("Price confirmation timed out");
-                        state.setLastUpdatedAt(Instant.now());
-                        stateStore.save(state);
-                        stuckCount++;
-                    } catch (Exception e) {
-                        log.error("Watchdog failed to cancel price-timeout saga sagaId={}: {}",
-                                state.getSagaId(), e.getMessage(), e);
-                    }
+                if (!lastUpdated.isBefore(priceConfirmThreshold)) continue; // not yet expired
+                log.warn("Watchdog: price confirm timed out for sagaId={}", state.getSagaId());
+                try {
+                    publisher.sendTicketReleaseCommand(
+                            state.getSagaId(), state.getSagaId(),
+                            state.getTicketId(), state.getOrderId(),
+                            ErrorCode.PRICE_CONFIRMATION_TIMEOUT.name());
+                    publisher.publishOrderCancelled(
+                            state.getSagaId(), state.getSagaId(),
+                            state.getOrderId(), state.getUserId(),
+                            state.getTicketId(), "Price confirmation window expired");
+                    state.setStatus(SagaStatus.CANCELLED);
+                    state.setCurrentStep("CANCELLED");
+                    state.setFailureReason("Price confirmation timed out");
+                    state.setLastUpdatedAt(Instant.now());
+                    stateStore.save(state);
+                    stuckCount++;
+                } catch (Exception e) {
+                    log.error("Watchdog failed to cancel price-timeout saga sagaId={}: {}",
+                            state.getSagaId(), e.getMessage(), e);
                 }
             } else {
-                isStuck = lastUpdated.isBefore(stuckThreshold);
-                if (isStuck) {
-                    log.warn("Watchdog detected stuck saga: sagaId={} status={} lastUpdated={} step={}",
-                            state.getSagaId(), state.getStatus(),
-                            state.getLastUpdatedAt(), state.getCurrentStep());
-                    try {
-                        state.setStatus(SagaStatus.COMPENSATING);
-                        state.setLastUpdatedAt(Instant.now());
-                        stateStore.save(state);
-                        compensateSaga(state.getSagaId(), ErrorCode.SAGA_STUCK.name());
-                        stuckCount++;
-                    } catch (Exception e) {
-                        log.error("Watchdog failed to compensate stuck saga sagaId={}: {}",
-                                state.getSagaId(), e.getMessage(), e);
-                    }
+                if (!lastUpdated.isBefore(stuckThreshold)) continue; // within normal budget
+                log.warn("Watchdog detected stuck saga: sagaId={} status={} lastUpdated={} step={}",
+                        state.getSagaId(), state.getStatus(),
+                        state.getLastUpdatedAt(), state.getCurrentStep());
+                try {
+                    state.setStatus(SagaStatus.COMPENSATING);
+                    state.setLastUpdatedAt(Instant.now());
+                    stateStore.save(state);
+                    compensateSaga(state.getSagaId(), ErrorCode.SAGA_STUCK.name());
+                    stuckCount++;
+                } catch (Exception e) {
+                    log.error("Watchdog failed to compensate stuck saga sagaId={}: {}",
+                            state.getSagaId(), e.getMessage(), e);
                 }
             }
         }
@@ -495,7 +503,7 @@ public class SagaOrchestrator {
         if (stuckCount > 0) {
             log.warn("Watchdog: handled {} stuck/timed-out saga(s)", stuckCount);
         } else {
-            log.debug("Watchdog: no stuck sagas found (scanned {})", allSagas.size());
+            log.debug("Watchdog: no stuck sagas found (scanned {} stale candidates)", staleSagas.size());
         }
     }
 

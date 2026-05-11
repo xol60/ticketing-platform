@@ -119,13 +119,22 @@ public class SagaStateStore {
     // ── Watchdog scan ─────────────────────────────────────────────────────────
 
     /**
-     * Returns all non-terminal sagas from Postgres.
-     * Used by the watchdog — reads from the durable store, not Redis,
-     * so stuck sagas are never missed due to cache eviction.
+     * Returns only non-terminal sagas that have been idle since before
+     * {@code updatedAtThreshold} — i.e. sagas that may be stuck.
+     *
+     * <p>The time filter is pushed to Postgres via
+     * {@code idx_saga_states_active_stale} (partial index on active rows,
+     * range on {@code updated_at}). Under normal load the result set is empty
+     * and the index scan terminates immediately without reading any rows.
+     *
+     * <p>Previously this method fetched <em>all</em> active sagas, deserialised
+     * every JSON blob in Java, then filtered by {@code lastUpdatedAt} — O(N)
+     * deserialisation per watchdog tick regardless of how many sagas were stuck.
      */
     @Transactional(readOnly = true)
-    public List<SagaState> scanActiveSagas() {
-        return repository.findByStatusNotIn(TERMINAL_STATUSES)
+    public List<SagaState> scanStaleSagas(Instant updatedAtThreshold) {
+        return repository
+                .findByStatusNotInAndUpdatedAtBefore(TERMINAL_STATUSES, updatedAtThreshold)
                 .stream()
                 .map(e -> deserialize(e.getStateJson()))
                 .filter(Objects::nonNull)

@@ -47,6 +47,32 @@ public class Payment {
     @Column(name = "attempt_count")
     private int attemptCount;
 
+    /**
+     * Saga identifier — stored so the retry watchdog can publish
+     * {@code PaymentSucceededEvent} / {@code PaymentFailedEvent} with the
+     * correct {@code sagaId} the saga-orchestrator uses for correlation.
+     */
+    @Column(name = "saga_id", length = 36)
+    private String sagaId;
+
+    /** Distributed trace identifier; nullable. */
+    @Column(name = "trace_id", length = 64)
+    private String traceId;
+
+    /**
+     * When the retry watchdog should next attempt a charge.
+     *
+     * <ul>
+     *   <li>Set to {@code Instant.now()} on initial save → "retry immediately".</li>
+     *   <li>Advanced to {@code now + backoff} after each failed attempt.</li>
+     *   <li>Set to {@code now + CLAIM_LEASE} by the watchdog before calling the
+     *       gateway — prevents concurrent watchdog pods from double-charging.</li>
+     *   <li>Set to {@code null} when the payment reaches a terminal status.</li>
+     * </ul>
+     */
+    @Column(name = "next_retry_at")
+    private Instant nextRetryAt;
+
     @Version
     private Long version;
 
