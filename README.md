@@ -43,11 +43,11 @@ flowchart LR
 
 > ▶️ **[Animated saga flows](./docs/animated-flows.html)** — watch a real `POST /api/orders` ripple through
 > 9 services with play/pause/step controls.
-> ([rendered on GitHub](https://htmlpreview.github.io/?https://github.com/YOUR_USERNAME/ticketing-platform/blob/main/docs/animated-flows.html))
+> ([rendered on GitHub](https://htmlpreview.github.io/?https://github.com/xol60/ticketing-platform/blob/main/docs/animated-flows.html))
 >
 > 📊 **[Static sequence diagrams](./docs/diagrams.html)** — full-size dark-mode mermaid rendering of
 > architecture + all three saga flows.
-> ([rendered on GitHub](https://htmlpreview.github.io/?https://github.com/YOUR_USERNAME/ticketing-platform/blob/main/docs/diagrams.html))
+> ([rendered on GitHub](https://htmlpreview.github.io/?https://github.com/xol60/ticketing-platform/blob/main/docs/diagrams.html))
 
 Key properties:
 
@@ -181,10 +181,10 @@ strict global ordering.
 `ticket-service` and `payment-service` each accept **multiple command types on one
 topic** instead of one topic per command:
 
-| Service         | Unified topic | Carries                                                             |
-| --------------- | ------------- | ------------------------------------------------------------------- |
+| Service         | Unified topic | Carries                                                                |
+| --------------- | ------------- | ---------------------------------------------------------------------- |
 | ticket-service  | `ticket.cmd`  | `TicketReserveCommand`, `TicketConfirmCommand`, `TicketReleaseCommand` |
-| payment-service | `payment.cmd` | `PaymentChargeCommand`, `PaymentCancelCommand`                      |
+| payment-service | `payment.cmd` | `PaymentChargeCommand`, `PaymentCancelCommand`                         |
 
 If `Release` and `Confirm` lived on separate topics, two consumer threads could pick
 them up concurrently — `Release` winning the race would emit a spurious
@@ -195,33 +195,33 @@ application-level locking.
 
 ### Catalog (consolidated)
 
-| Domain     | Topic                   | Producers                       | Consumers                                | Carries (event/command DTOs)                         | P | Key       |
-| ---------- | ----------------------- | ------------------------------- | ---------------------------------------- | ---------------------------------------------------- | - | --------- |
-| Order      | `order.created`         | order, secondary-market         | saga                                     | `OrderCreatedEvent`                                  | 3 | orderId   |
-| Order      | `order.confirmed`       | saga                            | order                                    | `OrderConfirmedEvent`                                | 3 | orderId   |
-| Order      | `order.failed`          | saga                            | order                                    | `OrderFailedEvent`                                   | 3 | orderId   |
-| Order      | `order.cancelled`       | saga                            | order                                    | `OrderCancelledEvent`                                | 3 | orderId   |
-| Order      | `order.price.changed`   | saga                            | order                                    | `OrderPriceChangedEvent`                             | 3 | orderId   |
-| Order      | `order.price.confirm`   | order                           | saga                                     | `OrderPriceConfirmCommand`                           | 3 | orderId   |
-| Order      | `order.price.cancel`    | order                           | saga                                     | `OrderPriceCancelCommand`                            | 3 | orderId   |
-| Ticket     | **`ticket.cmd`**        | saga                            | ticket                                   | `Reserve` / `Confirm` / `Release` Command            | 3 | orderId   |
-| Ticket     | `ticket.reserved`       | ticket                          | saga                                     | `TicketReservedEvent`                                | 3 | orderId   |
-| Ticket     | `ticket.released`       | ticket                          | saga, reservation                        | `TicketReleasedEvent`                                | 3 | orderId   |
-| Ticket     | `ticket.confirmed`      | ticket                          | saga, notification                       | `TicketConfirmedEvent`                               | 3 | orderId   |
-| Pricing    | `pricing.lock.cmd`      | saga                            | pricing                                  | `PriceLockCommand`                                   | 3 | orderId   |
-| Pricing    | `pricing.locked`        | pricing                         | saga                                     | `PricingLockedEvent`                                 | 3 | orderId   |
-| Pricing    | `pricing.price.changed` | pricing                         | saga                                     | `PriceChangedEvent`                                  | 3 | orderId   |
-| Pricing    | `pricing.failed`        | pricing                         | saga                                     | `PricingFailedEvent`                                 | 3 | orderId   |
-| Pricing    | `price.updated`         | pricing                         | (SSE push)                               | `PriceUpdatedEvent`                                  | 3 | eventId   |
-| Payment    | **`payment.cmd`**       | saga                            | payment                                  | `Charge` / `Cancel` Command                          | 3 | orderId   |
-| Payment    | `payment.succeeded`     | payment                         | saga                                     | `PaymentSucceededEvent`                              | 3 | orderId   |
-| Payment    | `payment.failed`        | payment                         | saga                                     | `PaymentFailedEvent`                                 | 3 | orderId   |
-| Payment    | `payment.refunded`      | payment                         | saga                                     | `PaymentRefundedEvent`                               | 3 | orderId   |
-| Payment    | `payment.dlq`           | payment                         | notification                             | `PaymentFailedEvent` (after retries exhausted)       | **1** | orderId |
-| Reservation| `reservation.promoted`  | reservation                     | order                                    | `ReservationPromotedEvent`                           | 3 | ticketId  |
-| Event mgmt | `event.status.changed`  | ticket                          | (subscribers)                            | `EventStatusChangedEvent`                            | 3 | eventId   |
-| Notif      | `notification.send`     | any service                     | notification                             | `NotificationSendCommand`                            | 3 | orderId   |
-| Security   | `auth.security.alert`   | auth                            | notification                             | `AuthSecurityAlertEvent`                             | **1** | userId  |
+| Domain      | Topic                   | Producers               | Consumers          | Carries (event/command DTOs)                   | P     | Key      |
+| ----------- | ----------------------- | ----------------------- | ------------------ | ---------------------------------------------- | ----- | -------- |
+| Order       | `order.created`         | order, secondary-market | saga               | `OrderCreatedEvent`                            | 3     | orderId  |
+| Order       | `order.confirmed`       | saga                    | order              | `OrderConfirmedEvent`                          | 3     | orderId  |
+| Order       | `order.failed`          | saga                    | order              | `OrderFailedEvent`                             | 3     | orderId  |
+| Order       | `order.cancelled`       | saga                    | order              | `OrderCancelledEvent`                          | 3     | orderId  |
+| Order       | `order.price.changed`   | saga                    | order              | `OrderPriceChangedEvent`                       | 3     | orderId  |
+| Order       | `order.price.confirm`   | order                   | saga               | `OrderPriceConfirmCommand`                     | 3     | orderId  |
+| Order       | `order.price.cancel`    | order                   | saga               | `OrderPriceCancelCommand`                      | 3     | orderId  |
+| Ticket      | **`ticket.cmd`**        | saga                    | ticket             | `Reserve` / `Confirm` / `Release` Command      | 3     | orderId  |
+| Ticket      | `ticket.reserved`       | ticket                  | saga               | `TicketReservedEvent`                          | 3     | orderId  |
+| Ticket      | `ticket.released`       | ticket                  | saga, reservation  | `TicketReleasedEvent`                          | 3     | orderId  |
+| Ticket      | `ticket.confirmed`      | ticket                  | saga, notification | `TicketConfirmedEvent`                         | 3     | orderId  |
+| Pricing     | `pricing.lock.cmd`      | saga                    | pricing            | `PriceLockCommand`                             | 3     | orderId  |
+| Pricing     | `pricing.locked`        | pricing                 | saga               | `PricingLockedEvent`                           | 3     | orderId  |
+| Pricing     | `pricing.price.changed` | pricing                 | saga               | `PriceChangedEvent`                            | 3     | orderId  |
+| Pricing     | `pricing.failed`        | pricing                 | saga               | `PricingFailedEvent`                           | 3     | orderId  |
+| Pricing     | `price.updated`         | pricing                 | (SSE push)         | `PriceUpdatedEvent`                            | 3     | eventId  |
+| Payment     | **`payment.cmd`**       | saga                    | payment            | `Charge` / `Cancel` Command                    | 3     | orderId  |
+| Payment     | `payment.succeeded`     | payment                 | saga               | `PaymentSucceededEvent`                        | 3     | orderId  |
+| Payment     | `payment.failed`        | payment                 | saga               | `PaymentFailedEvent`                           | 3     | orderId  |
+| Payment     | `payment.refunded`      | payment                 | saga               | `PaymentRefundedEvent`                         | 3     | orderId  |
+| Payment     | `payment.dlq`           | payment                 | notification       | `PaymentFailedEvent` (after retries exhausted) | **1** | orderId  |
+| Reservation | `reservation.promoted`  | reservation             | order              | `ReservationPromotedEvent`                     | 3     | ticketId |
+| Event mgmt  | `event.status.changed`  | ticket                  | (subscribers)      | `EventStatusChangedEvent`                      | 3     | eventId  |
+| Notif       | `notification.send`     | any service             | notification       | `NotificationSendCommand`                      | 3     | orderId  |
+| Security    | `auth.security.alert`   | auth                    | notification       | `AuthSecurityAlertEvent`                       | **1** | userId   |
 
 P = partitions. `payment.dlq` and `auth.security.alert` keep 1 partition for strict
 global ordering (chronological DLQ replay and security forensics).
@@ -248,11 +248,11 @@ flowchart LR
     Comp --> Cancel([CANCELLED])
 ```
 
-| Flow                          | Divergence rule                                         | Saga      | Order     | Ticket    | Payment       |
-| ----------------------------- | ------------------------------------------------------- | --------- | --------- | --------- | ------------- |
-| **1 — Happy path**            | `userPrice == facePrice × multiplierAtOrderTime`        | COMPLETED | CONFIRMED | CONFIRMED | SUCCESS       |
-| **2 — Accept new price**      | Case C → user POSTs `/confirm-price`                    | COMPLETED | CONFIRMED | CONFIRMED | SUCCESS (new) |
-| **3 — Decline / 30s timeout** | Case C → `/cancel-price` **or** SagaWatchdog expires    | CANCELLED | CANCELLED | AVAILABLE | (none)        |
+| Flow                          | Divergence rule                                      | Saga      | Order     | Ticket    | Payment       |
+| ----------------------------- | ---------------------------------------------------- | --------- | --------- | --------- | ------------- |
+| **1 — Happy path**            | `userPrice == facePrice × multiplierAtOrderTime`     | COMPLETED | CONFIRMED | CONFIRMED | SUCCESS       |
+| **2 — Accept new price**      | Case C → user POSTs `/confirm-price`                 | COMPLETED | CONFIRMED | CONFIRMED | SUCCESS (new) |
+| **3 — Decline / 30s timeout** | Case C → `/cancel-price` **or** SagaWatchdog expires | CANCELLED | CANCELLED | AVAILABLE | (none)        |
 
 All three flows converge to a **fully consistent terminal state across 4 databases** —
 no orphan rows, no half-charged payments, no leaked ticket locks.
@@ -261,13 +261,13 @@ no orphan rows, no half-charged payments, no leaked ticket locks.
 
 ### Throughput at a single-replica baseline
 
-| Layer                       | Capacity              | Limited by                                  |
-| --------------------------- | --------------------- | ------------------------------------------- |
-| Order API ingress           | ~2,000 req/s          | Nginx `limit_req` (200r/s/IP × keepalive)   |
-| Kafka consumer per service  | ~600 msg/s            | 3 partitions × ~5ms DB tx                   |
-| End-to-end saga (10 hops)   | < 1s p50, < 2s p99    | Race-test measured                          |
-| Payment retry watchdog      | 50 payments / 2s tick | `BATCH_SIZE=50`, `fixedDelay=2s`            |
-| SSE connections per pod     | ~10,000               | Nginx `worker_connections × cores`          |
+| Layer                      | Capacity              | Limited by                                |
+| -------------------------- | --------------------- | ----------------------------------------- |
+| Order API ingress          | ~2,000 req/s          | Nginx `limit_req` (200r/s/IP × keepalive) |
+| Kafka consumer per service | ~600 msg/s            | 3 partitions × ~5ms DB tx                 |
+| End-to-end saga (10 hops)  | < 1s p50, < 2s p99    | Race-test measured                        |
+| Payment retry watchdog     | 50 payments / 2s tick | `BATCH_SIZE=50`, `fixedDelay=2s`          |
+| SSE connections per pod    | ~10,000               | Nginx `worker_connections × cores`        |
 
 ### Where the bottleneck sits
 
@@ -288,12 +288,12 @@ consumer throughput jumped from ~15 → ~300 msg/s per partition.
 Every service is **stateless at the JVM level** (state lives in Postgres / Redis / Kafka),
 so adding replicas is a Kafka rebalance:
 
-| Action            | How                                                                 | Effect                       |
-| ----------------- | ------------------------------------------------------------------- | ---------------------------- |
-| Scale-out (HA)    | `docker compose up -d --scale ticket-service=3`                     | Same throughput, 2-pod loss tolerance |
-| Scale-up (TPS)    | Bump partitions in `create-topics.sh` (idempotent), then scale pods | Linear up to partition count |
-| More DB reads     | Add a second `postgres-slave` + update routing                      | 2× read QPS                  |
-| More Redis ops    | Switch to Redis cluster (3 master + 3 replica)                      | 100k → 1M ops/s              |
+| Action         | How                                                                 | Effect                                |
+| -------------- | ------------------------------------------------------------------- | ------------------------------------- |
+| Scale-out (HA) | `docker compose up -d --scale ticket-service=3`                     | Same throughput, 2-pod loss tolerance |
+| Scale-up (TPS) | Bump partitions in `create-topics.sh` (idempotent), then scale pods | Linear up to partition count          |
+| More DB reads  | Add a second `postgres-slave` + update routing                      | 2× read QPS                           |
+| More Redis ops | Switch to Redis cluster (3 master + 3 replica)                      | 100k → 1M ops/s                       |
 
 **Hard constraint:** `partitions ≥ total_consumer_threads` per service. The
 `ensure_partitions` helper in `create-topics.sh` is idempotent so bumps don't require redeploy.
@@ -304,16 +304,16 @@ Two pods consuming different partitions can race on the same `orderId` or the sa
 Every such race closes at a **durable boundary** — DB, Kafka, or Redis. Application-level
 locks are intentionally absent because they don't survive pod restart.
 
-| Mechanism                            | Closes which race                                       |
-| ------------------------------------ | ------------------------------------------------------- |
-| Optimistic `@Version` on entities    | Two pods writing the same row concurrently              |
-| UNIQUE partial index                 | DB-level overselling / double-listing                   |
-| Kafka consumer-group assignment      | Two pods consuming the same partition (broker enforced) |
-| `orderId` partition key              | `Release` overtaking `Reserve` across pods              |
-| Claim-lease (`nextRetryAt` window)   | Two payment pods double-charging the same payment       |
-| Redis `SETNX` distributed lock       | Two pods promoting the same waitlist head               |
-| Write-through saga state (PG → Redis)| Lost progress on Redis flush or pod restart             |
-| Idempotency (sagaId / payment state) | Duplicate processing on Kafka redelivery                |
+| Mechanism                             | Closes which race                                       |
+| ------------------------------------- | ------------------------------------------------------- |
+| Optimistic `@Version` on entities     | Two pods writing the same row concurrently              |
+| UNIQUE partial index                  | DB-level overselling / double-listing                   |
+| Kafka consumer-group assignment       | Two pods consuming the same partition (broker enforced) |
+| `orderId` partition key               | `Release` overtaking `Reserve` across pods              |
+| Claim-lease (`nextRetryAt` window)    | Two payment pods double-charging the same payment       |
+| Redis `SETNX` distributed lock        | Two pods promoting the same waitlist head               |
+| Write-through saga state (PG → Redis) | Lost progress on Redis flush or pod restart             |
+| Idempotency (sagaId / payment state)  | Duplicate processing on Kafka redelivery                |
 
 ## Architecture decisions
 
