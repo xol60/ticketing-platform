@@ -27,11 +27,6 @@ set -e
 #    payment.cmd  carries Charge / Cancel               keyed by orderId
 #  This way a Release can never overtake its preceding Reserve, and a Cancel
 #  can never overtake its preceding Charge — they share a partition.
-#
-#  The legacy split topics (ticket.reserve.cmd, ticket.release.cmd,
-#  ticket.confirm.cmd, payment.charge.cmd) are still created so that brokers
-#  reusing an older volume don't see orphaned consumer-group offsets.  No
-#  current code path produces to them.
 # ============================================================================
 
 KAFKA=kafka:9092
@@ -80,10 +75,6 @@ create_topic "ticket.cmd"                 # Reserve / Confirm / Release, keyed b
 create_topic "ticket.reserved"
 create_topic "ticket.released"
 create_topic "ticket.confirmed"
-# Legacy command topics — broker-compat only, no producers in current code:
-create_topic "ticket.reserve.cmd"
-create_topic "ticket.release.cmd"
-create_topic "ticket.confirm.cmd"
 
 # ── Order domain ─────────────────────────────────────────────────────────────
 create_topic "order.created"
@@ -110,8 +101,6 @@ create_topic "payment.succeeded"
 create_topic "payment.refunded"
 create_topic "payment.failed"
 create_topic "payment.dlq" 1              # 1 partition — chronological DLQ replay
-# Legacy command topic — broker-compat only:
-create_topic "payment.charge.cmd"
 
 # ── Saga orchestration ──────────────────────────────────────────────────────
 create_topic "saga.compensate"
@@ -147,9 +136,7 @@ for topic in \
     pricing.price.changed pricing.failed price.updated \
     payment.cmd payment.succeeded payment.refunded payment.failed \
     saga.compensate reservation.promoted notification.send \
-    event.status.changed sale.flash \
-    ticket.reserve.cmd ticket.release.cmd ticket.confirm.cmd \
-    payment.charge.cmd; do
+    event.status.changed sale.flash; do
   ensure_partitions "$topic" 3
 done
 
