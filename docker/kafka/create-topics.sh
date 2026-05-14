@@ -1,6 +1,39 @@
 #!/bin/bash
 set -e
 
+# ============================================================================
+#  Kafka topic provisioning for the ticketing platform
+# ============================================================================
+#  Runs once at stack startup (kafka-init service in docker-compose).
+#  Idempotent: safe to re-run; --if-not-exists skips existing topics, and the
+#  ensure_partitions block at the end only raises partition counts (never
+#  lowers — Kafka doesn't allow that).
+#
+#  ── Partitioning strategy ──────────────────────────────────────────────────
+#  Every saga-flow topic has 3 partitions to match concurrency=3 on each
+#  consumer.  Records are keyed by orderId, so all events for a given order
+#  land on the same partition and are processed sequentially by one consumer
+#  thread — strict per-order ordering without application-level locking.
+#
+#  Two topics keep 1 partition on purpose:
+#    • payment.dlq         — chronological DLQ replay across all orders
+#    • auth.security.alert — global ordering for security forensics
+#
+#  ── Unified command topics ─────────────────────────────────────────────────
+#  Ticket and payment services each accept ALL commands on one topic, not
+#  one topic per command type.  See README for the full rationale; the short
+#  version is:
+#    ticket.cmd   carries Reserve / Confirm / Release   keyed by orderId
+#    payment.cmd  carries Charge / Cancel               keyed by orderId
+#  This way a Release can never overtake its preceding Reserve, and a Cancel
+#  can never overtake its preceding Charge — they share a partition.
+#
+#  The legacy split topics (ticket.reserve.cmd, ticket.release.cmd,
+#  ticket.confirm.cmd, payment.charge.cmd) are still created so that brokers
+#  reusing an older volume don't see orphaned consumer-group offsets.  No
+#  current code path produces to them.
+# ============================================================================
+
 KAFKA=kafka:9092
 PARTITIONS=3
 REPLICATION=1
@@ -40,21 +73,19 @@ ensure_partitions() {
 echo "Waiting for Kafka to be ready..."
 sleep 5
 
-# ── Ticket topics ────────────────────────────────────────────────────────────
-# Unified command topic — reserve, confirm, release all keyed by orderId so
-# they land on the same partition and are consumed in order.
-# 3 partitions → all three ticket-service consumer threads are active.
-create_topic "ticket.cmd"
+# ── Ticket domain ────────────────────────────────────────────────────────────
+# Commands (unified):
+create_topic "ticket.cmd"                 # Reserve / Confirm / Release, keyed by orderId
+# Events:
 create_topic "ticket.reserved"
 create_topic "ticket.released"
 create_topic "ticket.confirmed"
-# Legacy split topics kept so existing offsets / DLQ consumers aren't orphaned;
-# new code never produces to these but they must exist for broker compatibility.
+# Legacy command topics — broker-compat only, no producers in current code:
 create_topic "ticket.reserve.cmd"
 create_topic "ticket.release.cmd"
 create_topic "ticket.confirm.cmd"
 
-# ── Order topics ─────────────────────────────────────────────────────────────
+# ── Order domain ─────────────────────────────────────────────────────────────
 create_topic "order.created"
 create_topic "order.confirmed"
 create_topic "order.failed"
@@ -63,46 +94,47 @@ create_topic "order.price.changed"
 create_topic "order.price.confirm"
 create_topic "order.price.cancel"
 
-# ── Pricing topics ───────────────────────────────────────────────────────────
+# ── Pricing domain ───────────────────────────────────────────────────────────
 create_topic "pricing.lock.cmd"
+create_topic "pricing.unlock.cmd"
 create_topic "pricing.locked"
 create_topic "pricing.price.changed"
 create_topic "pricing.failed"
-create_topic "price.updated"
-create_topic "pricing.unlock.cmd"
+create_topic "price.updated"              # keyed by eventId — fan-out to SSE clients
 
-# ── Payment topics ───────────────────────────────────────────────────────────
-# Unified command topic — charge and cancel keyed by orderId → same partition.
-# 3 partitions → all three payment-service consumer threads are active.
-create_topic "payment.cmd"
+# ── Payment domain ───────────────────────────────────────────────────────────
+# Commands (unified):
+create_topic "payment.cmd"                # Charge / Cancel, keyed by orderId
+# Events:
 create_topic "payment.succeeded"
 create_topic "payment.refunded"
 create_topic "payment.failed"
-create_topic "payment.dlq" 1        # DLQ stays single-partition for ordering
-create_topic "payment.charge.cmd"   # Legacy: kept for broker compatibility
+create_topic "payment.dlq" 1              # 1 partition — chronological DLQ replay
+# Legacy command topic — broker-compat only:
+create_topic "payment.charge.cmd"
 
-# ── Saga ─────────────────────────────────────────────────────────────────────
+# ── Saga orchestration ──────────────────────────────────────────────────────
 create_topic "saga.compensate"
 
-# ── Reservation ──────────────────────────────────────────────────────────────
-create_topic "reservation.promoted"
+# ── Reservation queue ───────────────────────────────────────────────────────
+create_topic "reservation.promoted"       # keyed by ticketId
 
 # ── Notification ─────────────────────────────────────────────────────────────
 create_topic "notification.send"
 
-# ── Security — single partition to preserve per-user ordering ────────────────
-create_topic "auth.security.alert" 1
+# ── Auth / security ──────────────────────────────────────────────────────────
+create_topic "auth.security.alert" 1      # 1 partition — global ordering for forensics
 
-# ── Event lifecycle ───────────────────────────────────────────────────────────
-create_topic "event.status.changed"
+# ── Event lifecycle ──────────────────────────────────────────────────────────
+create_topic "event.status.changed"       # keyed by eventId
 
-# ── Flash sale ────────────────────────────────────────────────────────────────
-create_topic "sale.flash"
+# ── Flash sale ───────────────────────────────────────────────────────────────
+create_topic "sale.flash"                 # keyed by eventId
 
 # ---------------------------------------------------------------------------
 # Upgrade existing topics whose partition count was previously 1.
 # ensure_partitions is a no-op when the topic already has >= the target count.
-# This block is only relevant when reusing a Kafka volume from an older deploy.
+# Only relevant when reusing a Kafka volume from an older deploy.
 # ---------------------------------------------------------------------------
 echo "Ensuring partition counts on existing topics..."
 
@@ -111,8 +143,8 @@ for topic in \
     ticket.cmd ticket.reserved ticket.released ticket.confirmed \
     order.created order.confirmed order.failed order.cancelled \
     order.price.changed order.price.confirm order.price.cancel \
-    pricing.lock.cmd pricing.locked pricing.price.changed pricing.failed \
-    pricing.unlock.cmd price.updated \
+    pricing.lock.cmd pricing.unlock.cmd pricing.locked \
+    pricing.price.changed pricing.failed price.updated \
     payment.cmd payment.succeeded payment.refunded payment.failed \
     saga.compensate reservation.promoted notification.send \
     event.status.changed sale.flash \
@@ -121,9 +153,9 @@ for topic in \
   ensure_partitions "$topic" 3
 done
 
-# Single-partition topics — do NOT alter these
-# payment.dlq       — ordering guarantee requires 1 partition
-# auth.security.alert — per-user ordering requires 1 partition
+# Single-partition topics — do NOT alter these:
+#   payment.dlq         — chronological DLQ replay
+#   auth.security.alert — global ordering for forensics
 
 echo "All topics created/verified successfully"
 kafka-topics --bootstrap-server $KAFKA --list

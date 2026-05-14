@@ -131,7 +131,26 @@ public class PricingService {
             return;
         }
 
-        // Compute what the user's claimed multiplier was: userPrice / facePrice
+        BigDecimal expectedPrice = facePrice.multiply(multiplierAtOrderTime)
+                .setScale(2, RoundingMode.HALF_UP);
+
+        // Case B — userPrice matches expected price at order time: proceed.
+        // Checked FIRST because it's the common case and is unambiguous: a userPrice
+        // that exactly matches facePrice × multiplierAtOrderTime cannot be fabricated;
+        // the multiplier is by definition present in the history (it was active at
+        // orderCreatedAt). Running the recent-history check before this would falsely
+        // reject orders whenever the price has been stable longer than the validity
+        // window — e.g. a 1.0× multiplier that hasn't changed in a week.
+        if (cmd.getUserPrice().compareTo(expectedPrice) == 0) {
+            publisher.publishPricingLocked(new PricingLockedEvent(
+                    cmd.getTraceId(), cmd.getSagaId(),
+                    cmd.getTicketId(), cmd.getOrderId(), expectedPrice));
+            log.info("Normal price lock: sagaId={} price={}", cmd.getSagaId(), expectedPrice);
+            return;
+        }
+
+        // Price doesn't match what was active at order time → either fabricated
+        // (Case A) or stale because the surge moved between order and lock (Case C).
         BigDecimal claimedMultiplier = cmd.getUserPrice()
                 .divide(facePrice, 4, RoundingMode.HALF_UP);
 
@@ -139,7 +158,7 @@ public class PricingService {
                 cmd.getEventId(), claimedMultiplier,
                 Instant.now().minus(HISTORY_VALIDITY_WINDOW));
 
-        // Case A — claimed multiplier never existed: fabricated price
+        // Case A — claimed multiplier never existed in the recent window: fabricated price.
         if (!multiplierEverExisted) {
             log.warn("Fabricated price {} (claimedMultiplier={}) for eventId={} sagaId={}",
                     cmd.getUserPrice(), claimedMultiplier, cmd.getEventId(), cmd.getSagaId());
@@ -149,19 +168,7 @@ public class PricingService {
             return;
         }
 
-        BigDecimal expectedPrice = facePrice.multiply(multiplierAtOrderTime)
-                .setScale(2, RoundingMode.HALF_UP);
-
-        // Case B — userPrice matches expected price: proceed
-        if (cmd.getUserPrice().compareTo(expectedPrice) == 0) {
-            publisher.publishPricingLocked(new PricingLockedEvent(
-                    cmd.getTraceId(), cmd.getSagaId(),
-                    cmd.getTicketId(), cmd.getOrderId(), expectedPrice));
-            log.info("Normal price lock: sagaId={} price={}", cmd.getSagaId(), expectedPrice);
-            return;
-        }
-
-        // Case C — multiplier was real but has since changed: ask user to confirm
+        // Case C — multiplier was real but has since changed: ask user to confirm the new price.
         BigDecimal newExpectedPrice = facePrice.multiply(rule.getSurgeMultiplier())
                 .setScale(2, RoundingMode.HALF_UP);
         log.info("Price changed for sagaId={}: userPrice={} newExpectedPrice={}",

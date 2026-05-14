@@ -125,35 +125,76 @@ docker-compose up --build --no-deps ticket-service
 
 ## Kafka topics
 
-| Topic                   | Producer                                | Consumer                                |
-| ----------------------- | --------------------------------------- | --------------------------------------- |
-| `order.created`         | order-service, secondary-market-service | saga-orchestrator                       |
-| `order.confirmed`       | saga-orchestrator                       | order-service                           |
-| `order.failed`          | saga-orchestrator                       | order-service                           |
-| `order.cancelled`       | saga-orchestrator                       | order-service                           |
-| `order.price.changed`   | saga-orchestrator                       | order-service                           |
-| `order.price.confirm`   | order-service                           | saga-orchestrator                       |
-| `order.price.cancel`    | order-service                           | saga-orchestrator                       |
-| `ticket.reserve.cmd`    | saga-orchestrator                       | ticket-service                          |
-| `ticket.reserved`       | ticket-service                          | saga-orchestrator                       |
-| `ticket.release.cmd`    | saga-orchestrator                       | ticket-service                          |
-| `ticket.released`       | ticket-service                          | saga-orchestrator, reservation-service  |
-| `ticket.confirm.cmd`    | saga-orchestrator                       | ticket-service                          |
-| `ticket.confirmed`      | ticket-service                          | saga-orchestrator, notification-service |
-| `pricing.lock.cmd`      | saga-orchestrator                       | pricing-service                         |
-| `pricing.locked`        | pricing-service                         | saga-orchestrator                       |
-| `pricing.unlock.cmd`    | saga-orchestrator                       | pricing-service                         |
-| `pricing.price.changed` | pricing-service                         | saga-orchestrator                       |
-| `pricing.failed`        | pricing-service                         | saga-orchestrator                       |
-| `price.updated`         | pricing-service                         | (SSE push to clients)                   |
-| `payment.charge.cmd`    | saga-orchestrator                       | payment-service                         |
-| `payment.succeeded`     | payment-service                         | saga-orchestrator                       |
-| `payment.failed`        | payment-service                         | saga-orchestrator                       |
-| `payment.dlq`           | payment-service                         | notification-service                    |
-| `saga.compensate`       | saga-orchestrator                       | ticket-service                          |
-| `reservation.promoted`  | reservation-service                     | order-service                           |
-| `event.status.changed`  | ticket-service                          | (subscribers)                           |
-| `notification.send`     | any service                             | notification-service                    |
+All saga-flow topics use **3 partitions** to match `concurrency=3` on each consumer. Records
+are partitioned by `orderId` so all events for the same order are processed in producer-send
+order by exactly one consumer thread. `payment.dlq` and `auth.security.alert` keep
+**1 partition** intentionally (see notes below).
+
+### Command-topic consolidation
+
+Two domains use a **single command topic per service** instead of one topic per command type.
+This is the most important ordering decision in the system:
+
+| Service         | Unified topic   | Carries                                                                |
+| --------------- | --------------- | ---------------------------------------------------------------------- |
+| ticket-service  | `ticket.cmd`    | `TicketReserveCommand`, `TicketConfirmCommand`, `TicketReleaseCommand` |
+| payment-service | `payment.cmd`   | `PaymentChargeCommand`, `PaymentCancelCommand`                         |
+
+**Why a single topic?** All commands for the same `orderId` must be processed in send order.
+With separate topics (`ticket.reserve.cmd` / `ticket.release.cmd` / `ticket.confirm.cmd`),
+each topic has its own partition assignment, and two consumer threads could pick up a
+`Release` and a `Confirm` for the same order concurrently — letting the `Release` win the
+race produces a `TicketReleased` event followed by a `Confirm` that finds an `AVAILABLE`
+ticket and emits a spurious `TicketReservationFailed`. For payments the symmetric bug is
+worse: a `Cancel` processed before its preceding `Charge` would be silently dropped,
+leaving the customer charged with no record of the cancel.
+
+With a single topic keyed by `orderId`, both commands land on the **same partition** and
+are consumed **sequentially by one thread** — strict per-order ordering is preserved
+without any application-level locking.
+
+The legacy split topics (`ticket.reserve.cmd`, `ticket.release.cmd`, `ticket.confirm.cmd`,
+`payment.charge.cmd`) are still created for broker compatibility with old offsets and DLQ
+consumers, but no current code path produces to them.
+
+### Topic catalog
+
+| Topic                   | Producer                                | Consumer                                | Partitions | Key       |
+| ----------------------- | --------------------------------------- | --------------------------------------- | ---------- | --------- |
+| `order.created`         | order-service, secondary-market-service | saga-orchestrator                       | 3          | `orderId` |
+| `order.confirmed`       | saga-orchestrator                       | order-service                           | 3          | `orderId` |
+| `order.failed`          | saga-orchestrator                       | order-service                           | 3          | `orderId` |
+| `order.cancelled`       | saga-orchestrator                       | order-service                           | 3          | `orderId` |
+| `order.price.changed`   | saga-orchestrator                       | order-service                           | 3          | `orderId` |
+| `order.price.confirm`   | order-service                           | saga-orchestrator                       | 3          | `orderId` |
+| `order.price.cancel`    | order-service                           | saga-orchestrator                       | 3          | `orderId` |
+| `ticket.cmd`            | saga-orchestrator                       | ticket-service                          | 3          | `orderId` |
+| `ticket.reserved`       | ticket-service                          | saga-orchestrator                       | 3          | `orderId` |
+| `ticket.released`       | ticket-service                          | saga-orchestrator, reservation-service  | 3          | `orderId` |
+| `ticket.confirmed`      | ticket-service                          | saga-orchestrator, notification-service | 3          | `orderId` |
+| `pricing.lock.cmd`      | saga-orchestrator                       | pricing-service                         | 3          | `orderId` |
+| `pricing.locked`        | pricing-service                         | saga-orchestrator                       | 3          | `orderId` |
+| `pricing.unlock.cmd`    | saga-orchestrator                       | pricing-service                         | 3          | `orderId` |
+| `pricing.price.changed` | pricing-service                         | saga-orchestrator                       | 3          | `orderId` |
+| `pricing.failed`        | pricing-service                         | saga-orchestrator                       | 3          | `orderId` |
+| `price.updated`         | pricing-service                         | (SSE push to clients)                   | 3          | `eventId` |
+| `payment.cmd`           | saga-orchestrator                       | payment-service                         | 3          | `orderId` |
+| `payment.succeeded`     | payment-service                         | saga-orchestrator                       | 3          | `orderId` |
+| `payment.failed`        | payment-service                         | saga-orchestrator                       | 3          | `orderId` |
+| `payment.refunded`      | payment-service                         | saga-orchestrator                       | 3          | `orderId` |
+| `payment.dlq`           | payment-service                         | notification-service                    | **1**      | `orderId` |
+| `saga.compensate`       | saga-orchestrator                       | ticket-service                          | 3          | `orderId` |
+| `reservation.promoted`  | reservation-service                     | order-service                           | 3          | `ticketId`|
+| `event.status.changed`  | ticket-service                          | (subscribers)                           | 3          | `eventId` |
+| `notification.send`     | any service                             | notification-service                    | 3          | `orderId` |
+| `auth.security.alert`   | auth-service                            | notification-service                    | **1**      | `userId`  |
+| `sale.flash`            | ticket-service                          | (subscribers)                           | 3          | `eventId` |
+
+**Single-partition exceptions:**
+- `payment.dlq` — DLQ replay must be strictly chronological across all orders, not just
+  per-order, so admins can reconstruct the failure timeline.
+- `auth.security.alert` — global ordering of suspicious-login events for forensics; volume
+  is low enough that 1 partition isn't a throughput concern.
 
 ## Architecture decisions
 

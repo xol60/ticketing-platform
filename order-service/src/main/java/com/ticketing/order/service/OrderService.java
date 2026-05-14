@@ -23,6 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -96,6 +97,12 @@ public class OrderService {
         String orderId = UUID.randomUUID().toString();
         String sagaId  = UUID.randomUUID().toString();
 
+        // Capture wall-clock time BEFORE save so it matches the price-history window the
+        // user was seeing. @CreationTimestamp is populated by Hibernate during flush (after
+        // the transaction commits), not synchronously inside save() — reading order.getCreatedAt()
+        // here would return null and break the point-in-time price validation in pricing-service.
+        Instant orderCreatedAt = Instant.now();
+
         var order = Order.builder()
                 .id(orderId)
                 .userId(userId)
@@ -109,11 +116,11 @@ public class OrderService {
         log.info("Created order orderId={} userId={} ticketId={} sagaId={} traceId={}",
                 orderId, userId, request.getTicketId(), sagaId, traceId);
 
-        // Pass orderCreatedAt (DB-stamped) and userPrice for point-in-time price validation
+        // Pass orderCreatedAt (wall-clock stamped) and userPrice for point-in-time price validation
         eventPublisher.publishOrderCreated(
                 traceId, sagaId, orderId, userId,
                 request.getTicketId(), request.getRequestedPrice(),
-                order.getCreatedAt());
+                orderCreatedAt);
 
         return orderMapper.toResponse(order);
     }
