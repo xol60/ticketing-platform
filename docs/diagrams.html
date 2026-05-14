@@ -13,83 +13,70 @@
       --muted: #8b949e;
       --accent: #58a6ff;
       --accent-strong: #1f6feb;
-      --tag-edge: #1976d2;
-      --tag-gw: #f57c00;
-      --tag-app: #7b1fa2;
-      --tag-store: #388e3c;
+      --success: #56d364;
+      --warn: #e3b341;
+      --fail: #ff7b72;
+      --kafka: #ff9d4d;
+      --db: #7ee787;
     }
     * { box-sizing: border-box; }
     html, body {
       margin: 0; padding: 0;
-      background: var(--bg);
-      color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      line-height: 1.5;
+      background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      line-height: 1.6;
     }
-    .layout {
-      display: grid;
-      grid-template-columns: 240px 1fr;
-      min-height: 100vh;
-    }
-    nav {
-      background: var(--panel);
-      border-right: 1px solid var(--border);
-      padding: 24px 0;
-      position: sticky;
-      top: 0;
-      align-self: start;
-      height: 100vh;
-      overflow-y: auto;
-    }
-    nav .brand {
-      padding: 0 20px 20px;
+    header {
+      padding: 32px 40px 20px;
       border-bottom: 1px solid var(--border);
-      margin-bottom: 12px;
+      background: var(--panel);
     }
-    nav .brand h1 {
-      font-size: 16px;
-      margin: 0;
-      color: var(--text);
+    header h1 { margin: 0; font-size: 24px; }
+    header p  { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+    header a  { color: var(--accent); text-decoration: none; }
+    header a:hover { text-decoration: underline; }
+
+    nav.toc {
+      padding: 16px 40px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      display: flex; flex-wrap: wrap; gap: 16px;
     }
-    nav .brand p {
-      font-size: 12px;
-      color: var(--muted);
-      margin: 4px 0 0;
-    }
-    nav a {
-      display: block;
-      padding: 10px 20px;
+    nav.toc a {
       color: var(--muted);
       text-decoration: none;
-      font-size: 14px;
-      border-left: 3px solid transparent;
+      font-size: 13px;
+      padding: 4px 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
       transition: all 0.15s ease;
     }
-    nav a:hover {
+    nav.toc a:hover {
       color: var(--text);
-      background: rgba(88, 166, 255, 0.05);
+      border-color: var(--accent);
     }
-    nav a.active {
-      color: var(--accent);
-      border-left-color: var(--accent);
-      background: rgba(88, 166, 255, 0.08);
-    }
+
     main {
-      padding: 40px 60px 80px;
-      max-width: 1400px;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 40px 40px 80px;
     }
-    section { margin-bottom: 80px; scroll-margin-top: 20px; }
+
+    section { margin-bottom: 64px; scroll-margin-top: 20px; }
     section h2 {
-      font-size: 28px;
-      margin: 0 0 8px;
-      color: var(--text);
+      font-size: 22px;
+      margin: 0 0 6px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
     }
     section .lead {
       color: var(--muted);
-      margin-bottom: 24px;
+      margin: 8px 0 24px;
       max-width: 800px;
     }
-    .diagram {
+
+    /* ── Architecture diagram (pure SVG, no JS) ───────────────── */
+    .arch-panel {
       background: var(--panel);
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -97,46 +84,124 @@
       margin-bottom: 24px;
       overflow-x: auto;
     }
-    .diagram .mermaid {
-      text-align: center;
-      min-width: 800px;
-    }
-    .legend {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 12px;
-      margin: 24px 0;
-    }
-    .legend .tag {
-      padding: 10px 14px;
-      border-radius: 6px;
-      border-left: 3px solid;
+    .arch-panel svg { display: block; margin: 0 auto; }
+
+    /* ── Flow step list ───────────────────────────────────────── */
+    .flow {
       background: var(--panel);
-      font-size: 13px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 0;
     }
-    .legend .tag b { display: block; margin-bottom: 2px; color: var(--text); }
-    .legend .tag span { color: var(--muted); }
-    .tag.edge { border-color: var(--tag-edge); }
-    .tag.gw { border-color: var(--tag-gw); }
-    .tag.app { border-color: var(--tag-app); }
-    .tag.store { border-color: var(--tag-store); }
+    .step {
+      display: grid;
+      grid-template-columns: 50px 130px 1fr 130px;
+      gap: 12px;
+      align-items: start;
+      padding: 10px 20px;
+      border-bottom: 1px solid #1f262d;
+      font-size: 13.5px;
+    }
+    .step:last-child { border-bottom: none; }
+    .step:hover { background: rgba(88, 166, 255, 0.04); }
+
+    .step .num {
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      padding-top: 1px;
+    }
+    .step .from {
+      color: var(--text);
+      font-weight: 600;
+      font-family: ui-monospace, monospace;
+      font-size: 12px;
+    }
+    .step .msg {
+      color: var(--accent);
+      font-family: ui-monospace, monospace;
+      font-size: 12px;
+    }
+    .step .desc {
+      color: var(--muted);
+      margin-top: 4px;
+      font-size: 12px;
+    }
+    .step .to {
+      color: var(--text);
+      font-weight: 600;
+      font-family: ui-monospace, monospace;
+      font-size: 12px;
+      text-align: right;
+    }
+
+    /* Phase dividers in flows */
+    .phase {
+      padding: 8px 20px;
+      background: rgba(88, 166, 255, 0.05);
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .phase.compensate { background: rgba(248, 81, 73, 0.05); color: var(--fail); }
+    .phase.await      { background: rgba(227, 179, 65, 0.05); color: var(--warn); }
+
+    /* Service / Kafka / DB tags inline */
+    .tag {
+      display: inline-block;
+      padding: 1px 7px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-family: ui-monospace, monospace;
+      font-weight: 600;
+      vertical-align: 1px;
+    }
+    .tag.svc   { background: #1f3a5f; color: #79c0ff; }
+    .tag.kafka { background: #3a2810; color: var(--kafka); }
+    .tag.db    { background: #0f2a16; color: var(--db); }
+
+    /* Badge */
+    .badge {
+      display: inline-block;
+      padding: 1px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+      font-family: ui-monospace, monospace;
+    }
+    .badge.ok   { background: rgba(46, 160, 67, 0.18);  color: #56d364; }
+    .badge.warn { background: rgba(210, 153, 34, 0.18); color: #e3b341; }
+    .badge.fail { background: rgba(248, 81, 73, 0.18);  color: #ff7b72; }
+
+    /* Tables */
     table {
       width: 100%;
       border-collapse: collapse;
-      margin: 16px 0 24px;
-      font-size: 14px;
+      margin: 16px 0;
+      font-size: 13px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
     }
     th, td {
       text-align: left;
       padding: 10px 14px;
-      border-bottom: 1px solid var(--border);
+      border-bottom: 1px solid #1f262d;
     }
+    tr:last-child td { border-bottom: none; }
     th {
       color: var(--muted);
       font-weight: 600;
-      font-size: 12px;
+      font-size: 11px;
       text-transform: uppercase;
-      letter-spacing: 0.4px;
+      letter-spacing: 0.5px;
+      background: rgba(88, 166, 255, 0.04);
     }
     code {
       background: rgba(110, 118, 129, 0.2);
@@ -145,454 +210,461 @@
       font-size: 90%;
       color: #f0f6fc;
     }
-    .badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 10px;
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.3px;
+
+    .banner {
+      background: rgba(88, 166, 255, 0.08);
+      border-left: 3px solid var(--accent);
+      padding: 12px 16px;
+      border-radius: 6px;
+      margin-bottom: 24px;
     }
-    .badge.ok    { background: rgba(46, 160, 67, 0.15); color: #56d364; }
-    .badge.warn  { background: rgba(210, 153, 34, 0.15); color: #e3b341; }
-    .badge.fail  { background: rgba(248, 81, 73, 0.15);  color: #ff7b72; }
-    .scroll-hint {
-      font-size: 12px;
-      color: var(--muted);
-      margin-bottom: 8px;
-      font-style: italic;
-    }
-    @media (max-width: 900px) {
-      .layout { grid-template-columns: 1fr; }
-      nav { position: static; height: auto; }
-      main { padding: 24px; }
+    .banner a { color: var(--accent); font-weight: 600; text-decoration: none; }
+    .banner a:hover { text-decoration: underline; }
+
+    @media (max-width: 700px) {
+      .step { grid-template-columns: 36px 1fr; }
+      .step .from, .step .to, .step .msg { grid-column: 2; }
     }
   </style>
 </head>
 <body>
-  <div class="layout">
-    <nav>
-      <div class="brand">
-        <h1>Ticketing Platform</h1>
-        <p>Architecture & saga flows</p>
-      </div>
-      <a href="#architecture" class="nav-link">System architecture</a>
-      <a href="#flow1" class="nav-link">Flow 1 — Happy path</a>
-      <a href="#flow2" class="nav-link">Flow 2 — Accept new price</a>
-      <a href="#flow3" class="nav-link">Flow 3 — Decline / timeout</a>
-      <a href="#terminal" class="nav-link">Terminal-state matrix</a>
-    </nav>
 
-    <main>
+<header>
+  <h1>Ticketing Platform — Architecture & Saga Flows</h1>
+  <p>Static reference for the three order-placement scenarios. No JavaScript needed — pure HTML/CSS.</p>
+</header>
 
-      <section id="architecture">
-        <h2>System architecture</h2>
-        <div style="background: rgba(88, 166, 255, 0.08); border-left: 3px solid var(--accent); padding: 12px 16px; border-radius: 6px; margin-bottom: 20px;">
-          ▶️ <strong>Looking for animations?</strong> See the
-          <a href="animated-flows.html" style="color: var(--accent); font-weight: 600;">animated saga flows</a>
-          — interactive play/pause/step demo of all three scenarios.
-        </div>
-        <p class="lead">
-          Four-tier topology. Browser talks to nginx; nginx routes either to the API gateway
-          (REST + SSE) or directly to the React SPA. All nine services communicate exclusively
-          through Kafka — no service-to-service HTTP for business workflows.
-        </p>
+<nav class="toc">
+  <a href="#architecture">System architecture</a>
+  <a href="#flow1">Flow 1 — Happy path</a>
+  <a href="#flow2">Flow 2 — Accept new price</a>
+  <a href="#flow3">Flow 3 — Decline / timeout</a>
+  <a href="#terminal">Terminal-state matrix</a>
+</nav>
 
-        <div class="legend">
-          <div class="tag edge"><b>Edge</b><span>Nginx — rate-limit, gzip, SSE buffering off</span></div>
-          <div class="tag gw"><b>Gateway</b><span>JWT validation, circuit breaker, rate-limiter</span></div>
-          <div class="tag app"><b>Application</b><span>9 Spring Boot services, stateless at JVM level</span></div>
-          <div class="tag store"><b>Storage</b><span>Kafka + Postgres master/slave + Redis</span></div>
-        </div>
+<main>
 
-        <p class="scroll-hint">Scroll horizontally if needed →</p>
-        <div class="diagram">
-<div class="mermaid">
-flowchart TB
-    Browser["Browser - React SPA"]:::edge
-
-    Nginx["Nginx<br/>rate-limit, gzip, SSE buffering off"]:::edge
-    Gateway["API Gateway WebFlux<br/>JWT, Resilience4j CB, Redis rate-limit"]:::gw
-
-    subgraph APP[" Application tier "]
-        direction TB
-        Auth["Auth"]:::app
-        Order["Order"]:::app
-        Ticket["Ticket"]:::app
-        Pricing["Pricing"]:::app
-        Payment["Payment"]:::app
-        Saga["Saga Orchestrator"]:::app
-        Reservation["Reservation"]:::app
-        SecMarket["Secondary Market"]:::app
-        Notif["Notification"]:::app
-    end
-
-    Kafka[("Apache Kafka<br/>25 topics, 3 partitions, orderId-keyed")]:::store
-    PgM[("Postgres Master<br/>9 logical databases")]:::store
-    PgS[("Postgres Slave<br/>read replicas")]:::store
-    Redis[("Redis<br/>L2 cache, saga state, locks")]:::store
-
-    Browser -->|HTTPS| Nginx
-    Browser -.SSE long-lived.- Nginx
-    Nginx --> Gateway
-    Gateway --> APP
-
-    APP <-->|produce / consume| Kafka
-    APP -->|writes| PgM
-    APP -.reads.-> PgS
-    APP <-->|cache + state| Redis
-    PgM -.WAL replication.-> PgS
-
-    classDef edge  fill:#1c3a52,stroke:#1976d2,color:#e6edf3
-    classDef gw    fill:#4a3315,stroke:#f57c00,color:#e6edf3
-    classDef app   fill:#3a1f4a,stroke:#7b1fa2,color:#e6edf3
-    classDef store fill:#1d3a23,stroke:#388e3c,color:#e6edf3
-</div>
-        </div>
-
-        <h3 style="margin-top:32px">Notable design properties</h3>
-        <table>
-          <tr><th>Property</th><th>Why</th></tr>
-          <tr>
-            <td>No HTTP between services for workflows</td>
-            <td>A downed service degrades into consumer lag, not cascading 5xx</td>
-          </tr>
-          <tr>
-            <td>9 logical Postgres DBs on one master</td>
-            <td>Bounded-context isolation without paying for 9 physical clusters</td>
-          </tr>
-          <tr>
-            <td>Redis is acceleration, not source of truth</td>
-            <td>Saga state writes Postgres first; Redis outage = slow reads, not data loss</td>
-          </tr>
-          <tr>
-            <td>Single read replica, all services</td>
-            <td>Enough for current load; partition by service when any DB outgrows master</td>
-          </tr>
-        </table>
-      </section>
-
-      <section id="flow1">
-        <h2>Flow 1 — Happy path (price unchanged)</h2>
-        <p class="lead">
-          User's <code>requestedPrice</code> matches <code>facePrice × surge_at_orderCreatedAt</code>.
-          Saga walks all 10 hops without compensation and terminates in <span class="badge ok">COMPLETED</span>.
-        </p>
-        <div class="diagram">
-<div class="mermaid">
-sequenceDiagram
-    autonumber
-    participant U as Browser
-    participant GW as API Gateway
-    participant OS as Order Svc
-    participant K as Kafka
-    participant SO as Saga
-    participant TS as Ticket Svc
-    participant PR as Pricing Svc
-    participant PS as Payment Svc
-    participant DB as Postgres
-
-    U  ->> GW: POST /api/orders
-    GW ->> OS: forward with X-User-Id
-    OS ->> DB: INSERT orders status=PENDING
-    OS ->> K:  order.created
-    OS -->> U: 201 PENDING
-
-    K  ->> SO: OrderCreatedEvent
-    SO ->> DB: INSERT saga_states STARTED
-    SO ->> K:  ticket.cmd TicketReserveCommand
-    K  ->> TS: TicketReserveCommand
-    TS ->> DB: UPDATE tickets RESERVED
-    TS ->> K:  ticket.reserved
-
-    K  ->> SO: TicketReservedEvent
-    SO ->> K:  pricing.lock.cmd PriceLockCommand
-    K  ->> PR: PriceLockCommand
-    Note right of PR: Case B exact match
-    PR ->> K:  pricing.locked
-
-    K  ->> SO: PricingLockedEvent
-    SO ->> K:  payment.cmd PaymentChargeCommand
-    K  ->> PS: PaymentChargeCommand
-    PS ->> DB: INSERT payments PENDING
-    Note right of PS: Watchdog 2s tick<br/>calls gateway off thread
-    PS ->> DB: UPDATE payments SUCCESS
-    PS ->> K:  payment.succeeded
-
-    K  ->> SO: PaymentSucceededEvent
-    SO ->> K:  ticket.cmd TicketConfirmCommand
-    K  ->> TS: TicketConfirmCommand
-    TS ->> DB: UPDATE tickets CONFIRMED
-    TS ->> K:  ticket.confirmed
-
-    K  ->> SO: TicketConfirmedEvent
-    SO ->> DB: UPDATE saga_states COMPLETED
-    SO ->> K:  order.confirmed
-    K  ->> OS: OrderConfirmedEvent
-    OS ->> DB: UPDATE orders CONFIRMED
-    OS -->> U: SSE status=CONFIRMED
-</div>
-        </div>
-      </section>
-
-      <section id="flow2">
-        <h2>Flow 2 — Price changed, user accepts new price</h2>
-        <p class="lead">
-          Surge multiplier moved between <code>orderCreatedAt</code> and the pricing lock.
-          Pricing service emits <code>PriceChangedEvent</code>, saga pauses in
-          <span class="badge warn">AWAITING_PRICE_CONFIRMATION</span>. User confirms via REST →
-          saga re-issues <code>PriceLockCommand confirmed=true</code> at the new price.
-        </p>
-        <div class="diagram">
-<div class="mermaid">
-sequenceDiagram
-    autonumber
-    participant U as Browser
-    participant OS as Order Svc
-    participant K as Kafka
-    participant SO as Saga
-    participant TS as Ticket Svc
-    participant PR as Pricing Svc
-    participant PS as Payment Svc
-    participant DB as Postgres
-
-    U  ->> OS: POST /api/orders
-    OS ->> K:  order.created
-    OS -->> U: 201 PENDING
-
-    K  ->> SO: OrderCreatedEvent
-    SO ->> K:  ticket.cmd TicketReserveCommand
-    K  ->> TS: reserve
-    TS ->> DB: tickets RESERVED
-    TS ->> K:  ticket.reserved
-
-    K  ->> SO: TicketReservedEvent
-    SO ->> K:  pricing.lock.cmd confirmed=false
-    K  ->> PR: PriceLockCommand
-    Note right of PR: Case C mismatch<br/>but multiplier in history
-    PR ->> K:  pricing.price.changed PriceChangedEvent
-
-    K  ->> SO: PriceChangedEvent
-    SO ->> DB: saga_states AWAITING_PRICE_CONFIRMATION
-    SO ->> K:  order.price.changed
-    K  ->> OS: OrderPriceChangedEvent
-    OS ->> DB: orders PRICE_CHANGED pending_price=newPrice
-    OS -->> U: SSE PRICE_CHANGED pendingPrice
-
-    Note over U,SO: 30-second watchdog window
-    U  ->> OS: POST /confirm-price
-    OS ->> K:  order.price.confirm
-    K  ->> SO: OrderPriceConfirmCommand
-
-    SO ->> K:  pricing.lock.cmd confirmed=true
-    K  ->> PR: PriceLockCommand
-    PR ->> K:  pricing.locked newPrice
-
-    K  ->> SO: PricingLockedEvent
-    SO ->> K:  payment.cmd amount=newPrice
-    K  ->> PS: charge
-    PS ->> DB: payments SUCCESS
-    PS ->> K:  payment.succeeded
-
-    K  ->> SO: PaymentSucceededEvent
-    SO ->> K:  ticket.cmd TicketConfirmCommand
-    K  ->> TS: confirm
-    TS ->> DB: tickets CONFIRMED
-    TS ->> K:  ticket.confirmed
-
-    K  ->> SO: TicketConfirmedEvent
-    SO ->> K:  order.confirmed
-    K  ->> OS: OrderConfirmedEvent
-    OS -->> U: SSE CONFIRMED
-</div>
-        </div>
-      </section>
-
-      <section id="flow3">
-        <h2>Flow 3 — Decline new price (or 30-second timeout)</h2>
-        <p class="lead">
-          Same divergence as Flow 2 up to <code>AWAITING_PRICE_CONFIRMATION</code>. User
-          rejects (or watchdog timeout fires). Saga compensates by releasing the ticket
-          and emits <code>OrderCancelledEvent</code>. Order ends as
-          <span class="badge fail">CANCELLED</span>; ticket returns to
-          <span class="badge ok">AVAILABLE</span>; no payment row exists.
-        </p>
-        <div class="diagram">
-<div class="mermaid">
-sequenceDiagram
-    autonumber
-    participant U as Browser
-    participant OS as Order Svc
-    participant K as Kafka
-    participant SO as Saga
-    participant TS as Ticket Svc
-    participant PR as Pricing Svc
-    participant DB as Postgres
-
-    U  ->> OS: POST /api/orders
-    OS ->> K:  order.created
-    OS -->> U: 201 PENDING
-
-    K  ->> SO: OrderCreatedEvent
-    SO ->> K:  ticket.cmd TicketReserveCommand
-    K  ->> TS: reserve
-    TS ->> DB: tickets RESERVED
-    TS ->> K:  ticket.reserved
-
-    K  ->> SO: TicketReservedEvent
-    SO ->> K:  pricing.lock.cmd
-    K  ->> PR: PriceLockCommand
-    PR ->> K:  pricing.price.changed PriceChangedEvent
-
-    K  ->> SO: PriceChangedEvent
-    SO ->> DB: saga_states AWAITING_PRICE_CONFIRMATION
-    SO ->> K:  order.price.changed
-    K  ->> OS: OrderPriceChangedEvent
-    OS -->> U: SSE PRICE_CHANGED
-
-    Note over U,SO: Either user declines or 30s watchdog timeout
-    U  ->> OS: POST /cancel-price
-    OS ->> K:  order.price.cancel
-    K  ->> SO: OrderPriceCancelCommand
-
-    Note over SO: Compensation - release ticket lock
-    SO ->> K:  saga.compensate TicketReleaseCommand
-    K  ->> TS: release
-    TS ->> DB: tickets AVAILABLE version++
-    TS ->> K:  ticket.released
-
-    K  ->> SO: TicketReleasedEvent
-    SO ->> DB: saga_states CANCELLED
-    SO ->> K:  order.cancelled
-    K  ->> OS: OrderCancelledEvent
-    OS ->> DB: orders CANCELLED
-    OS -->> U: SSE CANCELLED
-</div>
-        </div>
-      </section>
-
-      <section id="terminal">
-        <h2>Terminal-state matrix</h2>
-        <p class="lead">
-          All three flows converge to a fully consistent terminal state across 4 databases —
-          no orphan rows, no half-charged payments, no leaked ticket locks.
-        </p>
-        <table>
-          <tr>
-            <th>Flow</th><th>Saga</th><th>Order</th><th>Ticket</th><th>Payment</th>
-          </tr>
-          <tr>
-            <td><b>1 — Happy path</b></td>
-            <td><span class="badge ok">COMPLETED</span></td>
-            <td><span class="badge ok">CONFIRMED</span></td>
-            <td><span class="badge ok">CONFIRMED</span></td>
-            <td><span class="badge ok">SUCCESS</span></td>
-          </tr>
-          <tr>
-            <td><b>2 — Accept new price</b></td>
-            <td><span class="badge ok">COMPLETED</span></td>
-            <td><span class="badge ok">CONFIRMED</span></td>
-            <td><span class="badge ok">CONFIRMED</span></td>
-            <td><span class="badge ok">SUCCESS (new price)</span></td>
-          </tr>
-          <tr>
-            <td><b>3 — Decline / timeout</b></td>
-            <td><span class="badge fail">CANCELLED</span></td>
-            <td><span class="badge fail">CANCELLED</span></td>
-            <td><span class="badge ok">AVAILABLE</span></td>
-            <td>—</td>
-          </tr>
-        </table>
-      </section>
-
-    </main>
+  <div class="banner">
+    ▶️ Prefer it animated? See the
+    <a href="animated-flows.html">animated saga flows</a>
+    — interactive play/pause/step demo of all three scenarios.
   </div>
 
-  <!--
-    Mermaid is loaded as an ES module. We pin to a specific version (10.9.4) for
-    reproducibility and call `mermaid.run()` explicitly after init — this works in
-    htmlpreview.github.io, GitHub Pages, and direct local file:// URLs.
-  -->
-  <script type="module">
-    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10.9.4/dist/mermaid.esm.min.mjs';
-    window.mermaid = mermaid;
+  <!-- ─────────────────────────────────────────────────────────── -->
+  <section id="architecture">
+    <h2>System architecture</h2>
+    <p class="lead">
+      Four-tier topology. Browser → nginx (edge) → API gateway → 9 Spring Boot services
+      that communicate exclusively through Kafka → shared Postgres + Redis storage.
+    </p>
 
-    mermaid.initialize({
-      startOnLoad: false,
-      theme: 'dark',
-      themeVariables: {
-        darkMode: true,
-        background: '#161b22',
-        primaryColor: '#1f6feb',
-        primaryTextColor: '#e6edf3',
-        primaryBorderColor: '#58a6ff',
-        lineColor: '#8b949e',
-        secondaryColor: '#30363d',
-        tertiaryColor: '#161b22',
-        actorBkg: '#1f6feb',
-        actorBorder: '#58a6ff',
-        actorTextColor: '#ffffff',
-        actorLineColor: '#8b949e',
-        signalColor: '#e6edf3',
-        signalTextColor: '#e6edf3',
-        labelBoxBkgColor: '#21262d',
-        labelBoxBorderColor: '#30363d',
-        labelTextColor: '#e6edf3',
-        noteBkgColor: '#3a2f00',
-        noteBorderColor: '#9e8200',
-        noteTextColor: '#e6edf3',
-        sequenceNumberColor: '#0d1117'
-      },
-      sequence: {
-        diagramMarginX: 32,
-        diagramMarginY: 16,
-        actorMargin: 60,
-        width: 160,
-        height: 56,
-        boxMargin: 12,
-        messageMargin: 36,
-        mirrorActors: true,
-        showSequenceNumbers: true
-      },
-      flowchart: {
-        curve: 'basis',
-        padding: 20
-      }
-    });
+    <div class="arch-panel">
+      <svg viewBox="0 0 900 540" width="900" height="540">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,0 L10,5 L0,10 Z" fill="#8b949e" />
+          </marker>
+        </defs>
 
-    // Explicit run after init — robust against iframe sandboxing and proxy delays.
-    try {
-      await mermaid.run({ querySelector: '.mermaid' });
-    } catch (err) {
-      console.error('mermaid render failed:', err);
-      document.querySelectorAll('.mermaid').forEach(el => {
-        el.style.color = '#ff7b72';
-        el.style.fontSize = '12px';
-        el.style.fontFamily = 'ui-monospace, monospace';
-        el.style.padding = '12px';
-        el.style.border = '1px solid #ff7b72';
-        el.style.borderRadius = '6px';
-        el.style.textAlign = 'left';
-        el.style.whiteSpace = 'pre';
-        el.insertAdjacentHTML('afterbegin',
-          '⚠ Mermaid failed to render here (likely sandboxed preview blocking CDN). ' +
-          'Open this file via GitHub Pages or locally for full rendering. Raw source:\n\n');
-      });
-    }
-  </script>
+        <!-- Tier labels -->
+        <text x="20" y="40"  fill="#8b949e" font-size="11" font-weight="700" letter-spacing="1">EDGE</text>
+        <text x="20" y="135" fill="#8b949e" font-size="11" font-weight="700" letter-spacing="1">GATEWAY</text>
+        <text x="20" y="225" fill="#8b949e" font-size="11" font-weight="700" letter-spacing="1">APPLICATION</text>
+        <text x="20" y="430" fill="#8b949e" font-size="11" font-weight="700" letter-spacing="1">STORAGE</text>
 
-  <!-- Non-module fallback init for scroll-spy nav (does not depend on mermaid) -->
-  <script>
-    const links = document.querySelectorAll('.nav-link');
-    const sections = Array.from(links).map(a => document.querySelector(a.getAttribute('href')));
-    function onScroll() {
-      const y = window.scrollY + 100;
-      let active = 0;
-      sections.forEach((s, i) => { if (s && s.offsetTop <= y) active = i; });
-      links.forEach((l, i) => l.classList.toggle('active', i === active));
-    }
-    window.addEventListener('scroll', onScroll);
-    onScroll();
-  </script>
+        <!-- Tier separators -->
+        <line x1="100" y1="38" x2="880" y2="38" stroke="#30363d" stroke-dasharray="2 4"/>
+        <line x1="100" y1="133" x2="880" y2="133" stroke="#30363d" stroke-dasharray="2 4"/>
+        <line x1="100" y1="223" x2="880" y2="223" stroke="#30363d" stroke-dasharray="2 4"/>
+        <line x1="100" y1="425" x2="880" y2="425" stroke="#30363d" stroke-dasharray="2 4"/>
+
+        <!-- Browser -->
+        <rect x="160" y="20"  width="120" height="50" rx="8" fill="#1c3a52" stroke="#1976d2" stroke-width="1.5"/>
+        <text x="220" y="48" fill="#e6edf3" font-size="13" font-weight="700" text-anchor="middle">Browser</text>
+        <text x="220" y="63" fill="#8b949e" font-size="10" text-anchor="middle">React SPA</text>
+
+        <!-- Nginx -->
+        <rect x="380" y="20"  width="120" height="50" rx="8" fill="#1c3a52" stroke="#1976d2" stroke-width="1.5"/>
+        <text x="440" y="48" fill="#e6edf3" font-size="13" font-weight="700" text-anchor="middle">Nginx</text>
+        <text x="440" y="63" fill="#8b949e" font-size="10" text-anchor="middle">edge, SSE buffering off</text>
+
+        <!-- API Gateway -->
+        <rect x="380" y="115" width="180" height="50" rx="8" fill="#4a3315" stroke="#f57c00" stroke-width="1.5"/>
+        <text x="470" y="143" fill="#e6edf3" font-size="13" font-weight="700" text-anchor="middle">API Gateway</text>
+        <text x="470" y="158" fill="#8b949e" font-size="10" text-anchor="middle">JWT • CB • rate-limit</text>
+
+        <!-- Application services (3x3 grid) -->
+        <g font-family="-apple-system, sans-serif">
+          <!-- Row 1 -->
+          <rect x="140" y="240" width="120" height="40" rx="6" fill="#3a1f4a" stroke="#7b1fa2" stroke-width="1.2"/>
+          <text x="200" y="265" fill="#e6edf3" font-size="12" font-weight="600" text-anchor="middle">Auth</text>
+
+          <rect x="280" y="240" width="120" height="40" rx="6" fill="#3a1f4a" stroke="#7b1fa2" stroke-width="1.2"/>
+          <text x="340" y="265" fill="#e6edf3" font-size="12" font-weight="600" text-anchor="middle">Order</text>
+
+          <rect x="420" y="240" width="120" height="40" rx="6" fill="#3a1f4a" stroke="#7b1fa2" stroke-width="1.2"/>
+          <text x="480" y="265" fill="#e6edf3" font-size="12" font-weight="600" text-anchor="middle">Ticket</text>
+
+          <rect x="560" y="240" width="120" height="40" rx="6" fill="#3a1f4a" stroke="#7b1fa2" stroke-width="1.2"/>
+          <text x="620" y="265" fill="#e6edf3" font-size="12" font-weight="600" text-anchor="middle">Pricing</text>
+
+          <rect x="700" y="240" width="120" height="40" rx="6" fill="#3a1f4a" stroke="#7b1fa2" stroke-width="1.2"/>
+          <text x="760" y="265" fill="#e6edf3" font-size="12" font-weight="600" text-anchor="middle">Payment</text>
+
+          <!-- Row 2 -->
+          <rect x="280" y="290" width="120" height="40" rx="6" fill="#3a1f4a" stroke="#7b1fa2" stroke-width="1.2"/>
+          <text x="340" y="315" fill="#e6edf3" font-size="12" font-weight="600" text-anchor="middle">Saga Orchestrator</text>
+
+          <rect x="420" y="290" width="120" height="40" rx="6" fill="#3a1f4a" stroke="#7b1fa2" stroke-width="1.2"/>
+          <text x="480" y="315" fill="#e6edf3" font-size="12" font-weight="600" text-anchor="middle">Reservation</text>
+
+          <rect x="560" y="290" width="120" height="40" rx="6" fill="#3a1f4a" stroke="#7b1fa2" stroke-width="1.2"/>
+          <text x="620" y="315" fill="#e6edf3" font-size="12" font-weight="600" text-anchor="middle">Sec Market</text>
+
+          <rect x="700" y="290" width="120" height="40" rx="6" fill="#3a1f4a" stroke="#7b1fa2" stroke-width="1.2"/>
+          <text x="760" y="315" fill="#e6edf3" font-size="12" font-weight="600" text-anchor="middle">Notification</text>
+        </g>
+
+        <!-- Kafka bus (horizontal) -->
+        <rect x="140" y="360" width="680" height="36" rx="8" fill="#3a2810" stroke="#ff9d4d" stroke-width="1.5"/>
+        <text x="480" y="382" fill="#ff9d4d" font-size="13" font-weight="700" text-anchor="middle">Apache Kafka  •  25 topics  •  3 partitions  •  orderId-keyed</text>
+
+        <!-- Storage row -->
+        <rect x="140" y="445" width="160" height="60" rx="8" fill="#0f2a16" stroke="#388e3c" stroke-width="1.5"/>
+        <text x="220" y="470" fill="#7ee787" font-size="13" font-weight="700" text-anchor="middle">Postgres Master</text>
+        <text x="220" y="488" fill="#8b949e" font-size="10" text-anchor="middle">9 logical databases</text>
+
+        <rect x="320" y="445" width="160" height="60" rx="8" fill="#0f2a16" stroke="#388e3c" stroke-width="1.5"/>
+        <text x="400" y="470" fill="#7ee787" font-size="13" font-weight="700" text-anchor="middle">Postgres Slave</text>
+        <text x="400" y="488" fill="#8b949e" font-size="10" text-anchor="middle">read replicas</text>
+
+        <rect x="500" y="445" width="320" height="60" rx="8" fill="#0f2a16" stroke="#388e3c" stroke-width="1.5"/>
+        <text x="660" y="470" fill="#7ee787" font-size="13" font-weight="700" text-anchor="middle">Redis</text>
+        <text x="660" y="488" fill="#8b949e" font-size="10" text-anchor="middle">L2 cache • saga state • distributed locks • rate counters</text>
+
+        <!-- Arrows: tier-to-tier -->
+        <line x1="280" y1="45" x2="375" y2="45" stroke="#8b949e" stroke-width="1.5" marker-end="url(#ah)"/>
+        <line x1="440" y1="70" x2="470" y2="113" stroke="#8b949e" stroke-width="1.5" marker-end="url(#ah)"/>
+        <line x1="470" y1="165" x2="480" y2="237" stroke="#8b949e" stroke-width="1.5" marker-end="url(#ah)" stroke-dasharray="0"/>
+
+        <!-- Services ↔ Kafka -->
+        <line x1="200" y1="332" x2="200" y2="358" stroke="#8b949e" stroke-width="1.2" stroke-dasharray="3 3"/>
+        <line x1="340" y1="332" x2="340" y2="358" stroke="#8b949e" stroke-width="1.2" stroke-dasharray="3 3"/>
+        <line x1="480" y1="332" x2="480" y2="358" stroke="#8b949e" stroke-width="1.2" stroke-dasharray="3 3"/>
+        <line x1="620" y1="332" x2="620" y2="358" stroke="#8b949e" stroke-width="1.2" stroke-dasharray="3 3"/>
+        <line x1="760" y1="332" x2="760" y2="358" stroke="#8b949e" stroke-width="1.2" stroke-dasharray="3 3"/>
+
+        <!-- Kafka ↔ Storage -->
+        <line x1="480" y1="398" x2="480" y2="443" stroke="#8b949e" stroke-width="1.5" marker-end="url(#ah)"/>
+
+        <!-- Replication -->
+        <line x1="300" y1="475" x2="320" y2="475" stroke="#388e3c" stroke-dasharray="4 3" stroke-width="1.5" marker-end="url(#ah)"/>
+
+        <!-- Browser <- Nginx (SSE long-lived, dashed) -->
+        <line x1="375" y1="55" x2="285" y2="55" stroke="#58a6ff" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#ah)"/>
+        <text x="328" y="80" fill="#58a6ff" font-size="9" text-anchor="middle">SSE</text>
+      </svg>
+    </div>
+
+    <table>
+      <tr><th>Property</th><th>Why</th></tr>
+      <tr>
+        <td>No HTTP between services for workflows</td>
+        <td>Downed service degrades into consumer lag, not cascading 5xx</td>
+      </tr>
+      <tr>
+        <td>9 logical Postgres DBs on one master</td>
+        <td>Bounded-context isolation without paying for 9 physical clusters</td>
+      </tr>
+      <tr>
+        <td>Redis is acceleration, not source of truth</td>
+        <td>Saga state writes Postgres first; Redis outage = slow reads, not data loss</td>
+      </tr>
+      <tr>
+        <td>Stateless JVM</td>
+        <td>State lives in Postgres / Kafka / Redis; pods can scale or restart freely</td>
+      </tr>
+    </table>
+  </section>
+
+  <!-- ─────────────────────────────────────────────────────────── -->
+  <section id="flow1">
+    <h2>Flow 1 — Happy path (price unchanged)</h2>
+    <p class="lead">
+      <code>requestedPrice == facePrice × surge_at_orderCreatedAt</code>.
+      Saga walks all 10 hops without compensation and terminates in
+      <span class="badge ok">COMPLETED</span>.
+    </p>
+
+    <div class="flow">
+      <div class="phase">Phase 1 — Ingress</div>
+      <div class="step">
+        <span class="num">1</span><span class="from">Browser</span>
+        <div><b>POST /api/orders</b><div class="desc">User submits order with {ticketId, requestedPrice}</div></div>
+        <span class="to">Gateway</span>
+      </div>
+      <div class="step">
+        <span class="num">2</span><span class="from">Gateway</span>
+        <div><b>forward + X-User-Id</b><div class="desc">JWT validated, headers attached, routed to order-service</div></div>
+        <span class="to">Order Svc</span>
+      </div>
+      <div class="step">
+        <span class="num">3</span><span class="from">Order Svc</span>
+        <div><b>INSERT orders</b><div class="desc"><span class="tag db">orders</span> → <span class="badge ok">PENDING</span> (saga_id set)</div></div>
+        <span class="to">Postgres</span>
+      </div>
+      <div class="step">
+        <span class="num">4</span><span class="from">Order Svc</span>
+        <div><b>order.created</b><div class="desc">OrderCreatedEvent — saga ignition</div></div>
+        <span class="to"><span class="tag kafka">Kafka</span></span>
+      </div>
+
+      <div class="phase">Phase 2 — Reserve ticket</div>
+      <div class="step">
+        <span class="num">5</span><span class="from"><span class="tag kafka">Kafka</span></span>
+        <div><b>OrderCreatedEvent</b><div class="desc">Saga STARTED, write-through Postgres + Redis</div></div>
+        <span class="to">Saga</span>
+      </div>
+      <div class="step">
+        <span class="num">6</span><span class="from">Saga</span>
+        <div><b>ticket.cmd → TicketReserveCommand</b><div class="desc">Unified topic carries Reserve/Confirm/Release; orderId key</div></div>
+        <span class="to"><span class="tag kafka">Kafka</span></span>
+      </div>
+      <div class="step">
+        <span class="num">7</span><span class="from"><span class="tag kafka">Kafka</span></span>
+        <div><b>TicketReserveCommand</b><div class="desc"><span class="tag db">tickets</span> @Version optimistic lock → <span class="badge warn">RESERVED</span></div></div>
+        <span class="to">Ticket Svc</span>
+      </div>
+      <div class="step">
+        <span class="num">8</span><span class="from">Ticket Svc</span>
+        <div><b>ticket.reserved</b><div class="desc">TicketReservedEvent</div></div>
+        <span class="to"><span class="tag kafka">Kafka</span></span>
+      </div>
+
+      <div class="phase">Phase 3 — Lock price</div>
+      <div class="step">
+        <span class="num">9</span><span class="from">Saga</span>
+        <div><b>pricing.lock.cmd → PriceLockCommand</b><div class="desc">Saga → TICKET_RESERVED, carries orderCreatedAt for point-in-time lookup</div></div>
+        <span class="to"><span class="tag kafka">Kafka</span></span>
+      </div>
+      <div class="step">
+        <span class="num">10</span><span class="from">Pricing Svc</span>
+        <div><b>Case B — exact match</b><div class="desc">userPrice == facePrice × multiplierAtOrderTime → publish pricing.locked</div></div>
+        <span class="to"><span class="tag kafka">Kafka</span></span>
+      </div>
+
+      <div class="phase">Phase 4 — Charge payment</div>
+      <div class="step">
+        <span class="num">11</span><span class="from">Saga</span>
+        <div><b>payment.cmd → PaymentChargeCommand</b><div class="desc">Saga → PRICING_LOCKED, unified topic for Charge/Cancel</div></div>
+        <span class="to"><span class="tag kafka">Kafka</span></span>
+      </div>
+      <div class="step">
+        <span class="num">12</span><span class="from">Payment Svc</span>
+        <div><b>INSERT payments(PENDING)</b><div class="desc"><span class="tag db">payments</span> persisted with nextRetryAt=now → consumer returns in ~3ms</div></div>
+        <span class="to">Postgres</span>
+      </div>
+      <div class="step">
+        <span class="num">13</span><span class="from">PaymentWatchdog</span>
+        <div><b>gateway.charge() → SUCCESS</b><div class="desc">2s scheduler tick, claim-lease pattern — off Kafka thread → <span class="badge ok">SUCCESS</span></div></div>
+        <span class="to">Postgres</span>
+      </div>
+      <div class="step">
+        <span class="num">14</span><span class="from">Payment Svc</span>
+        <div><b>payment.succeeded</b><div class="desc">PaymentSucceededEvent with PAY-xxx reference</div></div>
+        <span class="to"><span class="tag kafka">Kafka</span></span>
+      </div>
+
+      <div class="phase">Phase 5 — Confirm + finalize</div>
+      <div class="step">
+        <span class="num">15</span><span class="from">Saga</span>
+        <div><b>ticket.cmd → TicketConfirmCommand</b><div class="desc">Saga → PAYMENT_CHARGED; same partition as original Reserve guarantees ordering</div></div>
+        <span class="to"><span class="tag kafka">Kafka</span></span>
+      </div>
+      <div class="step">
+        <span class="num">16</span><span class="from">Ticket Svc</span>
+        <div><b>UPDATE tickets CONFIRMED</b><div class="desc"><span class="tag db">tickets</span> → <span class="badge ok">CONFIRMED</span></div></div>
+        <span class="to">Postgres</span>
+      </div>
+      <div class="step">
+        <span class="num">17</span><span class="from">Saga</span>
+        <div><b>order.confirmed</b><div class="desc">Saga → <span class="badge ok">COMPLETED</span> → order-service flips order status</div></div>
+        <span class="to">Order Svc</span>
+      </div>
+      <div class="step">
+        <span class="num">18</span><span class="from">Order Svc</span>
+        <div><b>SSE status=CONFIRMED</b><div class="desc">Real-time push to the browser — no polling</div></div>
+        <span class="to">Browser</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────────────────────────────────────────────────────── -->
+  <section id="flow2">
+    <h2>Flow 2 — Accept new price</h2>
+    <p class="lead">
+      Surge moved between <code>orderCreatedAt</code> and the pricing lock. Pricing emits
+      <code>PriceChangedEvent</code>, saga pauses in
+      <span class="badge warn">AWAITING_PRICE_CONFIRMATION</span>. User confirms via REST
+      → saga re-issues lock command at the new price → resumes happy path.
+    </p>
+
+    <div class="flow">
+      <div class="phase">Phase 1 — Same as Flow 1 steps 1–8</div>
+      <div class="step">
+        <span class="num">1–8</span><span class="from">— ingress —</span>
+        <div><b>POST /api/orders → reserve ticket</b><div class="desc">Identical to Flow 1; <span class="tag db">orders</span>=PENDING, <span class="tag db">tickets</span>=RESERVED, saga=TICKET_RESERVED</div></div>
+        <span class="to">—</span>
+      </div>
+
+      <div class="phase await">Phase 2 — Divergence: price changed</div>
+      <div class="step">
+        <span class="num">9</span><span class="from">Saga</span>
+        <div><b>pricing.lock.cmd (confirmed=false)</b></div>
+        <span class="to"><span class="tag kafka">Kafka</span></span>
+      </div>
+      <div class="step">
+        <span class="num">10</span><span class="from">Pricing Svc</span>
+        <div><b>Case C — multiplier moved</b><div class="desc">userPrice ≠ current price, but claimedMultiplier existed in history → emit pricing.price.changed with newPrice</div></div>
+        <span class="to"><span class="tag kafka">Kafka</span></span>
+      </div>
+      <div class="step">
+        <span class="num">11</span><span class="from">Saga</span>
+        <div><b>order.price.changed → OrderPriceChangedEvent</b><div class="desc">Saga → <span class="badge warn">AWAITING_PRICE_CONFIRMATION</span>, watchdog timer armed (30s)</div></div>
+        <span class="to">Order Svc</span>
+      </div>
+      <div class="step">
+        <span class="num">12</span><span class="from">Order Svc</span>
+        <div><b>SSE status=PRICE_CHANGED</b><div class="desc"><span class="tag db">orders</span>.pending_price=newPrice — browser prompts user</div></div>
+        <span class="to">Browser</span>
+      </div>
+
+      <div class="phase await">Phase 3 — User confirms</div>
+      <div class="step">
+        <span class="num">13</span><span class="from">Browser</span>
+        <div><b>POST /confirm-price</b><div class="desc">User accepts within 30s window</div></div>
+        <span class="to">Order Svc</span>
+      </div>
+      <div class="step">
+        <span class="num">14</span><span class="from">Order Svc</span>
+        <div><b>order.price.confirm → OrderPriceConfirmCommand</b></div>
+        <span class="to">Saga</span>
+      </div>
+      <div class="step">
+        <span class="num">15</span><span class="from">Saga</span>
+        <div><b>pricing.lock.cmd (confirmed=true)</b><div class="desc">Re-issue lock; pricing locks at newPrice unconditionally</div></div>
+        <span class="to">Pricing Svc</span>
+      </div>
+
+      <div class="phase">Phase 4 — Charge + confirm at new price</div>
+      <div class="step">
+        <span class="num">16–22</span><span class="from">— resume —</span>
+        <div><b>Charge newPrice → confirm ticket → SSE CONFIRMED</b><div class="desc">Same as Flow 1 phases 4–5, but amount = newPrice. Saga → <span class="badge ok">COMPLETED</span></div></div>
+        <span class="to">—</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────────────────────────────────────────────────────── -->
+  <section id="flow3">
+    <h2>Flow 3 — Decline new price (or 30-second timeout)</h2>
+    <p class="lead">
+      Same divergence as Flow 2 up to <span class="badge warn">AWAITING_PRICE_CONFIRMATION</span>.
+      User rejects (or <code>SagaWatchdog</code> timeout fires). Saga compensates by releasing
+      the ticket and emits <code>OrderCancelledEvent</code>. Order ends as
+      <span class="badge fail">CANCELLED</span>; ticket returns to
+      <span class="badge ok">AVAILABLE</span>; no payment row exists.
+    </p>
+
+    <div class="flow">
+      <div class="phase">Phase 1 — Same as Flow 2 steps 1–12 (up to AWAITING_PRICE_CONFIRMATION)</div>
+      <div class="step">
+        <span class="num">1–12</span><span class="from">— same —</span>
+        <div><b>Reserve ticket → Case C → wait for user</b></div>
+        <span class="to">—</span>
+      </div>
+
+      <div class="phase compensate">Phase 2 — Trigger compensation</div>
+      <div class="step">
+        <span class="num">13a</span><span class="from">Browser</span>
+        <div><b>POST /cancel-price</b><div class="desc">User explicitly rejects new price</div></div>
+        <span class="to">Order Svc</span>
+      </div>
+      <div class="step">
+        <span class="num">13b</span><span class="from">SagaWatchdog</span>
+        <div><b>OR — 30s timeout fires</b><div class="desc">Partial index <code>idx_saga_states_active_stale</code> finds expired AWAITING_PRICE_CONFIRMATION row</div></div>
+        <span class="to">Saga</span>
+      </div>
+      <div class="step">
+        <span class="num">14</span><span class="from">Saga</span>
+        <div><b>ticket.cmd → TicketReleaseCommand</b><div class="desc">Same unified topic + orderId key → release is ordered after any in-flight confirm</div></div>
+        <span class="to"><span class="tag kafka">Kafka</span></span>
+      </div>
+
+      <div class="phase compensate">Phase 3 — Release + finalize</div>
+      <div class="step">
+        <span class="num">15</span><span class="from">Ticket Svc</span>
+        <div><b>UPDATE tickets AVAILABLE</b><div class="desc"><span class="tag db">tickets</span> → <span class="badge ok">AVAILABLE</span> (version++)</div></div>
+        <span class="to">Postgres</span>
+      </div>
+      <div class="step">
+        <span class="num">16</span><span class="from">Ticket Svc</span>
+        <div><b>ticket.released</b></div>
+        <span class="to"><span class="tag kafka">Kafka</span></span>
+      </div>
+      <div class="step">
+        <span class="num">17</span><span class="from">Saga</span>
+        <div><b>order.cancelled → OrderCancelledEvent</b><div class="desc">Saga → <span class="badge fail">CANCELLED</span></div></div>
+        <span class="to">Order Svc</span>
+      </div>
+      <div class="step">
+        <span class="num">18</span><span class="from">Order Svc</span>
+        <div><b>SSE status=CANCELLED</b><div class="desc"><span class="tag db">orders</span> → <span class="badge fail">CANCELLED</span>. Note: no <span class="tag db">payments</span> row was ever created</div></div>
+        <span class="to">Browser</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────────────────────────────────────────────────────── -->
+  <section id="terminal">
+    <h2>Terminal-state matrix</h2>
+    <p class="lead">
+      All three flows converge to a fully consistent state across 4 databases — no orphan rows,
+      no half-charged payments, no leaked ticket locks.
+    </p>
+    <table>
+      <tr>
+        <th>Flow</th>
+        <th>Saga</th>
+        <th>Order</th>
+        <th>Ticket</th>
+        <th>Payment</th>
+      </tr>
+      <tr>
+        <td><b>1 — Happy path</b></td>
+        <td><span class="badge ok">COMPLETED</span></td>
+        <td><span class="badge ok">CONFIRMED</span></td>
+        <td><span class="badge ok">CONFIRMED</span></td>
+        <td><span class="badge ok">SUCCESS</span></td>
+      </tr>
+      <tr>
+        <td><b>2 — Accept new price</b></td>
+        <td><span class="badge ok">COMPLETED</span></td>
+        <td><span class="badge ok">CONFIRMED</span></td>
+        <td><span class="badge ok">CONFIRMED</span></td>
+        <td><span class="badge ok">SUCCESS (new)</span></td>
+      </tr>
+      <tr>
+        <td><b>3 — Decline / timeout</b></td>
+        <td><span class="badge fail">CANCELLED</span></td>
+        <td><span class="badge fail">CANCELLED</span></td>
+        <td><span class="badge ok">AVAILABLE</span></td>
+        <td>—</td>
+      </tr>
+    </table>
+  </section>
+
+</main>
+
 </body>
 </html>
