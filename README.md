@@ -41,13 +41,12 @@ flowchart LR
     end
 ```
 
-> ▶️ **[Animated saga flows](./docs/animated-flows.html)** — watch a real `POST /api/orders` ripple through
-> 9 services with play/pause/step controls.
-> ([rendered on GitHub](https://htmlpreview.github.io/?https://github.com/xol60/ticketing-platform/blob/main/docs/animated-flows.html))
+> ▶️ **[Animated saga flows](./docs/animated-flows.html)** — interactive play/pause/step demo
+> of all three order-placement scenarios.
+> 📊 **[Static sequence diagrams](./docs/diagrams.html)** — full mermaid sequence diagrams per flow.
 >
-> 📊 **[Static sequence diagrams](./docs/diagrams.html)** — full-size dark-mode mermaid rendering of
-> architecture + all three saga flows.
-> ([rendered on GitHub](https://htmlpreview.github.io/?https://github.com/xol60/ticketing-platform/blob/main/docs/diagrams.html))
+> Best viewed via GitHub Pages: `https://xol60.github.io/ticketing-platform/animated-flows.html`
+> (see [docs hosting](#docs-hosting) below to enable in one click).
 
 Key properties:
 
@@ -314,6 +313,27 @@ locks are intentionally absent because they don't survive pod restart.
 | Redis `SETNX` distributed lock        | Two pods promoting the same waitlist head               |
 | Write-through saga state (PG → Redis) | Lost progress on Redis flush or pod restart             |
 | Idempotency (sagaId / payment state)  | Duplicate processing on Kafka redelivery                |
+
+## Docs hosting
+
+The two interactive pages (`docs/animated-flows.html`, `docs/diagrams.html`) need to be served
+over HTTP for the mermaid CDN and ES-module imports to load. Three options:
+
+| Method                          | URL                                                                       | Quality                    |
+| ------------------------------- | ------------------------------------------------------------------------- | -------------------------- |
+| **GitHub Pages** (recommended)  | `https://xol60.github.io/ticketing-platform/animated-flows.html`          | ✅ Fast, full JS, clean URL |
+| **Local browser** (file open)   | `open docs/animated-flows.html`                                           | ✅ Works offline            |
+| `htmlpreview.github.io` (proxy) | `https://htmlpreview.github.io/?https://github.com/…/docs/diagrams.html`  | ⚠ Sandboxed iframe — mermaid CDN can be blocked, raw source may show |
+
+### Enabling GitHub Pages (one-time, ~30 seconds)
+
+1. Push the repo to GitHub.
+2. **Settings → Pages** → Source: **Deploy from a branch** → Branch: `main` / Folder: `/docs`.
+3. Save. URL appears within ~1 minute:
+   - `https://xol60.github.io/ticketing-platform/animated-flows.html`
+   - `https://xol60.github.io/ticketing-platform/diagrams.html`
+
+This is the path recruiters will actually click on — no proxy, no sandboxing, full rendering.
 
 ## Architecture decisions
 

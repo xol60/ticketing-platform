@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Ticketing Platform — Architecture & Saga Flows</title>
-  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
   <style>
     :root {
       --bg: #0d1117;
@@ -208,7 +207,7 @@
 
         <p class="scroll-hint">Scroll horizontally if needed →</p>
         <div class="diagram">
-<pre class="mermaid">
+<div class="mermaid">
 flowchart TB
     Browser["Browser - React SPA"]:::edge
 
@@ -248,7 +247,7 @@ flowchart TB
     classDef gw    fill:#4a3315,stroke:#f57c00,color:#e6edf3
     classDef app   fill:#3a1f4a,stroke:#7b1fa2,color:#e6edf3
     classDef store fill:#1d3a23,stroke:#388e3c,color:#e6edf3
-</pre>
+</div>
         </div>
 
         <h3 style="margin-top:32px">Notable design properties</h3>
@@ -280,7 +279,7 @@ flowchart TB
           Saga walks all 10 hops without compensation and terminates in <span class="badge ok">COMPLETED</span>.
         </p>
         <div class="diagram">
-<pre class="mermaid">
+<div class="mermaid">
 sequenceDiagram
     autonumber
     participant U as Browser
@@ -332,7 +331,7 @@ sequenceDiagram
     K  ->> OS: OrderConfirmedEvent
     OS ->> DB: UPDATE orders CONFIRMED
     OS -->> U: SSE status=CONFIRMED
-</pre>
+</div>
         </div>
       </section>
 
@@ -345,7 +344,7 @@ sequenceDiagram
           saga re-issues <code>PriceLockCommand confirmed=true</code> at the new price.
         </p>
         <div class="diagram">
-<pre class="mermaid">
+<div class="mermaid">
 sequenceDiagram
     autonumber
     participant U as Browser
@@ -405,7 +404,7 @@ sequenceDiagram
     SO ->> K:  order.confirmed
     K  ->> OS: OrderConfirmedEvent
     OS -->> U: SSE CONFIRMED
-</pre>
+</div>
         </div>
       </section>
 
@@ -419,7 +418,7 @@ sequenceDiagram
           <span class="badge ok">AVAILABLE</span>; no payment row exists.
         </p>
         <div class="diagram">
-<pre class="mermaid">
+<div class="mermaid">
 sequenceDiagram
     autonumber
     participant U as Browser
@@ -468,7 +467,7 @@ sequenceDiagram
     K  ->> OS: OrderCancelledEvent
     OS ->> DB: orders CANCELLED
     OS -->> U: SSE CANCELLED
-</pre>
+</div>
         </div>
       </section>
 
@@ -509,9 +508,17 @@ sequenceDiagram
     </main>
   </div>
 
-  <script>
+  <!--
+    Mermaid is loaded as an ES module. We pin to a specific version (10.9.4) for
+    reproducibility and call `mermaid.run()` explicitly after init — this works in
+    htmlpreview.github.io, GitHub Pages, and direct local file:// URLs.
+  -->
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10.9.4/dist/mermaid.esm.min.mjs';
+    window.mermaid = mermaid;
+
     mermaid.initialize({
-      startOnLoad: true,
+      startOnLoad: false,
       theme: 'dark',
       themeVariables: {
         darkMode: true,
@@ -553,7 +560,29 @@ sequenceDiagram
       }
     });
 
-    // Active-link highlighting on scroll
+    // Explicit run after init — robust against iframe sandboxing and proxy delays.
+    try {
+      await mermaid.run({ querySelector: '.mermaid' });
+    } catch (err) {
+      console.error('mermaid render failed:', err);
+      document.querySelectorAll('.mermaid').forEach(el => {
+        el.style.color = '#ff7b72';
+        el.style.fontSize = '12px';
+        el.style.fontFamily = 'ui-monospace, monospace';
+        el.style.padding = '12px';
+        el.style.border = '1px solid #ff7b72';
+        el.style.borderRadius = '6px';
+        el.style.textAlign = 'left';
+        el.style.whiteSpace = 'pre';
+        el.insertAdjacentHTML('afterbegin',
+          '⚠ Mermaid failed to render here (likely sandboxed preview blocking CDN). ' +
+          'Open this file via GitHub Pages or locally for full rendering. Raw source:\n\n');
+      });
+    }
+  </script>
+
+  <!-- Non-module fallback init for scroll-spy nav (does not depend on mermaid) -->
+  <script>
     const links = document.querySelectorAll('.nav-link');
     const sections = Array.from(links).map(a => document.querySelector(a.getAttribute('href')));
     function onScroll() {
