@@ -159,13 +159,4 @@ public class SagaCommandPublisher {
                 sagaId, orderId, oldPrice, newPrice);
         send(Topics.ORDER_PRICE_CHANGED, orderId, event, "OrderPriceChangedEvent sagaId=" + sagaId);
     }
-
-    public void publishSagaCompensate(String traceId, String sagaId,
-                                       String failedStep, String orderId,
-                                       String ticketId, String reason) {
-        SagaCompensateEvent event = new SagaCompensateEvent(
-                traceId, sagaId, failedStep, orderId, ticketId, reason);
-        log.info("Publishing SagaCompensateEvent: sagaId={} failedStep={} orderId={}", sagaId, failedStep, orderId);
-        send(Topics.SAGA_COMPENSATE, orderId, event, "SagaCompensateEvent sagaId=" + sagaId);
-    }
 }

@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ticketing Platform — Architecture & Saga Flows</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --accent-strong: #1f6feb;
+      --tag-edge: #1976d2;
+      --tag-gw: #f57c00;
+      --tag-app: #7b1fa2;
+      --tag-store: #388e3c;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.5;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      min-height: 100vh;
+    }
+    nav {
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      padding: 24px 0;
+      position: sticky;
+      top: 0;
+      align-self: start;
+      height: 100vh;
+      overflow-y: auto;
+    }
+    nav .brand {
+      padding: 0 20px 20px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 12px;
+    }
+    nav .brand h1 {
+      font-size: 16px;
+      margin: 0;
+      color: var(--text);
+    }
+    nav .brand p {
+      font-size: 12px;
+      color: var(--muted);
+      margin: 4px 0 0;
+    }
+    nav a {
+      display: block;
+      padding: 10px 20px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 14px;
+      border-left: 3px solid transparent;
+      transition: all 0.15s ease;
+    }
+    nav a:hover {
+      color: var(--text);
+      background: rgba(88, 166, 255, 0.05);
+    }
+    nav a.active {
+      color: var(--accent);
+      border-left-color: var(--accent);
+      background: rgba(88, 166, 255, 0.08);
+    }
+    main {
+      padding: 40px 60px 80px;
+      max-width: 1400px;
+    }
+    section { margin-bottom: 80px; scroll-margin-top: 20px; }
+    section h2 {
+      font-size: 28px;
+      margin: 0 0 8px;
+      color: var(--text);
+    }
+    section .lead {
+      color: var(--muted);
+      margin-bottom: 24px;
+      max-width: 800px;
+    }
+    .diagram {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 24px;
+      margin-bottom: 24px;
+      overflow-x: auto;
+    }
+    .diagram .mermaid {
+      text-align: center;
+      min-width: 800px;
+    }
+    .legend {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 24px 0;
+    }
+    .legend .tag {
+      padding: 10px 14px;
+      border-radius: 6px;
+      border-left: 3px solid;
+      background: var(--panel);
+      font-size: 13px;
+    }
+    .legend .tag b { display: block; margin-bottom: 2px; color: var(--text); }
+    .legend .tag span { color: var(--muted); }
+    .tag.edge { border-color: var(--tag-edge); }
+    .tag.gw { border-color: var(--tag-gw); }
+    .tag.app { border-color: var(--tag-app); }
+    .tag.store { border-color: var(--tag-store); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0 24px;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    th {
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    code {
+      background: rgba(110, 118, 129, 0.2);
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 90%;
+      color: #f0f6fc;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+    }
+    .badge.ok    { background: rgba(46, 160, 67, 0.15); color: #56d364; }
+    .badge.warn  { background: rgba(210, 153, 34, 0.15); color: #e3b341; }
+    .badge.fail  { background: rgba(248, 81, 73, 0.15);  color: #ff7b72; }
+    .scroll-hint {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 8px;
+      font-style: italic;
+    }
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; }
+      nav { position: static; height: auto; }
+      main { padding: 24px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <nav>
+      <div class="brand">
+        <h1>Ticketing Platform</h1>
+        <p>Architecture & saga flows</p>
+      </div>
+      <a href="#architecture" class="nav-link">System architecture</a>
+      <a href="#flow1" class="nav-link">Flow 1 — Happy path</a>
+      <a href="#flow2" class="nav-link">Flow 2 — Accept new price</a>
+      <a href="#flow3" class="nav-link">Flow 3 — Decline / timeout</a>
+      <a href="#terminal" class="nav-link">Terminal-state matrix</a>
+    </nav>
+
+    <main>
+
+      <section id="architecture">
+        <h2>System architecture</h2>
+        <div style="background: rgba(88, 166, 255, 0.08); border-left: 3px solid var(--accent); padding: 12px 16px; border-radius: 6px; margin-bottom: 20px;">
+          ▶️ <strong>Looking for animations?</strong> See the
+          <a href="animated-flows.html" style="color: var(--accent); font-weight: 600;">animated saga flows</a>
+          — interactive play/pause/step demo of all three scenarios.
+        </div>
+        <p class="lead">
+          Four-tier topology. Browser talks to nginx; nginx routes either to the API gateway
+          (REST + SSE) or directly to the React SPA. All nine services communicate exclusively
+          through Kafka — no service-to-service HTTP for business workflows.
+        </p>
+
+        <div class="legend">
+          <div class="tag edge"><b>Edge</b><span>Nginx — rate-limit, gzip, SSE buffering off</span></div>
+          <div class="tag gw"><b>Gateway</b><span>JWT validation, circuit breaker, rate-limiter</span></div>
+          <div class="tag app"><b>Application</b><span>9 Spring Boot services, stateless at JVM level</span></div>
+          <div class="tag store"><b>Storage</b><span>Kafka + Postgres master/slave + Redis</span></div>
+        </div>
+
+        <p class="scroll-hint">Scroll horizontally if needed →</p>
+        <div class="diagram">
+<pre class="mermaid">
+flowchart TB
+    Browser["Browser - React SPA"]:::edge
+
+    Nginx["Nginx<br/>rate-limit, gzip, SSE buffering off"]:::edge
+    Gateway["API Gateway WebFlux<br/>JWT, Resilience4j CB, Redis rate-limit"]:::gw
+
+    subgraph APP[" Application tier "]
+        direction TB
+        Auth["Auth"]:::app
+        Order["Order"]:::app
+        Ticket["Ticket"]:::app
+        Pricing["Pricing"]:::app
+        Payment["Payment"]:::app
+        Saga["Saga Orchestrator"]:::app
+        Reservation["Reservation"]:::app
+        SecMarket["Secondary Market"]:::app
+        Notif["Notification"]:::app
+    end
+
+    Kafka[("Apache Kafka<br/>25 topics, 3 partitions, orderId-keyed")]:::store
+    PgM[("Postgres Master<br/>9 logical databases")]:::store
+    PgS[("Postgres Slave<br/>read replicas")]:::store
+    Redis[("Redis<br/>L2 cache, saga state, locks")]:::store
+
+    Browser -->|HTTPS| Nginx
+    Browser -.SSE long-lived.- Nginx
+    Nginx --> Gateway
+    Gateway --> APP
+
+    APP <-->|produce / consume| Kafka
+    APP -->|writes| PgM
+    APP -.reads.-> PgS
+    APP <-->|cache + state| Redis
+    PgM -.WAL replication.-> PgS
+
+    classDef edge  fill:#1c3a52,stroke:#1976d2,color:#e6edf3
+    classDef gw    fill:#4a3315,stroke:#f57c00,color:#e6edf3
+    classDef app   fill:#3a1f4a,stroke:#7b1fa2,color:#e6edf3
+    classDef store fill:#1d3a23,stroke:#388e3c,color:#e6edf3
+</pre>
+        </div>
+
+        <h3 style="margin-top:32px">Notable design properties</h3>
+        <table>
+          <tr><th>Property</th><th>Why</th></tr>
+          <tr>
+            <td>No HTTP between services for workflows</td>
+            <td>A downed service degrades into consumer lag, not cascading 5xx</td>
+          </tr>
+          <tr>
+            <td>9 logical Postgres DBs on one master</td>
+            <td>Bounded-context isolation without paying for 9 physical clusters</td>
+          </tr>
+          <tr>
+            <td>Redis is acceleration, not source of truth</td>
+            <td>Saga state writes Postgres first; Redis outage = slow reads, not data loss</td>
+          </tr>
+          <tr>
+            <td>Single read replica, all services</td>
+            <td>Enough for current load; partition by service when any DB outgrows master</td>
+          </tr>
+        </table>
+      </section>
+
+      <section id="flow1">
+        <h2>Flow 1 — Happy path (price unchanged)</h2>
+        <p class="lead">
+          User's <code>requestedPrice</code> matches <code>facePrice × surge_at_orderCreatedAt</code>.
+          Saga walks all 10 hops without compensation and terminates in <span class="badge ok">COMPLETED</span>.
+        </p>
+        <div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant U as Browser
+    participant GW as API Gateway
+    participant OS as Order Svc
+    participant K as Kafka
+    participant SO as Saga
+    participant TS as Ticket Svc
+    participant PR as Pricing Svc
+    participant PS as Payment Svc
+    participant DB as Postgres
+
+    U  ->> GW: POST /api/orders
+    GW ->> OS: forward with X-User-Id
+    OS ->> DB: INSERT orders status=PENDING
+    OS ->> K:  order.created
+    OS -->> U: 201 PENDING
+
+    K  ->> SO: OrderCreatedEvent
+    SO ->> DB: INSERT saga_states STARTED
+    SO ->> K:  ticket.cmd TicketReserveCommand
+    K  ->> TS: TicketReserveCommand
+    TS ->> DB: UPDATE tickets RESERVED
+    TS ->> K:  ticket.reserved
+
+    K  ->> SO: TicketReservedEvent
+    SO ->> K:  pricing.lock.cmd PriceLockCommand
+    K  ->> PR: PriceLockCommand
+    Note right of PR: Case B exact match
+    PR ->> K:  pricing.locked
+
+    K  ->> SO: PricingLockedEvent
+    SO ->> K:  payment.cmd PaymentChargeCommand
+    K  ->> PS: PaymentChargeCommand
+    PS ->> DB: INSERT payments PENDING
+    Note right of PS: Watchdog 2s tick<br/>calls gateway off thread
+    PS ->> DB: UPDATE payments SUCCESS
+    PS ->> K:  payment.succeeded
+
+    K  ->> SO: PaymentSucceededEvent
+    SO ->> K:  ticket.cmd TicketConfirmCommand
+    K  ->> TS: TicketConfirmCommand
+    TS ->> DB: UPDATE tickets CONFIRMED
+    TS ->> K:  ticket.confirmed
+
+    K  ->> SO: TicketConfirmedEvent
+    SO ->> DB: UPDATE saga_states COMPLETED
+    SO ->> K:  order.confirmed
+    K  ->> OS: OrderConfirmedEvent
+    OS ->> DB: UPDATE orders CONFIRMED
+    OS -->> U: SSE status=CONFIRMED
+</pre>
+        </div>
+      </section>
+
+      <section id="flow2">
+        <h2>Flow 2 — Price changed, user accepts new price</h2>
+        <p class="lead">
+          Surge multiplier moved between <code>orderCreatedAt</code> and the pricing lock.
+          Pricing service emits <code>PriceChangedEvent</code>, saga pauses in
+          <span class="badge warn">AWAITING_PRICE_CONFIRMATION</span>. User confirms via REST →
+          saga re-issues <code>PriceLockCommand confirmed=true</code> at the new price.
+        </p>
+        <div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant U as Browser
+    participant OS as Order Svc
+    participant K as Kafka
+    participant SO as Saga
+    participant TS as Ticket Svc
+    participant PR as Pricing Svc
+    participant PS as Payment Svc
+    participant DB as Postgres
+
+    U  ->> OS: POST /api/orders
+    OS ->> K:  order.created
+    OS -->> U: 201 PENDING
+
+    K  ->> SO: OrderCreatedEvent
+    SO ->> K:  ticket.cmd TicketReserveCommand
+    K  ->> TS: reserve
+    TS ->> DB: tickets RESERVED
+    TS ->> K:  ticket.reserved
+
+    K  ->> SO: TicketReservedEvent
+    SO ->> K:  pricing.lock.cmd confirmed=false
+    K  ->> PR: PriceLockCommand
+    Note right of PR: Case C mismatch<br/>but multiplier in history
+    PR ->> K:  pricing.price.changed PriceChangedEvent
+
+    K  ->> SO: PriceChangedEvent
+    SO ->> DB: saga_states AWAITING_PRICE_CONFIRMATION
+    SO ->> K:  order.price.changed
+    K  ->> OS: OrderPriceChangedEvent
+    OS ->> DB: orders PRICE_CHANGED pending_price=newPrice
+    OS -->> U: SSE PRICE_CHANGED pendingPrice
+
+    Note over U,SO: 30-second watchdog window
+    U  ->> OS: POST /confirm-price
+    OS ->> K:  order.price.confirm
+    K  ->> SO: OrderPriceConfirmCommand
+
+    SO ->> K:  pricing.lock.cmd confirmed=true
+    K  ->> PR: PriceLockCommand
+    PR ->> K:  pricing.locked newPrice
+
+    K  ->> SO: PricingLockedEvent
+    SO ->> K:  payment.cmd amount=newPrice
+    K  ->> PS: charge
+    PS ->> DB: payments SUCCESS
+    PS ->> K:  payment.succeeded
+
+    K  ->> SO: PaymentSucceededEvent
+    SO ->> K:  ticket.cmd TicketConfirmCommand
+    K  ->> TS: confirm
+    TS ->> DB: tickets CONFIRMED
+    TS ->> K:  ticket.confirmed
+
+    K  ->> SO: TicketConfirmedEvent
+    SO ->> K:  order.confirmed
+    K  ->> OS: OrderConfirmedEvent
+    OS -->> U: SSE CONFIRMED
+</pre>
+        </div>
+      </section>
+
+      <section id="flow3">
+        <h2>Flow 3 — Decline new price (or 30-second timeout)</h2>
+        <p class="lead">
+          Same divergence as Flow 2 up to <code>AWAITING_PRICE_CONFIRMATION</code>. User
+          rejects (or watchdog timeout fires). Saga compensates by releasing the ticket
+          and emits <code>OrderCancelledEvent</code>. Order ends as
+          <span class="badge fail">CANCELLED</span>; ticket returns to
+          <span class="badge ok">AVAILABLE</span>; no payment row exists.
+        </p>
+        <div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant U as Browser
+    participant OS as Order Svc
+    participant K as Kafka
+    participant SO as Saga
+    participant TS as Ticket Svc
+    participant PR as Pricing Svc
+    participant DB as Postgres
+
+    U  ->> OS: POST /api/orders
+    OS ->> K:  order.created
+    OS -->> U: 201 PENDING
+
+    K  ->> SO: OrderCreatedEvent
+    SO ->> K:  ticket.cmd TicketReserveCommand
+    K  ->> TS: reserve
+    TS ->> DB: tickets RESERVED
+    TS ->> K:  ticket.reserved
+
+    K  ->> SO: TicketReservedEvent
+    SO ->> K:  pricing.lock.cmd
+    K  ->> PR: PriceLockCommand
+    PR ->> K:  pricing.price.changed PriceChangedEvent
+
+    K  ->> SO: PriceChangedEvent
+    SO ->> DB: saga_states AWAITING_PRICE_CONFIRMATION
+    SO ->> K:  order.price.changed
+    K  ->> OS: OrderPriceChangedEvent
+    OS -->> U: SSE PRICE_CHANGED
+
+    Note over U,SO: Either user declines or 30s watchdog timeout
+    U  ->> OS: POST /cancel-price
+    OS ->> K:  order.price.cancel
+    K  ->> SO: OrderPriceCancelCommand
+
+    Note over SO: Compensation - release ticket lock
+    SO ->> K:  saga.compensate TicketReleaseCommand
+    K  ->> TS: release
+    TS ->> DB: tickets AVAILABLE version++
+    TS ->> K:  ticket.released
+
+    K  ->> SO: TicketReleasedEvent
+    SO ->> DB: saga_states CANCELLED
+    SO ->> K:  order.cancelled
+    K  ->> OS: OrderCancelledEvent
+    OS ->> DB: orders CANCELLED
+    OS -->> U: SSE CANCELLED
+</pre>
+        </div>
+      </section>
+
+      <section id="terminal">
+        <h2>Terminal-state matrix</h2>
+        <p class="lead">
+          All three flows converge to a fully consistent terminal state across 4 databases —
+          no orphan rows, no half-charged payments, no leaked ticket locks.
+        </p>
+        <table>
+          <tr>
+            <th>Flow</th><th>Saga</th><th>Order</th><th>Ticket</th><th>Payment</th>
+          </tr>
+          <tr>
+            <td><b>1 — Happy path</b></td>
+            <td><span class="badge ok">COMPLETED</span></td>
+            <td><span class="badge ok">CONFIRMED</span></td>
+            <td><span class="badge ok">CONFIRMED</span></td>
+            <td><span class="badge ok">SUCCESS</span></td>
+          </tr>
+          <tr>
+            <td><b>2 — Accept new price</b></td>
+            <td><span class="badge ok">COMPLETED</span></td>
+            <td><span class="badge ok">CONFIRMED</span></td>
+            <td><span class="badge ok">CONFIRMED</span></td>
+            <td><span class="badge ok">SUCCESS (new price)</span></td>
+          </tr>
+          <tr>
+            <td><b>3 — Decline / timeout</b></td>
+            <td><span class="badge fail">CANCELLED</span></td>
+            <td><span class="badge fail">CANCELLED</span></td>
+            <td><span class="badge ok">AVAILABLE</span></td>
+            <td>—</td>
+          </tr>
+        </table>
+      </section>
+
+    </main>
+  </div>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        darkMode: true,
+        background: '#161b22',
+        primaryColor: '#1f6feb',
+        primaryTextColor: '#e6edf3',
+        primaryBorderColor: '#58a6ff',
+        lineColor: '#8b949e',
+        secondaryColor: '#30363d',
+        tertiaryColor: '#161b22',
+        actorBkg: '#1f6feb',
+        actorBorder: '#58a6ff',
+        actorTextColor: '#ffffff',
+        actorLineColor: '#8b949e',
+        signalColor: '#e6edf3',
+        signalTextColor: '#e6edf3',
+        labelBoxBkgColor: '#21262d',
+        labelBoxBorderColor: '#30363d',
+        labelTextColor: '#e6edf3',
+        noteBkgColor: '#3a2f00',
+        noteBorderColor: '#9e8200',
+        noteTextColor: '#e6edf3',
+        sequenceNumberColor: '#0d1117'
+      },
+      sequence: {
+        diagramMarginX: 32,
+        diagramMarginY: 16,
+        actorMargin: 60,
+        width: 160,
+        height: 56,
+        boxMargin: 12,
+        messageMargin: 36,
+        mirrorActors: true,
+        showSequenceNumbers: true
+      },
+      flowchart: {
+        curve: 'basis',
+        padding: 20
+      }
+    });
+
+    // Active-link highlighting on scroll
+    const links = document.querySelectorAll('.nav-link');
+    const sections = Array.from(links).map(a => document.querySelector(a.getAttribute('href')));
+    function onScroll() {
+      const y = window.scrollY + 100;
+      let active = 0;
+      sections.forEach((s, i) => { if (s && s.offsetTop <= y) active = i; });
+      links.forEach((l, i) => l.classList.toggle('active', i === active));
+    }
+    window.addEventListener('scroll', onScroll);
+    onScroll();
+  </script>
+</body>
+</html>

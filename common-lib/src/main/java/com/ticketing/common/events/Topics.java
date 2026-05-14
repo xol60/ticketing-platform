@@ -28,9 +28,8 @@ public final class Topics {
     public static final String ORDER_PRICE_CANCEL    = "order.price.cancel";
 
     // Pricing domain
-    public static final String PRICING_LOCK_CMD     = "pricing.lock.cmd";
+    public static final String PRICING_LOCK_CMD      = "pricing.lock.cmd";
     public static final String PRICING_LOCKED        = "pricing.locked";
-    public static final String PRICING_UNLOCK_CMD   = "pricing.unlock.cmd";
     public static final String PRICING_PRICE_CHANGED = "pricing.price.changed";
     public static final String PRICING_FAILED        = "pricing.failed";
     public static final String PRICE_UPDATED         = "price.updated";
@@ -51,17 +50,11 @@ public final class Topics {
     public static final String PAYMENT_REFUNDED      = "payment.refunded";
     public static final String PAYMENT_DLQ           = "payment.dlq";
 
-    // Saga
-    public static final String SAGA_COMPENSATE       = "saga.compensate";
-
     // Reservation
     public static final String RESERVATION_PROMOTED  = "reservation.promoted";
 
-    // Flash sale
-    public static final String SALE_FLASH            = "sale.flash";
-
     // Event lifecycle
-    public static final String EVENT_STATUS_CHANGED = "event.status.changed";
+    public static final String EVENT_STATUS_CHANGED  = "event.status.changed";
 
     // Notification
     public static final String NOTIFICATION_SEND     = "notification.send";

@@ -95,7 +95,6 @@ class SagaFlowIntegrationTest {
                 Topics.TICKET_CMD,          // reserve + confirm + release (unified)
                 Topics.PRICING_LOCK_CMD,
                 Topics.PAYMENT_CMD,         // charge + cancel (unified)
-                Topics.PRICING_UNLOCK_CMD,
                 Topics.ORDER_CONFIRMED,
                 Topics.ORDER_FAILED,
                 Topics.ORDER_CANCELLED,
@@ -353,45 +352,6 @@ class SagaFlowIntegrationTest {
         DomainEvent orderFailed = pollForEvent(Topics.ORDER_FAILED, sagaId);
         assertThat(orderFailed).isInstanceOf(OrderFailedEvent.class);
         assertThat(((OrderFailedEvent) orderFailed).getReason()).contains("Insufficient funds");
-
-        assertSagaStatus(sagaId, SagaStatus.FAILED);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Flow 6 — Ticket released while PRICING_LOCKED → unlocks price → FAILED
-    // ─────────────────────────────────────────────────────────────────────────
-
-    @Test
-    @Order(6)
-    @DisplayName("Ticket released while PRICING_LOCKED → PriceUnlockCommand + OrderFailed")
-    void ticketReleasedDuringSaga_unlocksPriceAndFails() throws Exception {
-        String sagaId = "ticket-released-" + UUID.randomUUID();
-
-        publish(Topics.ORDER_CREATED, ORDER_ID,
-                new OrderCreatedEvent(TRACE_ID, sagaId, ORDER_ID, USER_ID,
-                        TICKET_ID, new BigDecimal("99.00"), Instant.now()));
-
-        pollForEvent(Topics.TICKET_CMD, sagaId);
-
-        publish(Topics.TICKET_RESERVED, TICKET_ID,
-                new TicketReservedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, USER_ID, EVENT_ID, new BigDecimal("99.00")));
-
-        pollForEvent(Topics.PRICING_LOCK_CMD, sagaId);
-
-        publish(Topics.PRICING_LOCKED, TICKET_ID,
-                new PricingLockedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, new BigDecimal("99.00")));
-
-        // Ticket gets released externally while saga is at PRICING_LOCKED
-        publish(Topics.TICKET_RELEASED, TICKET_ID,
-                new TicketReleasedEvent(TRACE_ID, sagaId, TICKET_ID, ORDER_ID, EVENT_ID, "Admin override"));
-
-        // Must send price unlock command
-        DomainEvent unlockCmd = pollForEvent(Topics.PRICING_UNLOCK_CMD, sagaId);
-        assertThat(unlockCmd).isInstanceOf(PriceUnlockCommand.class);
-
-        // Must publish order failed
-        DomainEvent orderFailed = pollForEvent(Topics.ORDER_FAILED, sagaId);
-        assertThat(orderFailed).isInstanceOf(OrderFailedEvent.class);
 
         assertSagaStatus(sagaId, SagaStatus.FAILED);
     }

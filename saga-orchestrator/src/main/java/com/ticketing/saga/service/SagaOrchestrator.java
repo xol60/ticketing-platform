@@ -403,12 +403,9 @@ public class SagaOrchestrator {
         // ── Ticket release ───────────────────────────────────────────────────
         // Explicit TicketReleaseCommand on ticket.cmd (unified topic, same orderId key)
         // so this command is always consumed AFTER any pending TicketConfirmCommand for
-        // the same order — Kafka guarantees ordering within a single partition.
-        //
-        // Previously this was done via SagaCompensateEvent on saga.compensate, which
-        // the ticket service consumed independently. That was a split-topic race: the
-        // release could arrive and be processed before an in-flight confirm command,
-        // causing the confirm to find an AVAILABLE ticket and fire a spurious failure.
+        // the same order — Kafka guarantees ordering within a single partition. Using a
+        // separate compensation topic would let the release race past an in-flight
+        // confirm and fire a spurious failure.
         if (state.getTicketId() != null) {
             publisher.sendTicketReleaseCommand(
                     sagaId, sagaId,

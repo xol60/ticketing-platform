@@ -34,12 +34,10 @@ import org.springframework.stereotype.Component;
  *   the same orderId, regardless of consumer lag.
  * </pre>
  *
- * <h3>SagaCompensateEvent removed</h3>
- * Previously, the ticket service also consumed {@link Topics#SAGA_COMPENSATE} to
- * release tickets during saga compensation. That listener has been removed: the saga
- * orchestrator now sends an explicit {@link TicketReleaseCommand} on {@code ticket.cmd}
- * inside {@code compensateSaga()}, ensuring the release is ordered correctly relative
- * to any in-flight confirm.
+ * <p>Saga compensation also flows through this same topic: when a step fails, the
+ * orchestrator sends a {@link TicketReleaseCommand} on {@code ticket.cmd} rather than
+ * using a separate compensation topic, so the release is ordered correctly relative to
+ * any in-flight confirm.
  */
 @Slf4j
 @Component

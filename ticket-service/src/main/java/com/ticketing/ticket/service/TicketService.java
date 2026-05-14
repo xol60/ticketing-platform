@@ -444,13 +444,6 @@ public class TicketService {
                       cmd.getTraceId(), cmd.getSagaId(), cmd.getReason());
     }
 
-    @Transactional
-    public void handleCompensation(SagaCompensateEvent event) {
-        if (event.getTicketId() == null) return;
-        releaseTicket(event.getTicketId(), event.getOrderId(),
-                      event.getTraceId(), event.getSagaId(), ErrorCode.SAGA_COMPENSATION.name());
-    }
-
     // ── Internal read for other services ───────────────────────────────────
 
     /**

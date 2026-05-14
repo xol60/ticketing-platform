@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ticketing Platform — Animated Saga Flows</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --accent-strong: #1f6feb;
+      --success: #56d364;
+      --warn: #e3b341;
+      --fail: #ff7b72;
+      --kafka: #d2691e;
+      --db: #2ea043;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      line-height: 1.5;
+    }
+    header {
+      padding: 24px 40px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+    }
+    header h1 { margin: 0; font-size: 22px; }
+    header p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+    header a { color: var(--accent); text-decoration: none; }
+    header a:hover { text-decoration: underline; }
+
+    .controls {
+      display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+      padding: 16px 40px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+    }
+    .controls .group {
+      display: flex; gap: 6px; align-items: center;
+    }
+    .controls .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; margin-right: 4px; }
+    button {
+      background: #21262d;
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      font-family: inherit;
+    }
+    button:hover { background: #30363d; border-color: var(--accent); }
+    button.flow {
+      padding: 10px 18px;
+      font-weight: 600;
+    }
+    button.flow.active {
+      background: var(--accent-strong);
+      border-color: var(--accent);
+      color: white;
+    }
+    button.primary {
+      background: var(--accent-strong);
+      border-color: var(--accent);
+      color: white;
+    }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    select {
+      background: #21262d; color: var(--text);
+      border: 1px solid var(--border);
+      padding: 8px 12px; border-radius: 6px;
+      font-family: inherit; font-size: 13px;
+    }
+
+    main {
+      padding: 24px 40px 80px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .stage {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      overflow-x: auto;
+    }
+    svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+
+    /* Service nodes */
+    .service-bg { fill: #21262d; stroke: #30363d; stroke-width: 1.5; transition: all 0.3s ease; }
+    .service-label { fill: var(--text); font-size: 13px; font-weight: 600; text-anchor: middle; }
+    .service-sub { fill: var(--muted); font-size: 10px; text-anchor: middle; }
+
+    .node.active .service-bg {
+      stroke: var(--accent);
+      stroke-width: 2.5;
+      fill: #1f3a5f;
+      filter: drop-shadow(0 0 8px var(--accent));
+    }
+    .node.active .service-label { fill: #fff; }
+
+    /* Kafka — special styling */
+    .kafka-bg { fill: #3a2810; stroke: var(--kafka); stroke-width: 1.5; }
+    .node.active .kafka-bg {
+      stroke-width: 2.5;
+      fill: #5a3818;
+      filter: drop-shadow(0 0 10px var(--kafka));
+    }
+
+    /* DB */
+    .db-bg { fill: #0f2a16; stroke: var(--db); stroke-width: 1.5; }
+    .db-row { font-size: 11px; fill: var(--muted); font-family: ui-monospace, monospace; }
+    .db-row.updated { fill: var(--success); font-weight: 600; }
+
+    /* Arrows */
+    .arrow {
+      stroke: var(--border);
+      stroke-width: 1.5;
+      fill: none;
+      transition: stroke 0.2s ease;
+    }
+    .arrow.active {
+      stroke: var(--accent);
+      stroke-width: 2;
+    }
+    .arrow-label {
+      fill: var(--muted);
+      font-size: 9px;
+      font-family: ui-monospace, monospace;
+    }
+
+    /* Message dot — the star of the show */
+    #msg-dot {
+      fill: var(--accent);
+      stroke: white;
+      stroke-width: 1.5;
+      filter: drop-shadow(0 0 6px var(--accent));
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+    #msg-dot.visible { opacity: 1; }
+
+    /* Activity log */
+    .log-panel {
+      margin-top: 20px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+    }
+    .log-step-counter {
+      display: inline-block;
+      padding: 4px 10px;
+      background: var(--accent-strong);
+      color: white;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-right: 12px;
+    }
+    .log-current {
+      font-size: 15px;
+      color: var(--text);
+      min-height: 24px;
+      margin-bottom: 12px;
+    }
+    .log-detail {
+      font-size: 12px;
+      color: var(--muted);
+      font-family: ui-monospace, monospace;
+      min-height: 18px;
+    }
+    .progress {
+      margin-top: 12px;
+      height: 6px;
+      background: #21262d;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--success));
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+
+    /* Terminal banner */
+    .terminal-banner {
+      display: none;
+      margin-top: 16px;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-weight: 600;
+      animation: fadeIn 0.4s ease;
+    }
+    .terminal-banner.completed { background: rgba(46, 160, 67, 0.15); color: var(--success); border-left: 3px solid var(--success); }
+    .terminal-banner.cancelled { background: rgba(248, 81, 73, 0.15); color: var(--fail); border-left: 3px solid var(--fail); }
+    .terminal-banner.visible { display: block; }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Legend */
+    .legend {
+      display: flex; flex-wrap: wrap; gap: 16px;
+      margin-top: 16px; padding: 12px 16px;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 8px; font-size: 12px;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+    .legend-swatch {
+      width: 12px; height: 12px; border-radius: 3px; border: 1px solid;
+    }
+    .legend-swatch.service { background: #21262d; border-color: var(--accent); }
+    .legend-swatch.kafka { background: #3a2810; border-color: var(--kafka); }
+    .legend-swatch.db { background: #0f2a16; border-color: var(--db); }
+    .legend-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); border: 1.5px solid white; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Ticketing Platform — Animated Saga Flows</h1>
+  <p>Watch a real <code>POST /api/orders</code> ripple through 9 services and 4 databases. <a href="diagrams.html">← static sequence diagrams</a></p>
+</header>
+
+<div class="controls">
+  <div class="group">
+    <span class="label">Scenario</span>
+    <button class="flow active" data-flow="happy">Flow 1 — Happy path</button>
+    <button class="flow" data-flow="accept">Flow 2 — Accept new price</button>
+    <button class="flow" data-flow="decline">Flow 3 — Decline / timeout</button>
+  </div>
+  <div class="group">
+    <button id="btn-play" class="primary">▶ Play</button>
+    <button id="btn-step">⏭ Step</button>
+    <button id="btn-reset">⟲ Reset</button>
+  </div>
+  <div class="group">
+    <span class="label">Speed</span>
+    <select id="speed">
+      <option value="2000">0.5×</option>
+      <option value="1000" selected>1×</option>
+      <option value="500">2×</option>
+      <option value="250">4×</option>
+    </select>
+  </div>
+</div>
+
+<main>
+
+  <div class="stage">
+    <svg viewBox="0 0 1100 620" preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <marker id="arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0,0 L10,5 L0,10 Z" fill="#8b949e" />
+        </marker>
+        <marker id="arrowhead-active" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0,0 L10,5 L0,10 Z" fill="#58a6ff" />
+        </marker>
+      </defs>
+
+      <!-- ─── Arrows (drawn first so they render under nodes) ─── -->
+
+      <!-- Browser ↔ Gateway (HTTP) -->
+      <path id="path-browser-gateway" class="arrow" d="M120,310 L195,310" marker-end="url(#arrowhead)" />
+      <path id="path-gateway-browser" class="arrow" d="M195,330 L120,330" marker-end="url(#arrowhead)" />
+
+      <!-- Gateway → Order (HTTP forward) -->
+      <path id="path-gateway-order" class="arrow" d="M315,310 L395,160" marker-end="url(#arrowhead)" />
+
+      <!-- Order ↔ Postgres -->
+      <path id="path-order-db" class="arrow" d="M395,200 L260,540" marker-end="url(#arrowhead)" />
+
+      <!-- Order → Kafka (publishes events) -->
+      <path id="path-order-kafka" class="arrow" d="M515,180 L555,280" marker-end="url(#arrowhead)" />
+
+      <!-- Kafka ↔ Saga -->
+      <path id="path-kafka-saga" class="arrow" d="M600,360 L550,440" marker-end="url(#arrowhead)" />
+      <path id="path-saga-kafka" class="arrow" d="M580,440 L630,360" marker-end="url(#arrowhead)" />
+
+      <!-- Kafka ↔ Ticket -->
+      <path id="path-kafka-ticket" class="arrow" d="M695,300 L815,160" marker-end="url(#arrowhead)" />
+      <path id="path-ticket-kafka" class="arrow" d="M815,200 L695,320" marker-end="url(#arrowhead)" />
+
+      <!-- Kafka ↔ Pricing -->
+      <path id="path-kafka-pricing" class="arrow" d="M700,340 L815,310" marker-end="url(#arrowhead)" />
+      <path id="path-pricing-kafka" class="arrow" d="M815,330 L700,360" marker-end="url(#arrowhead)" />
+
+      <!-- Kafka ↔ Payment -->
+      <path id="path-kafka-payment" class="arrow" d="M700,370 L815,470" marker-end="url(#arrowhead)" />
+      <path id="path-payment-kafka" class="arrow" d="M815,490 L695,380" marker-end="url(#arrowhead)" />
+
+      <!-- Kafka → Order (event delivery) -->
+      <path id="path-kafka-order" class="arrow" d="M555,300 L515,200" marker-end="url(#arrowhead)" />
+
+      <!-- Order → Browser (SSE push) -->
+      <path id="path-order-browser" class="arrow" d="M395,140 L100,290" marker-end="url(#arrowhead)"
+            stroke-dasharray="4 3" />
+
+      <!-- DB writes from services -->
+      <path id="path-ticket-db" class="arrow" d="M885,200 L320,545" marker-end="url(#arrowhead)" />
+      <path id="path-pricing-db" class="arrow" d="M885,340 L320,555" marker-end="url(#arrowhead)" />
+      <path id="path-payment-db" class="arrow" d="M885,500 L320,565" marker-end="url(#arrowhead)" />
+      <path id="path-saga-db" class="arrow" d="M460,490 L260,560" marker-end="url(#arrowhead)" />
+
+      <!-- ─── Service nodes ─── -->
+
+      <g id="node-browser" class="node">
+        <rect class="service-bg" x="20" y="285" width="100" height="60" rx="8" />
+        <text class="service-label" x="70" y="313">Browser</text>
+        <text class="service-sub" x="70" y="328">React SPA</text>
+      </g>
+
+      <g id="node-gateway" class="node">
+        <rect class="service-bg" x="195" y="285" width="120" height="60" rx="8" />
+        <text class="service-label" x="255" y="313">API Gateway</text>
+        <text class="service-sub" x="255" y="328">JWT, CB, rate-limit</text>
+      </g>
+
+      <g id="node-order" class="node">
+        <rect class="service-bg" x="395" y="135" width="120" height="60" rx="8" />
+        <text class="service-label" x="455" y="163">Order Svc</text>
+        <text class="service-sub" x="455" y="178">orders DB</text>
+      </g>
+
+      <g id="node-kafka" class="node">
+        <rect class="kafka-bg" x="555" y="280" width="140" height="80" rx="8" />
+        <text class="service-label" x="625" y="310" style="fill:#ff9d4d">Kafka</text>
+        <text class="service-sub" x="625" y="328">25 topics</text>
+        <text class="service-sub" x="625" y="342">3 partitions, orderId-keyed</text>
+      </g>
+
+      <g id="node-saga" class="node">
+        <rect class="service-bg" x="455" y="435" width="130" height="60" rx="8" />
+        <text class="service-label" x="520" y="463">Saga Orch</text>
+        <text class="service-sub" x="520" y="478">saga_states DB</text>
+      </g>
+
+      <g id="node-ticket" class="node">
+        <rect class="service-bg" x="815" y="135" width="120" height="60" rx="8" />
+        <text class="service-label" x="875" y="163">Ticket Svc</text>
+        <text class="service-sub" x="875" y="178">tickets DB</text>
+      </g>
+
+      <g id="node-pricing" class="node">
+        <rect class="service-bg" x="815" y="285" width="120" height="60" rx="8" />
+        <text class="service-label" x="875" y="313">Pricing Svc</text>
+        <text class="service-sub" x="875" y="328">point-in-time validate</text>
+      </g>
+
+      <g id="node-payment" class="node">
+        <rect class="service-bg" x="815" y="435" width="120" height="60" rx="8" />
+        <text class="service-label" x="875" y="463">Payment Svc</text>
+        <text class="service-sub" x="875" y="478">payments DB + watchdog</text>
+      </g>
+
+      <g id="node-db" class="node">
+        <rect class="db-bg" x="60" y="510" width="280" height="100" rx="8" />
+        <text class="service-label" x="200" y="532" style="fill:#7ee787">Postgres (4 DBs)</text>
+        <text id="db-orders"   class="db-row" x="80"  y="552">orders:   —</text>
+        <text id="db-tickets"  class="db-row" x="80"  y="568">tickets:  —</text>
+        <text id="db-payments" class="db-row" x="80"  y="584">payments: —</text>
+        <text id="db-saga"     class="db-row" x="80"  y="600">saga:     —</text>
+      </g>
+
+      <!-- The animated message dot -->
+      <circle id="msg-dot" r="7" cx="0" cy="0" />
+      <text id="msg-label" fill="#58a6ff" font-size="10" font-family="ui-monospace,monospace" style="opacity:0; pointer-events:none"></text>
+    </svg>
+  </div>
+
+  <div class="log-panel">
+    <div>
+      <span id="step-counter" class="log-step-counter">0 / 0</span>
+      <span id="flow-title" style="color:var(--muted)">Flow 1 — Happy path</span>
+    </div>
+    <div id="log-current" class="log-current">Press ▶ Play to start the animation.</div>
+    <div id="log-detail" class="log-detail">&nbsp;</div>
+    <div class="progress"><div id="progress-bar" class="progress-bar"></div></div>
+    <div id="terminal-banner" class="terminal-banner"></div>
+  </div>
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-swatch service"></div>Spring Boot service</div>
+    <div class="legend-item"><div class="legend-swatch kafka"></div>Kafka broker</div>
+    <div class="legend-item"><div class="legend-swatch db"></div>Postgres database</div>
+    <div class="legend-item"><div class="legend-dot"></div>Message in flight</div>
+    <div class="legend-item" style="color:var(--accent)">─── synchronous HTTP</div>
+    <div class="legend-item" style="color:var(--accent)">- - - SSE push</div>
+  </div>
+
+</main>
+
+<script>
+// ============================================================================
+//  Flow definitions
+// ============================================================================
+//
+//  Each step describes one message hop. The animation engine:
+//    1. Highlights the `from` node
+//    2. Slides the dot along `path` while showing `msg` as a floating label
+//    3. Highlights the `to` node, removes highlight from `from`
+//    4. Updates DB rows in `db` (each: { row, value, ok|fail|warn })
+//    5. Displays `desc` in the activity log
+//
+// Coordinates of arrow path elements are pre-defined in the SVG above.
+// ============================================================================
+
+const flows = {
+  happy: {
+    title: 'Flow 1 — Happy path (price unchanged)',
+    steps: [
+      { from: 'browser', to: 'gateway', path: 'path-browser-gateway', msg: 'POST /api/orders',
+        desc: 'User clicks Buy. Browser sends POST /api/orders with {ticketId, requestedPrice}.',
+        detail: 'HTTP request — Bearer JWT, rate-limited by nginx (200 r/s/IP)' },
+      { from: 'gateway', to: 'order', path: 'path-gateway-order', msg: 'forward',
+        desc: 'API Gateway validates JWT, attaches X-User-Id, forwards to order-service.',
+        detail: 'WebFlux gateway, Resilience4j circuit breaker, Redis rate-limit counters' },
+      { from: 'order', to: 'db', path: 'path-order-db', msg: 'INSERT orders',
+        desc: 'order-service persists order in PENDING state.',
+        detail: 'INSERT orders(status=PENDING, saga_id=…) — sets durable starting point',
+        db: [{ row: 'orders', value: 'PENDING', cls: 'updated' }] },
+      { from: 'order', to: 'kafka', path: 'path-order-kafka', msg: 'order.created',
+        desc: 'Publish OrderCreatedEvent → kicks off the saga.',
+        detail: 'Topic: order.created • Key: orderId • Partition assigned via hash(orderId) % 3' },
+      { from: 'kafka', to: 'saga', path: 'path-kafka-saga', msg: 'OrderCreatedEvent',
+        desc: 'Saga consumes OrderCreatedEvent, persists saga_state(STARTED).',
+        detail: 'Postgres write-through + Redis cache. Saga now owns the workflow.',
+        db: [{ row: 'saga', value: 'STARTED', cls: 'updated' }] },
+      { from: 'saga', to: 'kafka', path: 'path-saga-kafka', msg: 'ticket.cmd ReserveCmd',
+        desc: 'Saga sends TicketReserveCommand on unified ticket.cmd topic.',
+        detail: 'Unified topic: ticket.cmd carries Reserve / Confirm / Release — orderId key ensures sequential processing per order' },
+      { from: 'kafka', to: 'ticket', path: 'path-kafka-ticket', msg: 'ReserveCommand',
+        desc: 'ticket-service receives the reserve command.',
+        detail: 'Consumer group ticket-service, 3 threads, concurrency=3' },
+      { from: 'ticket', to: 'db', path: 'path-ticket-db', msg: 'UPDATE tickets RESERVED',
+        desc: 'Optimistic-lock update on tickets row — UNIQUE seat constraint guarantees no oversell.',
+        detail: '@Version increment + idx_tickets_unique_seat (event_id, section, row, seat)',
+        db: [{ row: 'tickets', value: 'RESERVED', cls: 'updated' }] },
+      { from: 'ticket', to: 'kafka', path: 'path-ticket-kafka', msg: 'ticket.reserved',
+        desc: 'Publish TicketReservedEvent.',
+        detail: 'Saga consumes and advances state machine to TICKET_RESERVED.' },
+      { from: 'kafka', to: 'saga', path: 'path-kafka-saga', msg: 'TicketReservedEvent',
+        desc: 'Saga transitions: STARTED → TICKET_RESERVED.',
+        db: [{ row: 'saga', value: 'TICKET_RESERVED', cls: 'updated' }] },
+      { from: 'saga', to: 'kafka', path: 'path-saga-kafka', msg: 'pricing.lock.cmd',
+        desc: 'Saga sends PriceLockCommand to validate the user-claimed price.',
+        detail: 'Carries orderCreatedAt for point-in-time multiplier lookup' },
+      { from: 'kafka', to: 'pricing', path: 'path-kafka-pricing', msg: 'PriceLockCommand',
+        desc: 'pricing-service evaluates: userPrice == facePrice × multiplierAtOrderTime ?',
+        detail: 'Case B — exact match short-circuits before fabricated-price check' },
+      { from: 'pricing', to: 'kafka', path: 'path-pricing-kafka', msg: 'pricing.locked',
+        desc: 'Case B matched. Publish PricingLockedEvent at user price.',
+        detail: 'No price negotiation needed — straight through to payment.' },
+      { from: 'kafka', to: 'saga', path: 'path-kafka-saga', msg: 'PricingLockedEvent',
+        desc: 'Saga transitions: TICKET_RESERVED → PRICING_LOCKED.',
+        db: [{ row: 'saga', value: 'PRICING_LOCKED', cls: 'updated' }] },
+      { from: 'saga', to: 'kafka', path: 'path-saga-kafka', msg: 'payment.cmd ChargeCmd',
+        desc: 'Saga sends PaymentChargeCommand on unified payment.cmd topic.',
+        detail: 'Unified topic: payment.cmd carries Charge / Cancel — strict per-order ordering' },
+      { from: 'kafka', to: 'payment', path: 'path-kafka-payment', msg: 'PaymentChargeCommand',
+        desc: 'payment-service persists Payment(PENDING, nextRetryAt=now), returns immediately.',
+        detail: 'Consumer thread NOT blocked by gateway call — see PaymentRetryWatchdog',
+        db: [{ row: 'payments', value: 'PENDING', cls: 'updated' }] },
+      { from: 'payment', to: 'db', path: 'path-payment-db', msg: 'UPDATE payments SUCCESS',
+        desc: 'PaymentRetryWatchdog (2s tick) calls gateway → SUCCESS. payments=SUCCESS.',
+        detail: 'Off-thread scheduler. Claim-lease pattern prevents double-charge across pods.',
+        db: [{ row: 'payments', value: 'SUCCESS', cls: 'updated' }] },
+      { from: 'payment', to: 'kafka', path: 'path-payment-kafka', msg: 'payment.succeeded',
+        desc: 'Publish PaymentSucceededEvent with payment reference.',
+        detail: 'Carries PAY-xxx reference — used to look up the charge later for refund' },
+      { from: 'kafka', to: 'saga', path: 'path-kafka-saga', msg: 'PaymentSucceededEvent',
+        desc: 'Saga transitions: PRICING_LOCKED → PAYMENT_CHARGED.',
+        db: [{ row: 'saga', value: 'PAYMENT_CHARGED', cls: 'updated' }] },
+      { from: 'saga', to: 'kafka', path: 'path-saga-kafka', msg: 'ticket.cmd ConfirmCmd',
+        desc: 'Saga sends TicketConfirmCommand to finalize the seat.',
+        detail: 'Same partition as the original Reserve — guaranteed ordering' },
+      { from: 'kafka', to: 'ticket', path: 'path-kafka-ticket', msg: 'ConfirmCommand',
+        desc: 'ticket-service flips tickets row from RESERVED → CONFIRMED.',
+        db: [{ row: 'tickets', value: 'CONFIRMED', cls: 'updated' }] },
+      { from: 'ticket', to: 'kafka', path: 'path-ticket-kafka', msg: 'ticket.confirmed',
+        desc: 'Publish TicketConfirmedEvent.' },
+      { from: 'kafka', to: 'saga', path: 'path-kafka-saga', msg: 'TicketConfirmedEvent',
+        desc: 'Saga completes: PAYMENT_CHARGED → COMPLETED.',
+        db: [{ row: 'saga', value: 'COMPLETED', cls: 'updated' }] },
+      { from: 'saga', to: 'kafka', path: 'path-saga-kafka', msg: 'order.confirmed',
+        desc: 'Publish OrderConfirmedEvent so order-service can update its row.' },
+      { from: 'kafka', to: 'order', path: 'path-kafka-order', msg: 'OrderConfirmedEvent',
+        desc: 'order-service updates orders.status = CONFIRMED.',
+        db: [{ row: 'orders', value: 'CONFIRMED', cls: 'updated' }] },
+      { from: 'order', to: 'browser', path: 'path-order-browser', msg: 'SSE status=CONFIRMED',
+        desc: 'Order pushes the final status to the browser over SSE.',
+        detail: 'Browser updates UI in real time — no polling required.' }
+    ],
+    terminal: { type: 'completed', text: '✓ Order CONFIRMED — consistent across 4 DBs. End-to-end < 1s p50.' }
+  },
+
+  accept: {
+    title: 'Flow 2 — Accept new price',
+    steps: [
+      { from: 'browser', to: 'gateway', path: 'path-browser-gateway', msg: 'POST /api/orders',
+        desc: 'User submits order with stale price from before a surge.' },
+      { from: 'gateway', to: 'order', path: 'path-gateway-order', msg: 'forward',
+        desc: 'Gateway forwards to order-service.' },
+      { from: 'order', to: 'db', path: 'path-order-db', msg: 'INSERT orders',
+        desc: 'order-service persists PENDING order.',
+        db: [{ row: 'orders', value: 'PENDING', cls: 'updated' }] },
+      { from: 'order', to: 'kafka', path: 'path-order-kafka', msg: 'order.created',
+        desc: 'Publish OrderCreatedEvent.' },
+      { from: 'kafka', to: 'saga', path: 'path-kafka-saga', msg: 'OrderCreatedEvent',
+        desc: 'Saga STARTED.',
+        db: [{ row: 'saga', value: 'STARTED', cls: 'updated' }] },
+      { from: 'saga', to: 'kafka', path: 'path-saga-kafka', msg: 'ticket.cmd ReserveCmd',
+        desc: 'Saga sends reserve command.' },
+      { from: 'kafka', to: 'ticket', path: 'path-kafka-ticket', msg: 'ReserveCommand',
+        desc: 'Ticket service receives reserve.' },
+      { from: 'ticket', to: 'db', path: 'path-ticket-db', msg: 'UPDATE tickets RESERVED',
+        desc: 'Ticket locked with optimistic-lock @Version.',
+        db: [{ row: 'tickets', value: 'RESERVED', cls: 'updated' }] },
+      { from: 'ticket', to: 'kafka', path: 'path-ticket-kafka', msg: 'ticket.reserved',
+        desc: 'Reserved event published.' },
+      { from: 'kafka', to: 'saga', path: 'path-kafka-saga', msg: 'TicketReservedEvent',
+        desc: 'Saga → TICKET_RESERVED.',
+        db: [{ row: 'saga', value: 'TICKET_RESERVED', cls: 'updated' }] },
+      { from: 'saga', to: 'kafka', path: 'path-saga-kafka', msg: 'pricing.lock.cmd',
+        desc: 'Saga asks pricing to lock the price.' },
+      { from: 'kafka', to: 'pricing', path: 'path-kafka-pricing', msg: 'PriceLockCommand',
+        desc: 'Case C — userPrice ≠ current price, but claimed multiplier did exist in recent history.',
+        detail: 'Surge moved between orderCreatedAt and now → ask user to confirm the new price' },
+      { from: 'pricing', to: 'kafka', path: 'path-pricing-kafka', msg: 'pricing.price.changed',
+        desc: 'pricing-service emits PriceChangedEvent instead of locking.',
+        detail: 'Carries newPrice = facePrice × current_multiplier' },
+      { from: 'kafka', to: 'saga', path: 'path-kafka-saga', msg: 'PriceChangedEvent',
+        desc: 'Saga pauses in AWAITING_PRICE_CONFIRMATION (30-second window).',
+        db: [{ row: 'saga', value: 'AWAITING_PRICE_CONFIRMATION', cls: 'updated' }] },
+      { from: 'saga', to: 'kafka', path: 'path-saga-kafka', msg: 'order.price.changed',
+        desc: 'Saga notifies order-service of the new price.' },
+      { from: 'kafka', to: 'order', path: 'path-kafka-order', msg: 'OrderPriceChangedEvent',
+        desc: 'order-service updates orders.pending_price = newPrice.',
+        db: [{ row: 'orders', value: 'PRICE_CHANGED', cls: 'updated' }] },
+      { from: 'order', to: 'browser', path: 'path-order-browser', msg: 'SSE PRICE_CHANGED',
+        desc: 'Browser shows "Price changed: confirm or cancel?" within ~200 ms.' },
+      { from: 'browser', to: 'gateway', path: 'path-browser-gateway', msg: 'POST /confirm-price',
+        desc: 'User taps "Confirm new price".' },
+      { from: 'gateway', to: 'order', path: 'path-gateway-order', msg: 'forward',
+        desc: 'Gateway forwards to order-service.' },
+      { from: 'order', to: 'kafka', path: 'path-order-kafka', msg: 'order.price.confirm',
+        desc: 'Publish OrderPriceConfirmCommand.' },
+      { from: 'kafka', to: 'saga', path: 'path-kafka-saga', msg: 'OrderPriceConfirmCommand',
+        desc: 'Saga re-issues PriceLockCommand with confirmed=true.' },
+      { from: 'saga', to: 'kafka', path: 'path-saga-kafka', msg: 'pricing.lock.cmd confirmed=true',
+        desc: 'Re-lock at the new price.' },
+      { from: 'kafka', to: 'pricing', path: 'path-kafka-pricing', msg: 'PriceLockCommand',
+        desc: 'pricing-service locks at newPrice = facePrice × current_multiplier.' },
+      { from: 'pricing', to: 'kafka', path: 'path-pricing-kafka', msg: 'pricing.locked',
+        desc: 'PricingLockedEvent at the new price.' },
+      { from: 'kafka', to: 'saga', path: 'path-kafka-saga', msg: 'PricingLockedEvent',
+        desc: 'Saga → PRICING_LOCKED.',
+        db: [{ row: 'saga', value: 'PRICING_LOCKED', cls: 'updated' }] },
+      { from: 'saga', to: 'kafka', path: 'path-saga-kafka', msg: 'payment.cmd Charge newPrice',
+        desc: 'Saga sends charge command at the new price.' },
+      { from: 'kafka', to: 'payment', path: 'path-kafka-payment', msg: 'PaymentChargeCommand',
+        desc: 'payment-service records PENDING with newPrice amount.',
+        db: [{ row: 'payments', value: 'PENDING', cls: 'updated' }] },
+      { from: 'payment', to: 'db', path: 'path-payment-db', msg: 'UPDATE payments SUCCESS',
+        desc: 'Watchdog charges via gateway → SUCCESS.',
+        db: [{ row: 'payments', value: 'SUCCESS', cls: 'updated' }] },
+      { from: 'payment', to: 'kafka', path: 'path-payment-kafka', msg: 'payment.succeeded',
+        desc: 'Publish PaymentSucceededEvent.' },
+      { from: 'kafka', to: 'saga', path: 'path-kafka-saga', msg: 'PaymentSucceededEvent',
+        desc: 'Saga → PAYMENT_CHARGED.',
+        db: [{ row: 'saga', value: 'PAYMENT_CHARGED', cls: 'updated' }] },
+      { from: 'saga', to: 'kafka', path: 'path-saga-kafka', msg: 'ticket.cmd ConfirmCmd',
+        desc: 'Saga sends confirm command.' },
+      { from: 'kafka', to: 'ticket', path: 'path-kafka-ticket', msg: 'ConfirmCommand',
+        desc: 'ticket-service confirms the seat.',
+        db: [{ row: 'tickets', value: 'CONFIRMED', cls: 'updated' }] },
+      { from: 'ticket', to: 'kafka', path: 'path-ticket-kafka', msg: 'ticket.confirmed',
+        desc: 'TicketConfirmedEvent published.' },
+      { from: 'kafka', to: 'saga', path: 'path-kafka-saga', msg: 'TicketConfirmedEvent',
+        desc: 'Saga → COMPLETED.',
+        db: [{ row: 'saga', value: 'COMPLETED', cls: 'updated' }] },
+      { from: 'saga', to: 'kafka', path: 'path-saga-kafka', msg: 'order.confirmed',
+        desc: 'order-service notified.' },
+      { from: 'kafka', to: 'order', path: 'path-kafka-order', msg: 'OrderConfirmedEvent',
+        desc: 'orders.status = CONFIRMED.',
+        db: [{ row: 'orders', value: 'CONFIRMED', cls: 'updated' }] },
+      { from: 'order', to: 'browser', path: 'path-order-browser', msg: 'SSE CONFIRMED',
+        desc: 'Browser shows CONFIRMED at the new price.' }
+    ],
+    terminal: { type: 'completed', text: '✓ Order CONFIRMED at NEW price — user explicitly accepted surge.' }
+  },
+
+  decline: {
+    title: 'Flow 3 — Decline / 30s timeout',
+    steps: [
+      { from: 'browser', to: 'gateway', path: 'path-browser-gateway', msg: 'POST /api/orders',
+        desc: 'User submits order with stale price.' },
+      { from: 'gateway', to: 'order', path: 'path-gateway-order', msg: 'forward',
+        desc: 'Gateway forwards to order-service.' },
+      { from: 'order', to: 'db', path: 'path-order-db', msg: 'INSERT orders',
+        desc: 'order-service persists PENDING order.',
+        db: [{ row: 'orders', value: 'PENDING', cls: 'updated' }] },
+      { from: 'order', to: 'kafka', path: 'path-order-kafka', msg: 'order.created',
+        desc: 'Publish OrderCreatedEvent.' },
+      { from: 'kafka', to: 'saga', path: 'path-kafka-saga', msg: 'OrderCreatedEvent',
+        desc: 'Saga STARTED.',
+        db: [{ row: 'saga', value: 'STARTED', cls: 'updated' }] },
+      { from: 'saga', to: 'kafka', path: 'path-saga-kafka', msg: 'ticket.cmd ReserveCmd',
+        desc: 'Saga sends reserve command.' },
+      { from: 'kafka', to: 'ticket', path: 'path-kafka-ticket', msg: 'ReserveCommand',
+        desc: 'Ticket service receives reserve.' },
+      { from: 'ticket', to: 'db', path: 'path-ticket-db', msg: 'UPDATE tickets RESERVED',
+        desc: 'Ticket reserved.',
+        db: [{ row: 'tickets', value: 'RESERVED', cls: 'updated' }] },
+      { from: 'ticket', to: 'kafka', path: 'path-ticket-kafka', msg: 'ticket.reserved',
+        desc: 'Reserved event published.' },
+      { from: 'kafka', to: 'saga', path: 'path-kafka-saga', msg: 'TicketReservedEvent',
+        desc: 'Saga → TICKET_RESERVED.',
+        db: [{ row: 'saga', value: 'TICKET_RESERVED', cls: 'updated' }] },
+      { from: 'saga', to: 'kafka', path: 'path-saga-kafka', msg: 'pricing.lock.cmd',
+        desc: 'Saga asks pricing to lock the price.' },
+      { from: 'kafka', to: 'pricing', path: 'path-kafka-pricing', msg: 'PriceLockCommand',
+        desc: 'Case C — surge moved → PriceChangedEvent emitted.' },
+      { from: 'pricing', to: 'kafka', path: 'path-pricing-kafka', msg: 'pricing.price.changed',
+        desc: 'PriceChangedEvent published with newPrice.' },
+      { from: 'kafka', to: 'saga', path: 'path-kafka-saga', msg: 'PriceChangedEvent',
+        desc: 'Saga → AWAITING_PRICE_CONFIRMATION.',
+        db: [{ row: 'saga', value: 'AWAITING_PRICE_CONFIRMATION', cls: 'updated' }] },
+      { from: 'saga', to: 'kafka', path: 'path-saga-kafka', msg: 'order.price.changed',
+        desc: 'Notify order-service of the new price.' },
+      { from: 'kafka', to: 'order', path: 'path-kafka-order', msg: 'OrderPriceChangedEvent',
+        desc: 'order-service updates orders.pending_price = newPrice.',
+        db: [{ row: 'orders', value: 'PRICE_CHANGED', cls: 'updated' }] },
+      { from: 'order', to: 'browser', path: 'path-order-browser', msg: 'SSE PRICE_CHANGED',
+        desc: 'Browser prompts user. 30-second decision window starts.' },
+      { from: 'browser', to: 'gateway', path: 'path-browser-gateway', msg: 'POST /cancel-price',
+        desc: 'User rejects the new price (or 30s SagaWatchdog timeout fires).',
+        detail: 'Either path lands here. Watchdog scans saga_states via partial index idx_saga_states_active_stale.' },
+      { from: 'gateway', to: 'order', path: 'path-gateway-order', msg: 'forward',
+        desc: 'Gateway forwards cancel.' },
+      { from: 'order', to: 'kafka', path: 'path-order-kafka', msg: 'order.price.cancel',
+        desc: 'Publish OrderPriceCancelCommand.' },
+      { from: 'kafka', to: 'saga', path: 'path-kafka-saga', msg: 'OrderPriceCancelCommand',
+        desc: 'Saga begins compensation — must release reserved ticket.' },
+      { from: 'saga', to: 'kafka', path: 'path-saga-kafka', msg: 'ticket.cmd ReleaseCmd',
+        desc: 'Saga sends TicketReleaseCommand on the SAME unified topic.',
+        detail: 'orderId key → same partition → release ordered after any in-flight confirm' },
+      { from: 'kafka', to: 'ticket', path: 'path-kafka-ticket', msg: 'ReleaseCommand',
+        desc: 'ticket-service releases the seat back to AVAILABLE.',
+        db: [{ row: 'tickets', value: 'AVAILABLE', cls: 'updated' }] },
+      { from: 'ticket', to: 'kafka', path: 'path-ticket-kafka', msg: 'ticket.released',
+        desc: 'TicketReleasedEvent published.' },
+      { from: 'kafka', to: 'saga', path: 'path-kafka-saga', msg: 'TicketReleasedEvent',
+        desc: 'Saga → CANCELLED.',
+        db: [{ row: 'saga', value: 'CANCELLED', cls: 'updated' }] },
+      { from: 'saga', to: 'kafka', path: 'path-saga-kafka', msg: 'order.cancelled',
+        desc: 'Saga notifies order-service.' },
+      { from: 'kafka', to: 'order', path: 'path-kafka-order', msg: 'OrderCancelledEvent',
+        desc: 'orders.status = CANCELLED.',
+        db: [{ row: 'orders', value: 'CANCELLED', cls: 'updated' }] },
+      { from: 'order', to: 'browser', path: 'path-order-browser', msg: 'SSE CANCELLED',
+        desc: 'Browser shows CANCELLED. No payment was ever issued.' }
+    ],
+    terminal: { type: 'cancelled', text: '✗ Order CANCELLED — ticket back to AVAILABLE, NO payment row created.' }
+  }
+};
+
+// ============================================================================
+//  Animation engine
+// ============================================================================
+
+const svgNS = 'http://www.w3.org/2000/svg';
+const dot   = document.getElementById('msg-dot');
+const label = document.getElementById('msg-label');
+const stepCounter = document.getElementById('step-counter');
+const logCurrent  = document.getElementById('log-current');
+const logDetail   = document.getElementById('log-detail');
+const progressBar = document.getElementById('progress-bar');
+const flowTitle   = document.getElementById('flow-title');
+const banner      = document.getElementById('terminal-banner');
+const speedSelect = document.getElementById('speed');
+
+let currentFlow = 'happy';
+let currentStep = 0;
+let isPlaying = false;
+let animationFrame = null;
+let stepTimer = null;
+
+function nodeEl(name)  { return document.getElementById('node-' + name); }
+function pathEl(id)    { return document.getElementById(id); }
+
+function resetDb() {
+  ['orders','tickets','payments','saga'].forEach(k => {
+    const el = document.getElementById('db-' + k);
+    el.textContent = k.padEnd(9, ' ') + ': —';
+    el.classList.remove('updated');
+  });
+}
+
+function updateDb(updates) {
+  if (!updates) return;
+  updates.forEach(u => {
+    const el = document.getElementById('db-' + u.row);
+    el.textContent = (u.row + ':').padEnd(10, ' ') + u.value;
+    el.classList.add('updated');
+  });
+}
+
+function clearAllActive() {
+  document.querySelectorAll('.node.active').forEach(n => n.classList.remove('active'));
+  document.querySelectorAll('.arrow.active').forEach(a => a.classList.remove('active'));
+}
+
+function reset() {
+  pause();
+  currentStep = 0;
+  clearAllActive();
+  resetDb();
+  dot.classList.remove('visible');
+  label.style.opacity = 0;
+  banner.classList.remove('visible');
+  updateUI();
+}
+
+function selectFlow(name) {
+  document.querySelectorAll('button.flow').forEach(b => {
+    b.classList.toggle('active', b.dataset.flow === name);
+  });
+  currentFlow = name;
+  flowTitle.textContent = flows[name].title;
+  reset();
+}
+
+function updateUI() {
+  const flow = flows[currentFlow];
+  const total = flow.steps.length;
+  stepCounter.textContent = `${currentStep} / ${total}`;
+  const pct = total === 0 ? 0 : (currentStep / total) * 100;
+  progressBar.style.width = pct + '%';
+
+  if (currentStep === 0) {
+    logCurrent.textContent = 'Press ▶ Play to start the animation.';
+    logDetail.innerHTML = '&nbsp;';
+  }
+}
+
+function animateStep() {
+  const flow = flows[currentFlow];
+  if (currentStep >= flow.steps.length) {
+    pause();
+    showTerminal();
+    return;
+  }
+
+  const step = flow.steps[currentStep];
+  const fromN = nodeEl(step.from);
+  const toN   = nodeEl(step.to);
+  const arrow = pathEl(step.path);
+
+  // Highlight source + arrow
+  clearAllActive();
+  fromN.classList.add('active');
+  arrow.classList.add('active');
+
+  // Activity log
+  logCurrent.innerHTML = `<b>${step.msg}</b> — ${step.desc}`;
+  logDetail.textContent = step.detail || '';
+  stepCounter.textContent = `${currentStep + 1} / ${flow.steps.length}`;
+
+  // Animate dot along the path
+  const path = arrow;
+  const length = path.getTotalLength();
+  const duration = Number(speedSelect.value); // ms
+  const start = performance.now();
+
+  dot.classList.add('visible');
+  label.textContent = step.msg;
+  label.style.opacity = 0.85;
+
+  function tick(now) {
+    const elapsed = now - start;
+    const t = Math.min(1, elapsed / duration);
+    // ease in-out cubic
+    const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    const pt = path.getPointAtLength(eased * length);
+    dot.setAttribute('cx', pt.x);
+    dot.setAttribute('cy', pt.y);
+    label.setAttribute('x', pt.x + 12);
+    label.setAttribute('y', pt.y - 8);
+
+    if (t < 1 && isPlaying) {
+      animationFrame = requestAnimationFrame(tick);
+    } else {
+      // landed
+      dot.classList.remove('visible');
+      label.style.opacity = 0;
+      fromN.classList.remove('active');
+      toN.classList.add('active');
+      updateDb(step.db);
+      currentStep++;
+      progressBar.style.width = (currentStep / flow.steps.length * 100) + '%';
+
+      if (isPlaying) {
+        stepTimer = setTimeout(() => {
+          arrow.classList.remove('active');
+          animateStep();
+        }, 250);
+      }
+    }
+  }
+  animationFrame = requestAnimationFrame(tick);
+}
+
+function showTerminal() {
+  const t = flows[currentFlow].terminal;
+  banner.className = 'terminal-banner ' + t.type + ' visible';
+  banner.textContent = t.text;
+  // Leave the last node lit for a moment of triumph
+}
+
+function play() {
+  if (currentStep >= flows[currentFlow].steps.length) reset();
+  isPlaying = true;
+  document.getElementById('btn-play').textContent = '⏸ Pause';
+  document.getElementById('btn-play').onclick = pause;
+  animateStep();
+}
+
+function pause() {
+  isPlaying = false;
+  if (animationFrame) cancelAnimationFrame(animationFrame);
+  if (stepTimer) clearTimeout(stepTimer);
+  document.getElementById('btn-play').textContent = '▶ Play';
+  document.getElementById('btn-play').onclick = play;
+}
+
+function stepOnce() {
+  if (currentStep >= flows[currentFlow].steps.length) reset();
+  pause();
+  isPlaying = true; // temporarily
+  animateStep();
+  // After one step, pause again
+  setTimeout(() => {
+    isPlaying = false;
+  }, Number(speedSelect.value) + 100);
+}
+
+// Wire up controls
+document.querySelectorAll('button.flow').forEach(btn => {
+  btn.addEventListener('click', () => selectFlow(btn.dataset.flow));
+});
+document.getElementById('btn-play').onclick  = play;
+document.getElementById('btn-step').onclick  = stepOnce;
+document.getElementById('btn-reset').onclick = reset;
+
+// Initial state
+selectFlow('happy');
+</script>
+
+</body>
+</html>

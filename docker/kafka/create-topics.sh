@@ -87,7 +87,6 @@ create_topic "order.price.cancel"
 
 # ── Pricing domain ───────────────────────────────────────────────────────────
 create_topic "pricing.lock.cmd"
-create_topic "pricing.unlock.cmd"
 create_topic "pricing.locked"
 create_topic "pricing.price.changed"
 create_topic "pricing.failed"
@@ -102,9 +101,6 @@ create_topic "payment.refunded"
 create_topic "payment.failed"
 create_topic "payment.dlq" 1              # 1 partition — chronological DLQ replay
 
-# ── Saga orchestration ──────────────────────────────────────────────────────
-create_topic "saga.compensate"
-
 # ── Reservation queue ───────────────────────────────────────────────────────
 create_topic "reservation.promoted"       # keyed by ticketId
 
@@ -116,9 +112,6 @@ create_topic "auth.security.alert" 1      # 1 partition — global ordering for 
 
 # ── Event lifecycle ──────────────────────────────────────────────────────────
 create_topic "event.status.changed"       # keyed by eventId
-
-# ── Flash sale ───────────────────────────────────────────────────────────────
-create_topic "sale.flash"                 # keyed by eventId
 
 # ---------------------------------------------------------------------------
 # Upgrade existing topics whose partition count was previously 1.
@@ -132,11 +125,11 @@ for topic in \
     ticket.cmd ticket.reserved ticket.released ticket.confirmed \
     order.created order.confirmed order.failed order.cancelled \
     order.price.changed order.price.confirm order.price.cancel \
-    pricing.lock.cmd pricing.unlock.cmd pricing.locked \
+    pricing.lock.cmd pricing.locked \
     pricing.price.changed pricing.failed price.updated \
     payment.cmd payment.succeeded payment.refunded payment.failed \
-    saga.compensate reservation.promoted notification.send \
-    event.status.changed sale.flash; do
+    reservation.promoted notification.send \
+    event.status.changed; do
   ensure_partitions "$topic" 3
 done
 
