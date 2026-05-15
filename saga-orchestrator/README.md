@@ -2,7 +2,10 @@
 
 **Port:** 8084
 
-Drives the distributed purchase transaction using the **orchestration saga pattern**. Each step is a Kafka command/response pair. State is stored in Redis. A watchdog timer compensates stuck sagas automatically.
+Drives the distributed purchase transaction using the **orchestration saga pattern**.
+Every step is a Kafka command/response pair. State is **write-through to Postgres + Redis**
+(Postgres is durable, Redis is the fast read cache). A scheduled watchdog detects and
+compensates stuck sagas.
 
 ---
 
@@ -12,147 +15,194 @@ Drives the distributed purchase transaction using the **orchestration saga patte
 - Drive the saga forward step-by-step via Kafka commands
 - React to success/failure events from each participant
 - Trigger compensation (rollback) in reverse order on any failure
-- Detect and recover stuck sagas via a scheduled watchdog
+- Detect and recover stuck sagas via a scheduled watchdog (partial-index assisted)
 
 ---
 
-## Saga State Machine
+## Saga state machine
 
 ```
 STARTED
-  → send ticket.reserve.cmd
+  └─ send TicketReserveCommand on ticket.cmd
 TICKET_RESERVED
-  → send pricing.lock.cmd
-PRICE_LOCKED
-  → send payment.charge.cmd
-PAYMENT_SUCCEEDED
-  → send ticket.confirm.cmd
-CONFIRMED  ✓  (terminal)
-  → publish order.confirmed
+  └─ send PriceLockCommand on pricing.lock.cmd
+PRICING_LOCKED
+  └─ send PaymentChargeCommand on payment.cmd
+PAYMENT_CHARGED
+  └─ send TicketConfirmCommand on ticket.cmd
+COMPLETED  ✓  (terminal)
+  └─ publish OrderConfirmedEvent on order.confirmed
 
-On any failure:
-COMPENSATING
-  → send ticket.release.cmd   (if ticket was reserved)
-  → send pricing.unlock.cmd   (if price was locked)
-  → publish order.failed
-FAILED  ✗  (terminal)
+AWAITING_PRICE_CONFIRMATION  (Case C from pricing-service)
+  ├─ user confirms     → re-issue PriceLockCommand{confirmed=true} → continue
+  └─ user declines OR 30s watchdog timeout → compensate
+
+CANCELLED ✗  (terminal — compensation path)
+  └─ send TicketReleaseCommand on ticket.cmd (same unified topic, same orderId key)
+     so the release is ordered AFTER any in-flight confirm
+  └─ if payment already charged: send PaymentCancelCommand on payment.cmd (refund)
+  └─ publish OrderCancelledEvent on order.cancelled
+
+FAILED ✗  (terminal — pricing/ticket validation failed before any side-effect)
+  └─ publish OrderFailedEvent on order.failed
 ```
 
-State is persisted as a JSON hash in Redis: `saga:{sagaId}` with a TTL of several minutes.
+State is persisted as JSON in Postgres `saga_states` (durable source of truth) and
+mirrored to Redis `saga:{sagaId}` with 10-minute TTL for fast reads.
 
 ---
 
-## Internal Architecture
+## Internal architecture
 
 ```
-OrderEventConsumer         (Kafka: order.created)
-  → SagaOrchestrator.startSaga()
-      → save saga state in Redis (STARTED)
-      → publish ticket.reserve.cmd
+OrderEventConsumer         (Kafka: order.created, order.price.confirm, order.price.cancel)
+  └─ SagaOrchestrator.startSaga() / onPriceConfirm() / onPriceCancel()
+        ├─ load/persist saga state (Postgres first, Redis cache write-through)
+        └─ publish next command on the appropriate Kafka topic
 
 TicketEventConsumer        (Kafka: ticket.reserved, ticket.released, ticket.confirmed)
-PricingEventConsumer       (Kafka: pricing.locked)
-PaymentEventConsumer       (Kafka: payment.succeeded, payment.failed)
+PricingEventConsumer       (Kafka: pricing.locked, pricing.price.changed, pricing.failed)
+PaymentEventConsumer       (Kafka: payment.succeeded, payment.failed, payment.refunded)
 
   Each consumer calls SagaOrchestrator.onXxx()
-      → load saga state from Redis
-      → transition state
-      → send next command or compensate
-      → save updated state
+        ├─ load saga state
+        ├─ verify expected status (idempotency guard)
+        ├─ transition state machine
+        └─ send next command OR start compensation
 
-SagaWatchdog (scheduled every 30s)
-  → scan Redis for sagas in non-terminal states with age > threshold
-  → trigger compensateSaga()
+SagaWatchdog (Spring @Scheduled, fixedDelay = 30s)
+  └─ findByStatusNotInAndUpdatedAtBefore(TERMINAL, threshold)
+     uses partial index idx_saga_states_active_stale — query returns 0 rows
+     in healthy state, scan terminates immediately. Stuck sagas hit compensateSaga().
 ```
 
 ---
 
-## Kafka Topics
+## Kafka topics
 
-| Topic | Direction | Description |
-|-------|-----------|-------------|
-| `order.created` | Subscribe | Start saga |
-| `ticket.reserve.cmd` | Publish | Ask ticket-service to reserve |
-| `ticket.reserved` | Subscribe | Proceed to pricing |
-| `ticket.released` | Subscribe | Ticket reservation failed/released |
-| `ticket.confirm.cmd` | Publish | Ask ticket-service to confirm |
-| `ticket.confirmed` | Subscribe | Saga complete |
-| `ticket.release.cmd` | Publish | Compensation: release reserved ticket |
-| `pricing.lock.cmd` | Publish | Ask pricing-service to lock price |
-| `pricing.locked` | Subscribe | Proceed to payment |
-| `pricing.unlock.cmd` | Publish | Compensation: release locked price |
-| `payment.charge.cmd` | Publish | Ask payment-service to charge |
-| `payment.succeeded` | Subscribe | Proceed to confirm |
-| `payment.failed` | Subscribe | Compensate |
-| `order.confirmed` | Publish | Notify order-service of success |
-| `order.failed` | Publish | Notify order-service of failure |
-| `saga.compensate` | Publish | Broadcast compensation event |
+| Topic                   | Direction | Carries                                                              |
+| ----------------------- | --------- | -------------------------------------------------------------------- |
+| `order.created`         | Subscribe | OrderCreatedEvent — saga ignition                                    |
+| `order.price.confirm`   | Subscribe | OrderPriceConfirmCommand — user accepted new price                   |
+| `order.price.cancel`    | Subscribe | OrderPriceCancelCommand — user rejected new price                    |
+| `ticket.cmd`            | Publish   | TicketReserve / Confirm / Release Command (unified topic, orderId key) |
+| `ticket.reserved`       | Subscribe | TicketReservedEvent                                                  |
+| `ticket.released`       | Subscribe | TicketReleasedEvent (also signals admin-initiated release)           |
+| `ticket.confirmed`      | Subscribe | TicketConfirmedEvent — terminal step                                 |
+| `pricing.lock.cmd`      | Publish   | PriceLockCommand (`confirmed=false` first; `true` after user accept) |
+| `pricing.locked`        | Subscribe | PricingLockedEvent                                                   |
+| `pricing.price.changed` | Subscribe | PriceChangedEvent → pause in AWAITING_PRICE_CONFIRMATION             |
+| `pricing.failed`        | Subscribe | PricingFailedEvent (fabricated/invalid price)                        |
+| `payment.cmd`           | Publish   | PaymentCharge / PaymentCancel Command (unified topic, orderId key)   |
+| `payment.succeeded`     | Subscribe | PaymentSucceededEvent                                                |
+| `payment.failed`        | Subscribe | PaymentFailedEvent                                                   |
+| `payment.refunded`      | Subscribe | PaymentRefundedEvent (after PaymentCancel)                           |
+| `order.confirmed`       | Publish   | OrderConfirmedEvent — saga COMPLETED                                 |
+| `order.failed`          | Publish   | OrderFailedEvent — saga FAILED (no side effects to compensate)       |
+| `order.cancelled`       | Publish   | OrderCancelledEvent — saga CANCELLED (after compensation)            |
+| `order.price.changed`   | Publish   | OrderPriceChangedEvent — propagates Case C to order-service          |
+
+> **Note:** the previous `saga.compensate` topic and split `ticket.reserve.cmd` /
+> `ticket.confirm.cmd` / `ticket.release.cmd` topics were merged into the single
+> `ticket.cmd` topic. Same partition + orderId key guarantees per-order ordering,
+> so a Release can never overtake an in-flight Confirm.
 
 ---
 
-## Normal Flow
+## Normal flow
 
 ```
-order.created → startSaga() → ticket.reserve.cmd
-ticket.reserved → onTicketReserved() → pricing.lock.cmd
-pricing.locked → onPricingLocked() → payment.charge.cmd
-payment.succeeded → onPaymentSucceeded() → ticket.confirm.cmd
-ticket.confirmed → onTicketConfirmed() → order.confirmed
+order.created             → startSaga()            → ticket.cmd  (Reserve)
+ticket.reserved           → onTicketReserved()     → pricing.lock.cmd
+pricing.locked            → onPricingLocked()      → payment.cmd (Charge)
+payment.succeeded         → onPaymentSucceeded()   → ticket.cmd  (Confirm)
+ticket.confirmed          → onTicketConfirmed()    → order.confirmed
 ```
 
-## Failure Flows
+## Failure flows
 
-### Payment fails
-
-```
-payment.failed
-  → compensateSaga()
-  → ticket.release.cmd → ticket released
-  → pricing.unlock.cmd → price unlocked
-  → order.failed
-```
-
-### Ticket unavailable
+### Pricing rejects (fabricated price)
 
 ```
-ticket.released (reason=TICKET_UNAVAILABLE or EVENT_NOT_OPEN)
-  → compensateSaga()
-  → (no ticket to release — already released by ticket-service)
-  → order.failed
+pricing.failed → compensateSaga()
+              └─ ticket.cmd Release (same partition, ordered after any pending Confirm)
+              └─ order.cancelled
+```
+
+### Price changed (Case C — user must confirm)
+
+```
+pricing.price.changed → saga → AWAITING_PRICE_CONFIRMATION
+                              ├─ user confirms → pricing.lock.cmd (confirmed=true) → resume
+                              └─ user cancels OR 30s SagaWatchdog timeout → compensateSaga()
+```
+
+### Payment fails after retries (DLQ)
+
+```
+payment.failed → compensateSaga()
+              └─ ticket.cmd Release
+              └─ order.cancelled
+              └─ payment-service also publishes to payment.dlq for admin alert
+```
+
+### Ticket released externally during PRICING_LOCKED
+
+```
+ticket.released (admin override) → compensateSaga()
+              └─ payment.cmd Cancel (in case payment is in-flight)
+              └─ order.failed
 ```
 
 ### Stuck saga (watchdog)
 
 ```
-Watchdog detects saga age > threshold, still in non-terminal state
-  → compensateSaga() with reason=TIMEOUT
-  → publishes saga.compensate (ticket-service handles release if needed)
-  → order.failed
+SagaWatchdog @Scheduled (30s)
+  └─ SELECT * FROM saga_states
+     WHERE status NOT IN ('COMPLETED','FAILED','CANCELLED')
+       AND updated_at < now() - INTERVAL '60s'
+     /* uses partial index idx_saga_states_active_stale */
+  └─ compensateSaga(reason='SAGA_STUCK')
 ```
 
-### Duplicate events (idempotency)
+The query is O(stuck) instead of O(N): the partial index excludes terminal rows,
+so under healthy load the scan returns 0 rows and terminates immediately.
 
-Each state transition checks the current saga status. If the incoming event doesn't match the expected step, it is logged and dropped. Redis state is the source of truth.
+### Idempotency
+
+Each state transition checks `currentStatus` against the expected status before
+acting. Out-of-order or duplicate events (from Kafka at-least-once delivery) are
+logged and dropped — Postgres is the single source of truth.
 
 ---
 
-## Redis State Schema
+## Persistence schema
 
+**Postgres `saga_states`** (durable):
+
+```sql
+saga_id     VARCHAR(36) PRIMARY KEY
+status      VARCHAR(30) NOT NULL     -- state-machine state
+state_json  TEXT        NOT NULL     -- full SagaState as JSON
+created_at  TIMESTAMPTZ NOT NULL
+updated_at  TIMESTAMPTZ NOT NULL
+
+-- Partial indexes for performance
+idx_saga_states_active_status   ON (status) WHERE status NOT IN (terminal)
+idx_saga_states_active_stale    ON (updated_at) WHERE status NOT IN (terminal)
 ```
-Key:   saga:{sagaId}
-Type:  Hash
-Fields:
-  sagaId, orderId, userId, ticketId
-  status: STARTED | TICKET_RESERVED | PRICE_LOCKED | PAYMENT_SUCCEEDED | CONFIRMED | COMPENSATING | FAILED
-  lockedPrice
-  traceId
-  createdAt, updatedAt
-TTL: configurable (e.g. 10 minutes)
-```
+
+**Redis `saga:{sagaId}`** (acceleration):
+
+- Type: String (serialized JSON)
+- TTL: 10 minutes
+- Written through after every Postgres commit
+- On a Redis miss, reads fall back to Postgres and repopulate the cache
 
 ---
 
 ## Dependencies
 
-- **Redis** — saga state store
-- **Kafka** — all communication is event-driven; no direct HTTP calls
+- **Postgres** — durable saga state (single source of truth)
+- **Redis** — write-through cache for fast saga lookups
+- **Kafka** — all communication; no direct HTTP between services
