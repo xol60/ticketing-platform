@@ -3,13 +3,10 @@ package com.ticketing.ticket.domain.repository;
 import com.ticketing.ticket.domain.model.Ticket;
 import com.ticketing.ticket.domain.model.TicketStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-import jakarta.persistence.LockModeType;
 import java.util.List;
-import java.util.Optional;
 
 public interface TicketRepository extends JpaRepository<Ticket, String> {
 
@@ -17,9 +14,10 @@ public interface TicketRepository extends JpaRepository<Ticket, String> {
 
     List<Ticket> findByEventIdAndStatus(String eventId, TicketStatus status);
 
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("SELECT t FROM Ticket t WHERE t.id = :id")
-    Optional<Ticket> findByIdForUpdate(@Param("id") String id);
+    // NOTE: We deliberately do NOT expose a `findByIdForUpdate` (SELECT ... FOR UPDATE).
+    // The reservation, confirm, and release paths all use Redis SETNX + JPA @Version
+    // optimistic locking — both non-blocking. Adding a pessimistic-lock helper here would
+    // tempt future code to introduce thread-blocking on the small Kafka consumer pool.
 
     boolean existsByEventIdAndSectionAndRowAndSeat(
             String eventId, String section, String row, String seat);

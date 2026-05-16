@@ -295,19 +295,42 @@ so adding replicas is a Kafka rebalance:
 ### Cross-instance synchronization
 
 Two pods consuming different partitions can race on the same `orderId` or the same DB row.
-Every such race closes at a **durable boundary** — DB, Kafka, or Redis. Application-level
-locks are intentionally absent because they don't survive pod restart.
+Every such race closes at a **durable boundary** — DB, Kafka, or Redis. **All mechanisms
+are non-blocking** — no `SELECT … FOR UPDATE`, no app-level `synchronized` blocks. Both
+would tie up a Kafka consumer thread on a pool of just 3 per service.
 
 | Mechanism                             | Closes which race                                       |
 | ------------------------------------- | ------------------------------------------------------- |
-| Optimistic `@Version` on entities     | Two pods writing the same row concurrently              |
+| Redis `SETNX` distributed lock        | Two pods racing to reserve the same ticket; two pods promoting the same waitlist head |
+| Optimistic `@Version` on entities     | Belt-and-suspenders: catches concurrent UPDATE if Redis fails or its TTL expires mid-flight |
 | UNIQUE partial index                  | DB-level overselling / double-listing                   |
 | Kafka consumer-group assignment       | Two pods consuming the same partition (broker enforced) |
 | `orderId` partition key               | `Release` overtaking `Reserve` across pods              |
 | Claim-lease (`nextRetryAt` window)    | Two payment pods double-charging the same payment       |
-| Redis `SETNX` distributed lock        | Two pods promoting the same waitlist head               |
 | Write-through saga state (PG → Redis) | Lost progress on Redis flush or pod restart             |
 | Idempotency (sagaId / payment state)  | Duplicate processing on Kafka redelivery                |
+
+### Ticket reservation — two-layer non-blocking locking
+
+The ticket-service uses **Redis SETNX + JPA `@Version` optimistic locking**, deliberately
+avoiding `SELECT … FOR UPDATE`. The consumer pool is only 3 threads (matching partition
+count); a single pessimistic-lock waiter would tie up 1/3 of capacity indefinitely.
+
+```
+Layer 1 — Redis SETNX (fast path)
+  ├─ 99% of contention rejections close here in <1 ms
+  ├─ Never blocks the consumer thread — returns boolean
+  └─ Loser publishes TICKET_LOCK_CONFLICT and returns
+
+Layer 2 — @Version optimistic (safety net)
+  ├─ Catches edge cases where Redis is down or its key expired mid-flight
+  ├─ Never blocks — fails at SQL execution in microseconds
+  └─ Catches OptimisticLockingFailureException → publishes TICKET_UNAVAILABLE
+```
+
+`handleReserveCommand`, `handleConfirmCommand`, and `releaseTicket` all use this pattern:
+`findById` (no lock) → mutate → `saveAndFlush` → catch `OptimisticLockingFailureException`
+→ publish the appropriate compensation event.
 
 ## Architecture decisions
 

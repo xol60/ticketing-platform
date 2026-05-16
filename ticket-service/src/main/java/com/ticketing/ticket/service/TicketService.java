@@ -20,6 +20,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.cache.annotation.Caching;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -333,6 +334,27 @@ public class TicketService {
 
     // ── Saga command handlers ────────────────────────────────────────────────
 
+    /**
+     * Reserve a ticket for an order.
+     *
+     * <h3>Two-layer non-blocking concurrency control</h3>
+     * <ol>
+     *   <li><b>Redis SETNX</b> — fast-fail under contention without touching the DB.
+     *       Two pods racing for the same ticket: one wins, the other returns in &lt;1 ms with
+     *       {@link ErrorCode#TICKET_LOCK_CONFLICT}.</li>
+     *   <li><b>JPA {@code @Version}</b> — non-blocking safety net. If a writer somehow
+     *       slips past the Redis gate (Redis outage, expired key mid-flight, direct SQL),
+     *       the optimistic check on {@code saveAndFlush} fires
+     *       {@link OptimisticLockingFailureException}, the transaction rolls back, and we
+     *       publish {@link ErrorCode#TICKET_UNAVAILABLE} so the saga compensates.</li>
+     * </ol>
+     *
+     * <p>We deliberately do <em>not</em> use {@code SELECT ... FOR UPDATE} (pessimistic
+     * row lock) here. The Kafka consumer concurrency is 3 (matching the partition count);
+     * a single pessimistic lock-waiter would tie up 1/3 of the thread pool indefinitely.
+     * Both Redis SETNX and {@code @Version} return immediately, so the consumer thread is
+     * never blocked.
+     */
     @Transactional
     public void handleReserveCommand(TicketReserveCommand cmd) {
         String lockKey = LOCK_PREFIX + cmd.getTicketId();
@@ -348,8 +370,7 @@ public class TicketService {
         }
 
         try {
-            Ticket ticket = ticketRepository.findByIdForUpdate(cmd.getTicketId())
-                    .orElse(null);
+            Ticket ticket = ticketRepository.findById(cmd.getTicketId()).orElse(null);
 
             if (ticket == null || !ticket.isAvailable()) {
                 log.warn("Ticket unavailable id={} saga={}", cmd.getTicketId(), cmd.getSagaId());
@@ -372,7 +393,22 @@ public class TicketService {
 
             java.time.Instant deadline = java.time.Instant.now().plus(RESERVATION_TIMEOUT);
             ticket.reserve(cmd.getOrderId(), cmd.getUserId(), ticket.getFacePrice(), deadline);
-            ticketRepository.save(ticket);
+
+            try {
+                ticketRepository.saveAndFlush(ticket);    // ← @Version check fires here
+            } catch (OptimisticLockingFailureException e) {
+                // Belt-and-suspenders: someone modified the row after our findById.
+                // In practice the Redis lock prevents this, but if Redis was down or the
+                // key expired mid-flight, this catches it without blocking.
+                log.warn("Optimistic lock conflict on reserve ticket={} saga={}: {}",
+                        cmd.getTicketId(), cmd.getSagaId(), e.getMessage());
+                eventPublisher.publishReleased(new TicketReleasedEvent(
+                        cmd.getTraceId(), cmd.getSagaId(),
+                        cmd.getTicketId(), cmd.getOrderId(), ticket.getEventId(),
+                        ErrorCode.TICKET_UNAVAILABLE.name()));
+                return;
+            }
+
             evictL2(ticket.getId(), ticket.getEventId());
 
             eventPublisher.publishReserved(new TicketReservedEvent(
@@ -386,10 +422,18 @@ public class TicketService {
         }
     }
 
+    /**
+     * Confirm a reserved ticket as part of saga finalization.
+     *
+     * <p>Uses {@code @Version} optimistic locking — no pessimistic row lock. The only
+     * realistic race is with the reservation watchdog releasing an expired reservation
+     * concurrently. If that happens, our {@code saveAndFlush} throws
+     * {@link OptimisticLockingFailureException}; we treat it as "ticket no longer in the
+     * state we expected" and publish a release event so the saga can compensate.
+     */
     @Transactional
     public void handleConfirmCommand(TicketConfirmCommand cmd) {
-        Ticket ticket = ticketRepository.findByIdForUpdate(cmd.getTicketId())
-                .orElse(null);
+        Ticket ticket = ticketRepository.findById(cmd.getTicketId()).orElse(null);
 
         // ── Idempotency: already confirmed by THIS order ───────────────────
         // Kafka at-least-once may re-deliver the command after we already processed it.
@@ -427,7 +471,21 @@ public class TicketService {
         }
 
         ticket.confirm(cmd.getOrderId());
-        ticketRepository.save(ticket);
+
+        try {
+            ticketRepository.saveAndFlush(ticket);    // ← @Version check fires here
+        } catch (OptimisticLockingFailureException e) {
+            // Race with watchdog release or another concurrent state change.
+            // The ticket was RESERVED when we read it, but someone else committed first.
+            log.warn("Optimistic lock conflict on confirm ticket={} saga={}: {}",
+                    cmd.getTicketId(), cmd.getSagaId(), e.getMessage());
+            eventPublisher.publishReleased(new TicketReleasedEvent(
+                    cmd.getTraceId(), cmd.getSagaId(),
+                    cmd.getTicketId(), cmd.getOrderId(), ticket.getEventId(),
+                    "CONFIRM_FAILED_WRONG_STATE"));
+            return;
+        }
+
         evictL2(ticket.getId(), ticket.getEventId());
 
         eventPublisher.publishConfirmed(new TicketConfirmedEvent(
@@ -469,9 +527,17 @@ public class TicketService {
 
     // ── Internal helpers ────────────────────────────────────────────────────
 
+    /**
+     * Release a reserved ticket. Used by saga compensation and the reservation watchdog.
+     *
+     * <p>Uses {@code @Version} optimistic locking. Release is naturally idempotent: the
+     * goal is "make this ticket not RESERVED by this order." If another writer (e.g. the
+     * watchdog) already released or repurposed the ticket, we treat that as success and
+     * skip publishing a duplicate event.
+     */
     private void releaseTicket(String ticketId, String orderId,
                                 String traceId, String sagaId, String reason) {
-        Ticket ticket = ticketRepository.findByIdForUpdate(ticketId).orElse(null);
+        Ticket ticket = ticketRepository.findById(ticketId).orElse(null);
 
         if (ticket == null) {
             log.warn("Release: ticket not found id={}", ticketId);
@@ -485,7 +551,17 @@ public class TicketService {
         }
 
         ticket.release();
-        ticketRepository.save(ticket);
+
+        try {
+            ticketRepository.saveAndFlush(ticket);    // ← @Version check fires here
+        } catch (OptimisticLockingFailureException e) {
+            // Concurrent writer already changed the row. Goal of release is achieved
+            // either way (ticket is no longer RESERVED by this order). Idempotent.
+            log.info("Release: ticket={} order={} already modified concurrently — treating as success",
+                    ticketId, orderId);
+            return;
+        }
+
         evictL2(ticket.getId(), ticket.getEventId());
 
         eventPublisher.publishReleased(new TicketReleasedEvent(
