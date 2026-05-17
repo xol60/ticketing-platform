@@ -10,10 +10,14 @@ set -e
 #  lowers — Kafka doesn't allow that).
 #
 #  ── Partitioning strategy ──────────────────────────────────────────────────
-#  Every saga-flow topic has 3 partitions to match concurrency=3 on each
+#  Every saga-flow topic has 10 partitions to match concurrency=10 on each
 #  consumer.  Records are keyed by orderId, so all events for a given order
 #  land on the same partition and are processed sequentially by one consumer
 #  thread — strict per-order ordering without application-level locking.
+#
+#  Capacity math: 10 threads × ~200 msg/s ≈ 2k msg/s per service per pod.
+#  Scaling further is horizontal (more pods) — the partition cap is what
+#  determines the ceiling for a single consumer group.
 #
 #  Two topics keep 1 partition on purpose:
 #    • payment.dlq         — chronological DLQ replay across all orders
@@ -30,7 +34,7 @@ set -e
 # ============================================================================
 
 KAFKA=kafka:9092
-PARTITIONS=3
+PARTITIONS=10
 REPLICATION=1
 
 # ---------------------------------------------------------------------------

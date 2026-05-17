@@ -33,12 +33,12 @@ public class DataSourceConfig {
 
     @Bean
     public DataSource masterDataSource() {
-        return buildDataSource(masterUrl, MASTER, 10);
+        return buildDataSource(masterUrl, MASTER, 20);
     }
 
     @Bean
     public DataSource slaveDataSource() {
-        return buildDataSource(slaveUrl, SLAVE, 5);
+        return buildDataSource(slaveUrl, SLAVE, 10);
     }
 
     @Primary

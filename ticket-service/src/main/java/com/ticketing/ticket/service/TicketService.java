@@ -24,6 +24,7 @@ import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -64,6 +65,7 @@ public class TicketService {
     private final RedisTemplate<String, String> redisTemplate;
     private final EventRepository        eventRepository;
     private final ObjectMapper          objectMapper;
+    private final TransactionTemplate   txTemplate;
 
     // ── CRUD ─────────────────────────────────────────────────────────────────
 
@@ -350,12 +352,17 @@ public class TicketService {
      * </ol>
      *
      * <p>We deliberately do <em>not</em> use {@code SELECT ... FOR UPDATE} (pessimistic
-     * row lock) here. The Kafka consumer concurrency is 3 (matching the partition count);
-     * a single pessimistic lock-waiter would tie up 1/3 of the thread pool indefinitely.
+     * row lock) here. The Kafka consumer concurrency is 10 (matching the partition count);
+     * a single pessimistic lock-waiter would tie up 1/10 of the thread pool indefinitely.
      * Both Redis SETNX and {@code @Version} return immediately, so the consumer thread is
      * never blocked.
+     *
+     * <h3>Tight transactional scope</h3>
+     * No {@code @Transactional} on the method — the DB write runs inside a
+     * {@link TransactionTemplate} block. External I/O (Redis SETNX, Kafka publish via
+     * the hybrid-outbox publisher) runs <em>outside</em> the tx, so a DB connection is
+     * held only for the actual UPDATE (~5 ms).
      */
-    @Transactional
     public void handleReserveCommand(TicketReserveCommand cmd) {
         String lockKey = LOCK_PREFIX + cmd.getTicketId();
         Boolean acquired = redisTemplate.opsForValue()
@@ -370,55 +377,65 @@ public class TicketService {
         }
 
         try {
-            Ticket ticket = ticketRepository.findById(cmd.getTicketId()).orElse(null);
+            // ── Tight DB transaction — read + validate + UPDATE only ──────
+            ReserveOutcome outcome = txTemplate.execute(status -> {
+                Ticket ticket = ticketRepository.findById(cmd.getTicketId()).orElse(null);
 
-            if (ticket == null || !ticket.isAvailable()) {
-                log.warn("Ticket unavailable id={} saga={}", cmd.getTicketId(), cmd.getSagaId());
-                String evtId = ticket != null ? ticket.getEventId() : null;
+                if (ticket == null || !ticket.isAvailable()) {
+                    String evtId = ticket != null ? ticket.getEventId() : null;
+                    return ReserveOutcome.fail(evtId, ErrorCode.TICKET_UNAVAILABLE.name());
+                }
+
+                var event = eventRepository.findById(ticket.getEventId()).orElse(null);
+                if (event != null && !event.isOpenForSales()) {
+                    return ReserveOutcome.fail(ticket.getEventId(), ErrorCode.EVENT_NOT_OPEN.name());
+                }
+
+                java.time.Instant deadline = java.time.Instant.now().plus(RESERVATION_TIMEOUT);
+                ticket.reserve(cmd.getOrderId(), cmd.getUserId(), ticket.getFacePrice(), deadline);
+
+                try {
+                    ticketRepository.saveAndFlush(ticket);    // ← @Version check fires here
+                } catch (OptimisticLockingFailureException e) {
+                    log.warn("Optimistic lock conflict on reserve ticket={} saga={}: {}",
+                            cmd.getTicketId(), cmd.getSagaId(), e.getMessage());
+                    return ReserveOutcome.fail(ticket.getEventId(), ErrorCode.TICKET_UNAVAILABLE.name());
+                }
+                return ReserveOutcome.success(ticket.getEventId(), ticket.getLockedPrice(), deadline);
+            });
+
+            // ── After tx commits — cache evict + Kafka publish (outside tx) ──
+            if (outcome.success) {
+                evictL2(cmd.getTicketId(), outcome.eventId);
+                eventPublisher.publishReserved(new TicketReservedEvent(
+                        cmd.getTraceId(), cmd.getSagaId(),
+                        cmd.getTicketId(), cmd.getOrderId(),
+                        cmd.getUserId(), outcome.eventId, outcome.lockedPrice));
+                log.info("Ticket reserved id={} order={} reservedUntil={}",
+                        cmd.getTicketId(), cmd.getOrderId(), outcome.deadline);
+            } else {
+                log.warn("Reserve failed ticket={} saga={} reason={}",
+                        cmd.getTicketId(), cmd.getSagaId(), outcome.failureReason);
                 eventPublisher.publishReleased(new TicketReleasedEvent(
                         cmd.getTraceId(), cmd.getSagaId(),
-                        cmd.getTicketId(), cmd.getOrderId(), evtId, ErrorCode.TICKET_UNAVAILABLE.name()));
-                return;
+                        cmd.getTicketId(), cmd.getOrderId(),
+                        outcome.eventId, outcome.failureReason));
             }
-
-            // Validate event is still open for sales
-            var event = eventRepository.findById(ticket.getEventId()).orElse(null);
-            if (event != null && !event.isOpenForSales()) {
-                log.warn("Event {} not open for sales, rejecting saga={}", ticket.getEventId(), cmd.getSagaId());
-                eventPublisher.publishReleased(new TicketReleasedEvent(
-                        cmd.getTraceId(), cmd.getSagaId(),
-                        cmd.getTicketId(), cmd.getOrderId(), ticket.getEventId(), ErrorCode.EVENT_NOT_OPEN.name()));
-                return;
-            }
-
-            java.time.Instant deadline = java.time.Instant.now().plus(RESERVATION_TIMEOUT);
-            ticket.reserve(cmd.getOrderId(), cmd.getUserId(), ticket.getFacePrice(), deadline);
-
-            try {
-                ticketRepository.saveAndFlush(ticket);    // ← @Version check fires here
-            } catch (OptimisticLockingFailureException e) {
-                // Belt-and-suspenders: someone modified the row after our findById.
-                // In practice the Redis lock prevents this, but if Redis was down or the
-                // key expired mid-flight, this catches it without blocking.
-                log.warn("Optimistic lock conflict on reserve ticket={} saga={}: {}",
-                        cmd.getTicketId(), cmd.getSagaId(), e.getMessage());
-                eventPublisher.publishReleased(new TicketReleasedEvent(
-                        cmd.getTraceId(), cmd.getSagaId(),
-                        cmd.getTicketId(), cmd.getOrderId(), ticket.getEventId(),
-                        ErrorCode.TICKET_UNAVAILABLE.name()));
-                return;
-            }
-
-            evictL2(ticket.getId(), ticket.getEventId());
-
-            eventPublisher.publishReserved(new TicketReservedEvent(
-                    cmd.getTraceId(), cmd.getSagaId(),
-                    ticket.getId(), cmd.getOrderId(),
-                    cmd.getUserId(), ticket.getEventId(), ticket.getLockedPrice()));
-
-            log.info("Ticket reserved id={} order={} reservedUntil={}", ticket.getId(), cmd.getOrderId(), deadline);
         } finally {
             redisTemplate.delete(lockKey);
+        }
+    }
+
+    /** Outcome envelope used to ferry tx result to the post-commit publish block. */
+    private record ReserveOutcome(boolean success, String eventId,
+                                   java.math.BigDecimal lockedPrice,
+                                   java.time.Instant deadline,
+                                   String failureReason) {
+        static ReserveOutcome success(String eventId, java.math.BigDecimal lockedPrice, java.time.Instant deadline) {
+            return new ReserveOutcome(true, eventId, lockedPrice, deadline, null);
+        }
+        static ReserveOutcome fail(String eventId, String reason) {
+            return new ReserveOutcome(false, eventId, null, null, reason);
         }
     }
 
@@ -431,72 +448,76 @@ public class TicketService {
      * {@link OptimisticLockingFailureException}; we treat it as "ticket no longer in the
      * state we expected" and publish a release event so the saga can compensate.
      */
-    @Transactional
     public void handleConfirmCommand(TicketConfirmCommand cmd) {
-        Ticket ticket = ticketRepository.findById(cmd.getTicketId()).orElse(null);
+        // ── Tight DB transaction — read + status check + UPDATE only ──────
+        ConfirmOutcome outcome = txTemplate.execute(status -> {
+            Ticket ticket = ticketRepository.findById(cmd.getTicketId()).orElse(null);
 
-        // ── Idempotency: already confirmed by THIS order ───────────────────
-        // Kafka at-least-once may re-deliver the command after we already processed it.
-        // Re-publish the success event so the saga can move forward cleanly.
-        if (ticket != null
-                && ticket.getStatus() == TicketStatus.CONFIRMED
-                && cmd.getOrderId().equals(ticket.getLockedByOrderId())) {
-            log.info("Ticket already confirmed (idempotent retry) id={} order={}", cmd.getTicketId(), cmd.getOrderId());
+            // Idempotency: already confirmed by THIS order — Kafka may have re-delivered
+            if (ticket != null
+                    && ticket.getStatus() == TicketStatus.CONFIRMED
+                    && cmd.getOrderId().equals(ticket.getLockedByOrderId())) {
+                return ConfirmOutcome.idempotent(ticket.getEventId(), ticket.getLockedByUserId());
+            }
+
+            // Cannot confirm: ticket gone, wrong status, or owned by another order
+            // (e.g. watchdog already released it after reservedUntil passed)
+            if (ticket == null
+                    || ticket.getStatus() != TicketStatus.RESERVED
+                    || !cmd.getOrderId().equals(ticket.getLockedByOrderId())) {
+                return ConfirmOutcome.fail(ticket != null ? ticket.getEventId() : null,
+                        ticket == null ? "NOT_FOUND" : ticket.getStatus().name());
+            }
+
+            ticket.confirm(cmd.getOrderId());
+            try {
+                ticketRepository.saveAndFlush(ticket);    // ← @Version check fires here
+            } catch (OptimisticLockingFailureException e) {
+                log.warn("Optimistic lock conflict on confirm ticket={} saga={}: {}",
+                        cmd.getTicketId(), cmd.getSagaId(), e.getMessage());
+                return ConfirmOutcome.fail(ticket.getEventId(), "OPTIMISTIC_LOCK");
+            }
+            return ConfirmOutcome.success(ticket.getEventId(), ticket.getLockedByUserId());
+        });
+
+        // ── After tx commits — cache evict + Kafka publish (outside tx) ──
+        if (outcome.success || outcome.idempotent) {
+            if (outcome.success) {
+                evictL2(cmd.getTicketId(), outcome.eventId);
+                log.info("Ticket confirmed id={} order={}", cmd.getTicketId(), cmd.getOrderId());
+            } else {
+                log.info("Ticket already confirmed (idempotent retry) id={} order={}",
+                        cmd.getTicketId(), cmd.getOrderId());
+            }
             eventPublisher.publishConfirmed(new TicketConfirmedEvent(
                     cmd.getTraceId(), cmd.getSagaId(),
-                    ticket.getId(), cmd.getOrderId(),
-                    ticket.getLockedByUserId()));
-            return;
-        }
-
-        // ── Cannot confirm: ticket gone, wrong status, or owned by another order ─
-        // This happens when the watchdog already released the ticket (reservedUntil
-        // passed) while payment was in flight, or a compensation path fired first.
-        // We MUST publish a failure event here — silently returning would leave the
-        // saga waiting forever for a TicketConfirmedEvent that will never arrive,
-        // and the payment that already succeeded would never get refunded.
-        if (ticket == null
-                || ticket.getStatus() != TicketStatus.RESERVED
-                || !cmd.getOrderId().equals(ticket.getLockedByOrderId())) {
-            log.warn("Cannot confirm ticket id={} status={} orderId={} — publishing failure so saga compensates",
-                     cmd.getTicketId(),
-                     ticket == null ? "NOT_FOUND" : ticket.getStatus(),
-                     cmd.getOrderId());
+                    cmd.getTicketId(), cmd.getOrderId(), outcome.userId));
+        } else {
+            log.warn("Cannot confirm ticket id={} reason={} — publishing failure so saga compensates",
+                    cmd.getTicketId(), outcome.failureReason);
+            // We MUST publish a failure event here — silently returning would leave the
+            // saga waiting forever and the payment that already succeeded would never refund.
             eventPublisher.publishReleased(new TicketReleasedEvent(
                     cmd.getTraceId(), cmd.getSagaId(),
-                    cmd.getTicketId(), cmd.getOrderId(),
-                    ticket != null ? ticket.getEventId() : null,
+                    cmd.getTicketId(), cmd.getOrderId(), outcome.eventId,
                     "CONFIRM_FAILED_WRONG_STATE"));
-            return;
         }
-
-        ticket.confirm(cmd.getOrderId());
-
-        try {
-            ticketRepository.saveAndFlush(ticket);    // ← @Version check fires here
-        } catch (OptimisticLockingFailureException e) {
-            // Race with watchdog release or another concurrent state change.
-            // The ticket was RESERVED when we read it, but someone else committed first.
-            log.warn("Optimistic lock conflict on confirm ticket={} saga={}: {}",
-                    cmd.getTicketId(), cmd.getSagaId(), e.getMessage());
-            eventPublisher.publishReleased(new TicketReleasedEvent(
-                    cmd.getTraceId(), cmd.getSagaId(),
-                    cmd.getTicketId(), cmd.getOrderId(), ticket.getEventId(),
-                    "CONFIRM_FAILED_WRONG_STATE"));
-            return;
-        }
-
-        evictL2(ticket.getId(), ticket.getEventId());
-
-        eventPublisher.publishConfirmed(new TicketConfirmedEvent(
-                cmd.getTraceId(), cmd.getSagaId(),
-                ticket.getId(), cmd.getOrderId(),
-                ticket.getLockedByUserId()));
-
-        log.info("Ticket confirmed id={} order={}", ticket.getId(), cmd.getOrderId());
     }
 
-    @Transactional
+    /** Outcome envelope for confirm operations. */
+    private record ConfirmOutcome(boolean success, boolean idempotent,
+                                   String eventId, String userId, String failureReason) {
+        static ConfirmOutcome success(String eventId, String userId) {
+            return new ConfirmOutcome(true, false, eventId, userId, null);
+        }
+        static ConfirmOutcome idempotent(String eventId, String userId) {
+            return new ConfirmOutcome(false, true, eventId, userId, null);
+        }
+        static ConfirmOutcome fail(String eventId, String reason) {
+            return new ConfirmOutcome(false, false, eventId, null, reason);
+        }
+    }
+
     public void handleReleaseCommand(TicketReleaseCommand cmd) {
         releaseTicket(cmd.getTicketId(), cmd.getOrderId(),
                       cmd.getTraceId(), cmd.getSagaId(), cmd.getReason());
@@ -533,41 +554,48 @@ public class TicketService {
      * <p>Uses {@code @Version} optimistic locking. Release is naturally idempotent: the
      * goal is "make this ticket not RESERVED by this order." If another writer (e.g. the
      * watchdog) already released or repurposed the ticket, we treat that as success and
-     * skip publishing a duplicate event.
+     * skip publishing a duplicate event. DB tx is scoped tightly via {@link TransactionTemplate}
+     * so the Kafka publish happens after commit.
      */
     private void releaseTicket(String ticketId, String orderId,
                                 String traceId, String sagaId, String reason) {
-        Ticket ticket = ticketRepository.findById(ticketId).orElse(null);
+        ReleaseOutcome outcome = txTemplate.execute(status -> {
+            Ticket ticket = ticketRepository.findById(ticketId).orElse(null);
 
-        if (ticket == null) {
-            log.warn("Release: ticket not found id={}", ticketId);
-            return;
+            if (ticket == null) {
+                return ReleaseOutcome.skipped("NOT_FOUND", null);
+            }
+            if (ticket.getStatus() != TicketStatus.RESERVED
+                    || !orderId.equals(ticket.getLockedByOrderId())) {
+                return ReleaseOutcome.skipped("STATE_MISMATCH:" + ticket.getStatus(), ticket.getEventId());
+            }
+
+            ticket.release();
+            try {
+                ticketRepository.saveAndFlush(ticket);    // ← @Version check fires here
+            } catch (OptimisticLockingFailureException e) {
+                // Concurrent writer already changed the row. Release goal achieved either
+                // way (ticket is no longer RESERVED by this order). Idempotent.
+                return ReleaseOutcome.skipped("OPTIMISTIC_LOCK", ticket.getEventId());
+            }
+            return ReleaseOutcome.released(ticket.getEventId());
+        });
+
+        if (outcome.released) {
+            evictL2(ticketId, outcome.eventId);
+            eventPublisher.publishReleased(new TicketReleasedEvent(
+                    traceId, sagaId, ticketId, orderId, outcome.eventId, reason));
+            log.info("Ticket released id={} order={} reason={}", ticketId, orderId, reason);
+        } else {
+            log.info("Release skipped: ticket={} order={} reason={}",
+                    ticketId, orderId, outcome.skipReason);
         }
-        if (ticket.getStatus() != TicketStatus.RESERVED
-                || !orderId.equals(ticket.getLockedByOrderId())) {
-            log.info("Release skipped: ticket={} status={} order mismatch",
-                     ticketId, ticket.getStatus());
-            return;
-        }
+    }
 
-        ticket.release();
-
-        try {
-            ticketRepository.saveAndFlush(ticket);    // ← @Version check fires here
-        } catch (OptimisticLockingFailureException e) {
-            // Concurrent writer already changed the row. Goal of release is achieved
-            // either way (ticket is no longer RESERVED by this order). Idempotent.
-            log.info("Release: ticket={} order={} already modified concurrently — treating as success",
-                    ticketId, orderId);
-            return;
-        }
-
-        evictL2(ticket.getId(), ticket.getEventId());
-
-        eventPublisher.publishReleased(new TicketReleasedEvent(
-                traceId, sagaId, ticketId, orderId, ticket.getEventId(), reason));
-
-        log.info("Ticket released id={} order={} reason={}", ticketId, orderId, reason);
+    /** Outcome envelope for release operations. */
+    private record ReleaseOutcome(boolean released, String eventId, String skipReason) {
+        static ReleaseOutcome released(String eventId)              { return new ReleaseOutcome(true,  eventId, null); }
+        static ReleaseOutcome skipped(String reason, String evtId)  { return new ReleaseOutcome(false, evtId,   reason); }
     }
 
     private Ticket findOrThrow(String id) {
