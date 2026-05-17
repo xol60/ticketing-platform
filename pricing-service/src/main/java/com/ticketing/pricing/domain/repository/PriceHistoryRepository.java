@@ -35,14 +35,30 @@ public interface PriceHistoryRepository extends JpaRepository<PriceHistory, UUID
     BigDecimal findMultiplierAt(@Param("eventId") String eventId, @Param("at") Instant at);
 
     /**
-     * Check if a multiplier value ever existed in history within the given window.
-     * Used to distinguish fabricated prices from stale prices.
+     * Check if a multiplier value was active in the recent past — i.e. still active
+     * now, or closed less than {@code HISTORY_VALIDITY_WINDOW} ago.
+     *
+     * <p>Used by {@code PricingService.lockPrice()} to distinguish fabricated prices
+     * (an attacker making up a multiplier) from stale prices (a legitimate user whose
+     * UI quote is outdated because the surge moved between page load and Buy click).
+     *
+     * <p>The window anchors on {@code validTo} — when the multiplier <em>closed</em> —
+     * not on {@code validFrom}. A long-running multiplier that closed 5 minutes ago is
+     * "recent" even if it opened 3 hours earlier. The earlier {@code validFrom}-based
+     * check rejected such users' orders as "fabricated" — they paid a real recent
+     * price but the row's open timestamp was older than the window.
+     *
+     * @param eventId    the event whose history we're checking
+     * @param multiplier the multiplier the user's price implies (userPrice / facePrice)
+     * @param since      cutoff for "recent" — typically {@code now - HISTORY_VALIDITY_WINDOW}
+     * @return true if any history row for the given multiplier is still active
+     *         ({@code validTo IS NULL}) or closed at/after {@code since}
      */
     @Query("""
            SELECT COUNT(ph) > 0 FROM PriceHistory ph
            WHERE ph.eventId        = :eventId
              AND ph.surgeMultiplier = :multiplier
-             AND ph.validFrom      >= :since
+             AND (ph.validTo IS NULL OR ph.validTo >= :since)
            """)
     boolean existsInRecentHistory(
             @Param("eventId")    String eventId,
