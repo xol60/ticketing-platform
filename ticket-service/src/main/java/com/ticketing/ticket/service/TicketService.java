@@ -369,7 +369,18 @@ public class TicketService {
                 .setIfAbsent(lockKey, cmd.getSagaId(), LOCK_TTL);
 
         if (!Boolean.TRUE.equals(acquired)) {
-            log.warn("Could not acquire lock for ticket={} saga={}", cmd.getTicketId(), cmd.getSagaId());
+            // ── Idempotency check #1 — Kafka may have redelivered while the first
+            //   delivery is still in flight. SETNX stores cmd.getSagaId() as the value,
+            //   so if the current lock holder matches our saga, we're a duplicate of an
+            //   in-flight first delivery — silently skip; the first delivery will publish.
+            String currentHolder = safeGet(lockKey);
+            if (cmd.getSagaId().equals(currentHolder)) {
+                log.info("Redelivered ReserveCommand while same saga is still processing — skipping silently sagaId={}",
+                        cmd.getSagaId());
+                return;
+            }
+            log.warn("Could not acquire lock for ticket={} saga={} (held by {})",
+                    cmd.getTicketId(), cmd.getSagaId(), currentHolder);
             eventPublisher.publishReleased(new TicketReleasedEvent(
                     cmd.getTraceId(), cmd.getSagaId(),
                     cmd.getTicketId(), cmd.getOrderId(), null, ErrorCode.TICKET_LOCK_CONFLICT.name()));
@@ -380,6 +391,20 @@ public class TicketService {
             // ── Tight DB transaction — read + validate + UPDATE only ──────
             ReserveOutcome outcome = txTemplate.execute(status -> {
                 Ticket ticket = ticketRepository.findById(cmd.getTicketId()).orElse(null);
+
+                // ── Idempotency check #2 — Kafka redelivery after the first delivery
+                //   already committed but the consumer crashed before sending the manual
+                //   ack. The ticket is RESERVED and owned by THIS order — return success
+                //   so the post-commit block republishes TicketReservedEvent. Saga sees
+                //   the duplicate event and ignores it (it's already past TICKET_RESERVED).
+                if (ticket != null
+                        && ticket.getStatus() == TicketStatus.RESERVED
+                        && cmd.getOrderId().equals(ticket.getLockedByOrderId())) {
+                    log.info("Ticket already reserved by this order (idempotent retry) id={} order={}",
+                            cmd.getTicketId(), cmd.getOrderId());
+                    return ReserveOutcome.idempotentRetry(
+                            ticket.getEventId(), ticket.getLockedPrice(), ticket.getReservedUntil());
+                }
 
                 if (ticket == null || !ticket.isAvailable()) {
                     String evtId = ticket != null ? ticket.getEventId() : null;
@@ -406,13 +431,21 @@ public class TicketService {
 
             // ── After tx commits — cache evict + Kafka publish (outside tx) ──
             if (outcome.success) {
-                evictL2(cmd.getTicketId(), outcome.eventId);
+                if (!outcome.idempotentRetry) {
+                    // Real first-time write — invalidate caches so subsequent reads see fresh state
+                    evictL2(cmd.getTicketId(), outcome.eventId);
+                }
                 eventPublisher.publishReserved(new TicketReservedEvent(
                         cmd.getTraceId(), cmd.getSagaId(),
                         cmd.getTicketId(), cmd.getOrderId(),
                         cmd.getUserId(), outcome.eventId, outcome.lockedPrice));
-                log.info("Ticket reserved id={} order={} reservedUntil={}",
-                        cmd.getTicketId(), cmd.getOrderId(), outcome.deadline);
+                if (outcome.idempotentRetry) {
+                    log.info("Republished TicketReservedEvent for idempotent retry sagaId={} order={}",
+                            cmd.getSagaId(), cmd.getOrderId());
+                } else {
+                    log.info("Ticket reserved id={} order={} reservedUntil={}",
+                            cmd.getTicketId(), cmd.getOrderId(), outcome.deadline);
+                }
             } else {
                 log.warn("Reserve failed ticket={} saga={} reason={}",
                         cmd.getTicketId(), cmd.getSagaId(), outcome.failureReason);
@@ -426,16 +459,36 @@ public class TicketService {
         }
     }
 
-    /** Outcome envelope used to ferry tx result to the post-commit publish block. */
-    private record ReserveOutcome(boolean success, String eventId,
+    /** Defensive Redis read — never throws (the value is informational, not authoritative). */
+    private String safeGet(String key) {
+        try {
+            return redisTemplate.opsForValue().get(key);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Outcome envelope used to ferry tx result to the post-commit publish block.
+     *
+     * <p>{@code idempotentRetry} distinguishes a fresh successful reservation from a
+     * Kafka-redelivery retry where the ticket was already reserved by this same order.
+     * The post-commit block uses this to choose the right log message and decide whether
+     * to invalidate caches (no need on a retry — caches were already invalidated by the
+     * original successful delivery).
+     */
+    private record ReserveOutcome(boolean success, boolean idempotentRetry, String eventId,
                                    java.math.BigDecimal lockedPrice,
                                    java.time.Instant deadline,
                                    String failureReason) {
         static ReserveOutcome success(String eventId, java.math.BigDecimal lockedPrice, java.time.Instant deadline) {
-            return new ReserveOutcome(true, eventId, lockedPrice, deadline, null);
+            return new ReserveOutcome(true, false, eventId, lockedPrice, deadline, null);
+        }
+        static ReserveOutcome idempotentRetry(String eventId, java.math.BigDecimal lockedPrice, java.time.Instant deadline) {
+            return new ReserveOutcome(true, true, eventId, lockedPrice, deadline, null);
         }
         static ReserveOutcome fail(String eventId, String reason) {
-            return new ReserveOutcome(false, eventId, null, null, reason);
+            return new ReserveOutcome(false, false, eventId, null, null, reason);
         }
     }
 
