@@ -1,4 +1,4 @@
-# Ticketing Platform
+# Overture — Event Ticketing Platform
 
 Microservice ticketing system — Java 21 + Spring Boot 3.2 + Kafka + Redis + Postgres.
 
@@ -67,12 +67,19 @@ ticketing-platform/
 ├── payment-service/         # External payment + DLQ + admin alert
 ├── secondary-market-service/# Ticket resale
 ├── notification-service/    # Email / push
+├── tests/                   # Stress test — see tests/README.md
+├── docs/                    # Animated saga flows + static reference
 └── docker/
     ├── kafka/               # Topic creation script
     ├── postgres/            # Master config + slave init
     ├── redis/               # redis.conf
     └── nginx/               # nginx.conf
 ```
+
+> 🧪 **Verifying the system under load**: see [`tests/README.md`](tests/README.md)
+> for the concurrent-order stress test, what it validates, and the operational
+> findings it surfaces (rate-limiter sensitivity, circuit-breaker interaction,
+> p99 saga latency under payment retry).
 
 ## Quick start
 
