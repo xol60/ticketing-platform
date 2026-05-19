@@ -49,12 +49,17 @@ public class CircuitBreakerFilter implements GlobalFilter, Ordered {
         return chain.filter(exchange)
                 .transformDeferred(CircuitBreakerOperator.of(cb))
                 .onErrorResume(CallNotPermittedException.class, ex -> {
+                    // Circuit is OPEN — block immediately, do NOT call downstream
                     log.warn("Circuit OPEN for path={} trace={} cb={}",
                             path, traceId, cb.getName());
                     return rejectWith503(exchange, traceId, cb.getName());
                 })
                 .onErrorResume(ex -> {
-                    // Record other downstream errors as CB failures
+                    // Other exception propagated up from downstream.
+                    // The CB operator already decided whether to count it (per
+                    // recordExceptions / ignoreExceptions in CircuitBreakerManager).
+                    // Our job here is just to translate the exception into a clean
+                    // HTTP response for the client.
                     log.error("Downstream error path={} trace={}: {}",
                             path, traceId, ex.getMessage());
                     return rejectWith502(exchange, traceId);

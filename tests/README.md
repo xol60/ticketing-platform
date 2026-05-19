@@ -2,7 +2,7 @@
 
 Concurrent-order load tests for the ticketing-platform saga flow. Validates that
 the system maintains cross-database consistency under bursty load and surfaces
-real operational gaps (rate-limiter sensitivity, circuit-breaker interactions,
+real operational gaps (rate-limiter sensitivity, circuit-breaker default-config sensitivity,
 payment retry behaviour) that aren't visible from code review alone.
 
 These tests use plain `bash` + `curl` against the running Docker Compose stack —
@@ -211,28 +211,59 @@ in the sliding window from earlier tests push it over.
 
 **Production implication**: For flash sales where each customer makes one
 request, this is fine. For impatient users double-clicking or scripts retrying,
-it's a lockout. **Real fix**: exclude HTTP 429 from the circuit-breaker's
-failure predicate (see Finding 2).
+it's a lockout. **Real fix**: rate-limit per `IP:userId:endpoint` instead of
+per `IP:userId`, so a burst on `/api/orders` doesn't lock the user out of
+`/api/me` or `/api/events`.
 
-### 2. Circuit-breaker counts rate-limited responses as failures
+### 2. Circuit-breaker default config records all exceptions — including downstream 4xx
 
 ```
 3 accepted out of 5 → 2 rejected with:
 "Service temporarily unavailable — circuit open for order-service"
 ```
 
-**Root cause**: Resilience4j circuit breaker on order-service treats rate-limit
-429s as failures. ≥5 consecutive 429s open the circuit → blocks all traffic
-for 30s, including legitimate requests.
+**Root cause**: Resilience4j's default `CircuitBreakerConfig` records **every
+`Throwable` as a failure**, including `WebClientResponseException` subclasses
+emitted on downstream 4xx responses. Over sustained testing — bad-input
+requests, simulated payment-gateway failures, intermittent timeouts — the
+cumulative failure count in the sliding window crossed the 50% threshold and
+opened the circuit for 30 seconds, blocking unrelated legitimate traffic.
 
-**Cascading-failure shape**: rate-limit → 429 → circuit-open → self-DOS.
+Note: this is **NOT** caused by rate-limit 429s being counted as failures.
+`RateLimitFilter` short-circuits the filter chain before `CircuitBreakerFilter`
+runs (it has order `HIGHEST_PRECEDENCE + 1` vs CB's `+ 2`), so rate-limited
+requests never reach the circuit breaker. The two layers reject independently
+for unrelated reasons — what we observed in stress tests was just both layers
+firing during the same burst, not a causal interaction.
 
-**Real fix** in `api-gateway/src/main/java/.../GatewayCircuitBreakerConfig.java`:
+**Real fix** in
+`api-gateway/src/main/java/com/ticketing/gateway/circuitbreaker/CircuitBreakerManager.java`:
 
 ```java
-.recordExceptions(WebClientResponseException.class)
-.ignoreExceptions(RateLimitExceededException.class)   // ← add this
+CircuitBreakerConfig.custom()
+    ...
+    .recordExceptions(
+        IOException.class,                                       // network errors
+        TimeoutException.class,                                  // downstream too slow
+        WebClientResponseException.InternalServerError.class,    // 500
+        WebClientResponseException.BadGateway.class,             // 502
+        WebClientResponseException.ServiceUnavailable.class,     // 503
+        WebClientResponseException.GatewayTimeout.class          // 504
+    )
+    .ignoreExceptions(
+        WebClientResponseException.BadRequest.class,             // 400
+        WebClientResponseException.Unauthorized.class,           // 401
+        WebClientResponseException.Forbidden.class,              // 403
+        WebClientResponseException.NotFound.class,               // 404
+        WebClientResponseException.Conflict.class,               // 409
+        WebClientResponseException.UnprocessableEntity.class,    // 422
+        WebClientResponseException.TooManyRequests.class         // 429 — defence in depth
+    )
+    .build();
 ```
+
+Only **actual service-health signals** (network errors, timeouts, 5xx) count
+toward the failure rate now. Client-side rejections are ignored.
 
 ### 3. p99 saga latency is dominated by payment retry backoff
 

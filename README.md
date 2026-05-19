@@ -78,7 +78,7 @@ ticketing-platform/
 
 > 🧪 **Verifying the system under load**: see [`tests/README.md`](tests/README.md)
 > for the concurrent-order stress test, what it validates, and the operational
-> findings it surfaces (rate-limiter sensitivity, circuit-breaker interaction,
+> findings it surfaces (rate-limiter sensitivity, circuit-breaker default-config sensitivity,
 > p99 saga latency under payment retry).
 
 ## Quick start
