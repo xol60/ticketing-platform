@@ -2,6 +2,7 @@ package com.ticketing.ticket.controller;
 
 import com.ticketing.common.dto.ApiResponse;
 import com.ticketing.ticket.dto.request.CreateEventRequest;
+import com.ticketing.ticket.dto.request.UpdateEventRequest;
 import com.ticketing.ticket.dto.response.EventStatusResponse;
 import com.ticketing.ticket.service.EventService;
 import com.ticketing.ticket.service.TicketService;
@@ -27,6 +28,19 @@ public class EventController {
             @Valid @RequestBody CreateEventRequest request,
             @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
         return ApiResponse.ok(eventService.createEvent(request, traceId), traceId);
+    }
+
+    /**
+     * Partial update of event metadata (name, description, artist, venue, etc.).
+     * Status changes go through the dedicated lifecycle endpoints below.
+     * Triggers a re-index in search-service via the {@code event.search.indexed} topic.
+     */
+    @PatchMapping("/api/tickets/events/{eventId}")
+    public ApiResponse<EventStatusResponse> update(
+            @PathVariable String eventId,
+            @Valid @RequestBody UpdateEventRequest request,
+            @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
+        return ApiResponse.ok(eventService.updateEvent(eventId, request, traceId), traceId);
     }
 
     @PatchMapping("/api/tickets/events/{eventId}/open")

@@ -1,10 +1,12 @@
 package com.ticketing.ticket.service;
 
+import com.ticketing.common.events.EventSearchIndexedEvent;
 import com.ticketing.common.events.EventStatusChangedEvent;
 import com.ticketing.ticket.domain.model.Event;
 import com.ticketing.ticket.domain.model.EventStatus;
 import com.ticketing.ticket.domain.repository.EventRepository;
 import com.ticketing.ticket.dto.request.CreateEventRequest;
+import com.ticketing.ticket.dto.request.UpdateEventRequest;
 import com.ticketing.ticket.dto.response.EventStatusResponse;
 import com.ticketing.ticket.kafka.TicketEventPublisher;
 import jakarta.persistence.EntityNotFoundException;
@@ -21,7 +23,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class EventService {
 
-    private final EventRepository    eventRepository;
+    private final EventRepository      eventRepository;
     private final TicketEventPublisher publisher;
 
     @Transactional
@@ -32,11 +34,41 @@ public class EventService {
                 .salesOpenAt(request.getSalesOpenAt())
                 .salesCloseAt(request.getSalesCloseAt())
                 .eventDate(request.getEventDate())
+                .primaryArtist(request.getPrimaryArtist())
+                .venueName(request.getVenueName())
+                .venueCity(request.getVenueCity())
+                .shortDescription(request.getShortDescription())
+                .fullDescription(request.getFullDescription())
+                .category(request.getCategory())
+                .genre(request.getGenre())
                 .version(0L)
                 .build();
         event = eventRepository.save(event);
         log.info("Event created id={} name={}", event.getId(), event.getName());
         publishStatusChanged(event, traceId);
+        publishSearchIndexed(event, traceId);
+        return toResponse(event);
+    }
+
+    @Transactional
+    public EventStatusResponse updateEvent(String eventId, UpdateEventRequest request, String traceId) {
+        Event event = findOrThrow(eventId);
+        if (request.getName()             != null) event.setName(request.getName());
+        if (request.getSalesOpenAt()      != null) event.setSalesOpenAt(request.getSalesOpenAt());
+        if (request.getSalesCloseAt()     != null) event.setSalesCloseAt(request.getSalesCloseAt());
+        if (request.getEventDate()        != null) event.setEventDate(request.getEventDate());
+        if (request.getPrimaryArtist()    != null) event.setPrimaryArtist(request.getPrimaryArtist());
+        if (request.getVenueName()        != null) event.setVenueName(request.getVenueName());
+        if (request.getVenueCity()        != null) event.setVenueCity(request.getVenueCity());
+        if (request.getShortDescription() != null) event.setShortDescription(request.getShortDescription());
+        if (request.getFullDescription()  != null) event.setFullDescription(request.getFullDescription());
+        if (request.getCategory()         != null) event.setCategory(request.getCategory());
+        if (request.getGenre()            != null) event.setGenre(request.getGenre());
+        event = eventRepository.save(event);
+        log.info("Event metadata updated id={}", eventId);
+        // Metadata-only edits don't trigger publishStatusChanged (no state-machine transition)
+        // but they DO need to update the search index.
+        publishSearchIndexed(event, traceId);
         return toResponse(event);
     }
 
@@ -79,6 +111,7 @@ public class EventService {
         event = eventRepository.save(event);
         log.info("Event {} status changed to {}", eventId, newStatus);
         publishStatusChanged(event, traceId);
+        publishSearchIndexed(event, traceId);
         return toResponse(event);
     }
 
@@ -87,6 +120,21 @@ public class EventService {
                 traceId, null,
                 event.getId(), event.getName(), event.getStatus().name(),
                 event.getSalesOpenAt(), event.getSalesCloseAt(), event.getEventDate()
+        ));
+    }
+
+    /**
+     * Publish the full searchable payload to {@code event.search.indexed}.
+     * The search-service consumer upserts/deletes the ES document based on status.
+     */
+    private void publishSearchIndexed(Event event, String traceId) {
+        publisher.publishEventSearchIndexed(new EventSearchIndexedEvent(
+                traceId, null,
+                event.getId(), event.getName(), event.getStatus().name(),
+                event.getSalesOpenAt(), event.getSalesCloseAt(), event.getEventDate(),
+                event.getPrimaryArtist(), event.getVenueName(), event.getVenueCity(),
+                event.getShortDescription(), event.getFullDescription(),
+                event.getCategory(), event.getGenre()
         ));
     }
 
@@ -104,6 +152,13 @@ public class EventService {
                 .salesCloseAt(event.getSalesCloseAt())
                 .eventDate(event.getEventDate())
                 .openForSales(event.isOpenForSales())
+                .primaryArtist(event.getPrimaryArtist())
+                .venueName(event.getVenueName())
+                .venueCity(event.getVenueCity())
+                .shortDescription(event.getShortDescription())
+                .fullDescription(event.getFullDescription())
+                .category(event.getCategory())
+                .genre(event.getGenre())
                 .build();
     }
 }

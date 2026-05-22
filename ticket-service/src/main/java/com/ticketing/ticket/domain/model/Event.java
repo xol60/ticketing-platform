@@ -36,6 +36,31 @@ public class Event {
     @Column(name = "event_date", nullable = false)
     private Instant eventDate;
 
+    // ── Searchable metadata (added for Elasticsearch event-search subsystem) ──
+    // All nullable so the schema change is non-breaking for existing rows.
+    @Column(name = "primary_artist", length = 255)
+    private String primaryArtist;
+
+    @Column(name = "venue_name", length = 255)
+    private String venueName;
+
+    @Column(name = "venue_city", length = 100)
+    private String venueCity;
+
+    @Column(name = "short_description", length = 500)
+    private String shortDescription;
+
+    @Column(name = "full_description", columnDefinition = "TEXT")
+    private String fullDescription;
+
+    /** CONCERT | SPORTS | THEATER | CONFERENCE | OTHER */
+    @Column(name = "category", length = 50)
+    private String category;
+
+    /** POP | ROCK | EDM | JAZZ | CLASSICAL | OTHER */
+    @Column(name = "genre", length = 50)
+    private String genre;
+
     @Version
     @Column(nullable = false)
     private Long version;

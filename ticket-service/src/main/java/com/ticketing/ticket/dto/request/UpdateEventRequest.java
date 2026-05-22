@@ -1,31 +1,26 @@
 package com.ticketing.ticket.dto.request;
 
-import jakarta.validation.constraints.Future;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.time.Instant;
 
+/**
+ * Partial update for an existing event. All fields are optional — only non-null
+ * fields are applied. Used by {@code PATCH /api/tickets/events/{eventId}}.
+ *
+ * <p>Status changes are deliberately NOT updated via this DTO — they go through
+ * the dedicated lifecycle endpoints ({@code /open}, {@code /cancel}, {@code /close},
+ * {@code /complete}) so the state machine remains explicit.
+ */
 @Data
-public class CreateEventRequest {
+public class UpdateEventRequest {
 
-    @NotBlank
-    @Size(max = 255)
-    private String name;
-
-    @NotNull
+    @Size(max = 255) private String  name;
     private Instant salesOpenAt;
-
-    @NotNull
     private Instant salesCloseAt;
-
-    @NotNull
-    @Future
     private Instant eventDate;
 
-    // ── Searchable metadata (optional at create — can be filled later via PATCH) ──
     @Size(max = 255)  private String primaryArtist;
     @Size(max = 255)  private String venueName;
     @Size(max = 100)  private String venueCity;

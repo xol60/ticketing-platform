@@ -20,4 +20,13 @@ public class EventStatusResponse {
     private Instant     salesCloseAt;
     private Instant     eventDate;
     private boolean     openForSales;
+
+    // ── Searchable metadata (echoed back for admin UI / search) ──
+    private String primaryArtist;
+    private String venueName;
+    private String venueCity;
+    private String shortDescription;
+    private String fullDescription;
+    private String category;
+    private String genre;
 }
