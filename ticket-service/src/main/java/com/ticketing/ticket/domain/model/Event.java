@@ -1,5 +1,6 @@
 package com.ticketing.ticket.domain.model;
 
+import com.ticketing.common.events.EventStatus;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;

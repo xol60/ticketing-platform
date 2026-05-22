@@ -6,7 +6,7 @@ import com.ticketing.common.events.TicketReservedEvent;
 import com.ticketing.common.events.TicketReserveCommand;
 import com.ticketing.common.exception.ErrorCode;
 import com.ticketing.ticket.domain.model.Event;
-import com.ticketing.ticket.domain.model.EventStatus;
+import com.ticketing.common.events.EventStatus;
 import com.ticketing.ticket.domain.model.Ticket;
 import com.ticketing.ticket.domain.model.TicketStatus;
 import com.ticketing.ticket.domain.repository.EventRepository;

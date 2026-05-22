@@ -56,6 +56,16 @@ public final class Topics {
     // Event lifecycle
     public static final String EVENT_STATUS_CHANGED  = "event.status.changed";
 
+    // Event search index — carries full metadata for the Elasticsearch derived index.
+    //
+    // Published by ticket-service whenever an Event is created, has its metadata
+    // edited, or transitions status. Consumed by search-service which upserts the
+    // ES document (status == OPEN) or deletes it (any other terminal/closed status).
+    //
+    // Keyed by eventId so all updates for one event land on the same partition and
+    // are applied to ES in order — no risk of a stale upsert overtaking a delete.
+    public static final String EVENT_SEARCH_INDEXED  = "event.search.indexed";
+
     // Notification
     public static final String NOTIFICATION_SEND     = "notification.send";
 

@@ -3,7 +3,7 @@ package com.ticketing.ticket.service;
 import com.ticketing.common.events.EventSearchIndexedEvent;
 import com.ticketing.common.events.EventStatusChangedEvent;
 import com.ticketing.ticket.domain.model.Event;
-import com.ticketing.ticket.domain.model.EventStatus;
+import com.ticketing.common.events.EventStatus;
 import com.ticketing.ticket.domain.repository.EventRepository;
 import com.ticketing.ticket.dto.request.CreateEventRequest;
 import com.ticketing.ticket.dto.request.UpdateEventRequest;

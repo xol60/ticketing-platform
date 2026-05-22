@@ -1,6 +1,6 @@
 package com.ticketing.ticket.dto.response;
 
-import com.ticketing.ticket.domain.model.EventStatus;
+import com.ticketing.common.events.EventStatus;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
