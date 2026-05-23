@@ -117,6 +117,14 @@ create_topic "auth.security.alert" 1      # 1 partition — global ordering for 
 # ── Event lifecycle ──────────────────────────────────────────────────────────
 create_topic "event.status.changed"       # keyed by eventId
 
+# ── Event search index sync ──────────────────────────────────────────────────
+# Carries full searchable payload of an Event from ticket-service (Postgres,
+# source of truth) to search-service (Elasticsearch derived index).
+# Keyed by eventId so all updates for one event land on the same partition
+# and are applied to ES in producer-send order — prevents a stale upsert
+# from overtaking a delete and resurrecting a cancelled event in search.
+create_topic "event.search.indexed"       # keyed by eventId
+
 # ---------------------------------------------------------------------------
 # Upgrade existing topics whose partition count was previously 1.
 # ensure_partitions is a no-op when the topic already has >= the target count.
@@ -133,7 +141,7 @@ for topic in \
     pricing.price.changed pricing.failed price.updated \
     payment.cmd payment.succeeded payment.refunded payment.failed \
     reservation.promoted notification.send \
-    event.status.changed; do
+    event.status.changed event.search.indexed; do
   ensure_partitions "$topic" 3
 done
 

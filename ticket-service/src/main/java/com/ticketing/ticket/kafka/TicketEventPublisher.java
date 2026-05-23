@@ -61,6 +61,20 @@ public class TicketEventPublisher {
         send(Topics.EVENT_STATUS_CHANGED, event.getEventId(), event);
     }
 
+    /**
+     * Fire-and-forget broadcast of the full searchable Event payload to the
+     * search-service (Elasticsearch index sync). Keyed by {@code eventId} so all
+     * updates for one event land on the same partition and are applied in order
+     * — prevents a stale upsert from overtaking a delete in the ES index.
+     *
+     * <p>Recovery on loss is intentionally minimal: ES is a derived view, Postgres
+     * is the source of truth. A future admin-triggered reindex job can rebuild the
+     * index from Postgres if events get dropped here.
+     */
+    public void publishEventSearchIndexed(EventSearchIndexedEvent event) {
+        send(Topics.EVENT_SEARCH_INDEXED, event.getEventId(), event);
+    }
+
     private void send(String topic, String key, DomainEvent event) {
         kafkaTemplate.send(topic, key, event)
                 .whenComplete((result, ex) -> {
