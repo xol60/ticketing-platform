@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ticketing.common.events.*;
 import com.ticketing.common.exception.ErrorCode;
+import com.ticketing.ticket.client.PricingClient;
 import com.ticketing.ticket.domain.model.Ticket;
 import com.ticketing.ticket.domain.model.TicketStatus;
 import com.ticketing.ticket.domain.repository.EventRepository;
@@ -11,6 +12,8 @@ import com.ticketing.ticket.domain.repository.TicketRepository;
 import com.ticketing.ticket.dto.request.CreateTicketBatchRequest;
 import com.ticketing.ticket.dto.request.CreateTicketRequest;
 import com.ticketing.ticket.dto.request.UpdateTicketRequest;
+import com.ticketing.ticket.dto.response.AvailableTicketSummary;
+import com.ticketing.ticket.dto.response.AvailableTicketsPage;
 import com.ticketing.ticket.dto.response.EventStatusResponse;
 import com.ticketing.ticket.dto.response.TicketResponse;
 import com.ticketing.ticket.kafka.TicketEventPublisher;
@@ -21,11 +24,14 @@ import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.cache.annotation.Caching;
 import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -66,6 +72,7 @@ public class TicketService {
     private final EventRepository        eventRepository;
     private final ObjectMapper          objectMapper;
     private final TransactionTemplate   txTemplate;
+    private final PricingClient         pricingClient;
 
     // ── CRUD ─────────────────────────────────────────────────────────────────
 
@@ -252,6 +259,80 @@ public class TicketService {
         return ticketRepository.findByEventIdAndStatus(eventId, TicketStatus.AVAILABLE).stream()
                 .map(ticketMapper::toResponse)
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * Public ticket-list endpoint for the event-detail page (the page a user lands
+     * on after clicking a search result). Returns one page of AVAILABLE tickets
+     * with their effective (surge-adjusted) prices already applied.
+     *
+     * <h3>Why this method exists separately from {@link #getAvailableTickets(String)}</h3>
+     *
+     * <p>{@code getAvailableTickets} hydrates the full {@link Ticket} entity (~17 columns)
+     * and returns the heavy {@link TicketResponse} DTO — fine for internal callers, but
+     * wasteful for a public browse endpoint that only needs id/section/row/seat/price.
+     * This method uses a projection (5 columns) and a paged query, so a hot event with
+     * tens of thousands of available seats serves a page in well under 10ms.
+     *
+     * <h3>The pricing N+1 problem and how we avoid it</h3>
+     *
+     * <p>Pricing is dynamic — the surge multiplier can change every 30s. A naive
+     * implementation that called pricing-service once per ticket would, on a single
+     * page render of 50 tickets, fire 50 HTTP calls. Under modest browse load (say
+     * 200 req/s) that explodes to 10k req/s of pricing traffic for what is fundamentally
+     * a "read one number" operation.
+     *
+     * <p>Crucially the surge multiplier is <em>per-event</em>, not per-ticket — every
+     * available ticket for event X at time T sees the same multiplier. So we issue
+     * ONE call to pricing-service per page, multiply locally, and let the Caffeine
+     * {@code event-multiplier} cache (TTL = 30s, matching pricing-service's recalc
+     * cadence) collapse repeated lookups to at most one upstream call per event per
+     * 30 seconds — independent of browse traffic.
+     *
+     * <p>If pricing-service is unreachable {@link PricingClient} returns
+     * {@link java.util.Optional#empty()}; we fall back to {@code multiplier = 1.0}
+     * (face price) rather than failing the browse request. The UI can still render
+     * tickets — they just don't show the surge banner.
+     */
+    @Transactional(readOnly = true)
+    public AvailableTicketsPage listAvailableTicketsByEvent(String eventId, int page, int size) {
+
+        // ── 1. One paginated DB query (interface projection, index-only scan) ──
+        List<TicketRepository.PublicTicketRow> rows = ticketRepository
+                .findPublicByEventIdAndStatus(eventId, TicketStatus.AVAILABLE,
+                        PageRequest.of(page, size));
+
+        // ── 2. One pricing lookup for the whole page (Caffeine-cached, 30s TTL) ──
+        BigDecimal multiplier = pricingClient.getCurrentMultiplier(eventId)
+                .orElse(BigDecimal.ONE);
+
+        // ── 3. One count query for pagination controls ────────────────────────
+        long totalAvailable = ticketRepository.countByEventIdAndStatus(
+                eventId, TicketStatus.AVAILABLE);
+
+        // ── 4. Map rows → DTOs with effective price applied locally ───────────
+        List<AvailableTicketSummary> tickets = rows.stream()
+                .map(r -> AvailableTicketSummary.builder()
+                        .id(r.getId())
+                        .section(r.getSection())
+                        .row(r.getRow())
+                        .seat(r.getSeat())
+                        .facePrice(r.getFacePrice())
+                        .effectivePrice(
+                                r.getFacePrice()
+                                 .multiply(multiplier)
+                                 .setScale(2, RoundingMode.HALF_UP))
+                        .build())
+                .collect(Collectors.toList());
+
+        return AvailableTicketsPage.builder()
+                .eventId(eventId)
+                .surgeMultiplier(multiplier)
+                .totalAvailable((int) Math.min(totalAvailable, Integer.MAX_VALUE))
+                .size(size)
+                .page(page)
+                .tickets(tickets)
+                .build();
     }
 
     @Transactional

@@ -42,6 +42,17 @@ spring:
 server:
   port: 8082
 
+# ── Downstream HTTP clients ───────────────────────────────────────────────────
+# Pricing-service is called from the public "list available tickets" endpoint to
+# fetch the per-event surge multiplier. The result is cached locally for 30s,
+# so the actual HTTP call fires at most once per event per 30 s regardless of
+# browse traffic. See PricingClient + CacheConfig "event-multiplier" region.
+clients:
+  pricing-service:
+    url:               ${PRICING_SERVICE_URL:http://localhost:8086}
+    connect-timeout-ms: 500
+    read-timeout-ms:    1000
+
 # ── Database routing (master/slave) ──────────────────────────────────────────
 db:
   master:
@@ -89,6 +100,10 @@ db:
   slave:
     url: jdbc:postgresql://postgres-slave:5432/ticket_db
 
+clients:
+  pricing-service:
+    url: http://pricing-service:8086
+
 logging:
   level:
     com.ticketing.ticket: INFO
@@ -109,3 +124,7 @@ db:
     url: jdbc:postgresql://localhost:5436/ticket_db
   slave:
     url: jdbc:postgresql://localhost:5436/ticket_db
+
+clients:
+  pricing-service:
+    url: http://localhost:8086

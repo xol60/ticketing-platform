@@ -3,6 +3,7 @@ package com.ticketing.ticket.controller;
 import com.ticketing.common.dto.ApiResponse;
 import com.ticketing.ticket.dto.request.CreateEventRequest;
 import com.ticketing.ticket.dto.request.UpdateEventRequest;
+import com.ticketing.ticket.dto.response.AvailableTicketsPage;
 import com.ticketing.ticket.dto.response.EventStatusResponse;
 import com.ticketing.ticket.service.EventService;
 import com.ticketing.ticket.service.TicketService;
@@ -68,6 +69,31 @@ public class EventController {
     public ApiResponse<List<EventStatusResponse>> listOpen(
             @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
         return ApiResponse.ok(eventService.getOpenEvents(), traceId);
+    }
+
+    /**
+     * Paginated list of AVAILABLE tickets for an event, with effective (surge-adjusted)
+     * prices. Powers the event-detail page reached from a search-result click.
+     *
+     * <p>Defaults: 50 tickets per page, page 0. Pricing is fetched once per page from
+     * pricing-service (Caffeine-cached for 30s) so browse traffic does not multiply
+     * into per-ticket pricing calls.
+     *
+     * @param eventId  the event whose tickets to list
+     * @param page     zero-based page index (default 0)
+     * @param size     page size (default 50, hard-capped at 200 to protect the service)
+     */
+    @GetMapping("/api/tickets/events/{eventId}/tickets")
+    public ApiResponse<AvailableTicketsPage> listAvailableTickets(
+            @PathVariable String eventId,
+            @RequestParam(defaultValue = "0")  int page,
+            @RequestParam(defaultValue = "50") int size,
+            @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
+        int safeSize = Math.min(Math.max(size, 1), 200);
+        int safePage = Math.max(page, 0);
+        return ApiResponse.ok(
+                ticketService.listAvailableTicketsByEvent(eventId, safePage, safeSize),
+                traceId);
     }
 
     // ── Internal endpoints (called by order-service / secondary-market) ────────

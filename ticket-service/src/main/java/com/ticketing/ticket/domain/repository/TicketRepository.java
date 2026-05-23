@@ -2,10 +2,12 @@ package com.ticketing.ticket.domain.repository;
 
 import com.ticketing.ticket.domain.model.Ticket;
 import com.ticketing.ticket.domain.model.TicketStatus;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 public interface TicketRepository extends JpaRepository<Ticket, String> {
@@ -57,4 +59,31 @@ public interface TicketRepository extends JpaRepository<Ticket, String> {
     List<SeatKey> findSeatKeysByEventIdAndSection(
             @Param("eventId") String eventId,
             @Param("section") String section);
+
+    // ── Public ticket-list projection (event detail page) ─────────────────────
+    //
+    // Used by the "list available tickets for an event" public endpoint.
+    // The projection avoids hydrating full Ticket entities for every row on
+    // every page render — the entity has ~17 columns, this projection has 5.
+    //
+    // Hits {@code idx_tickets_event_status (event_id, status)} for an
+    // index-only scan; sub-5ms for thousands of available tickets.
+
+    interface PublicTicketRow {
+        String     getId();
+        String     getSection();
+        String     getRow();
+        String     getSeat();
+        BigDecimal getFacePrice();
+    }
+
+    @Query("SELECT t.id AS id, t.section AS section, t.row AS row, " +
+           "       t.seat AS seat, t.facePrice AS facePrice " +
+           "  FROM Ticket t " +
+           " WHERE t.eventId = :eventId AND t.status = :status " +
+           " ORDER BY t.section, t.row, t.seat")
+    List<PublicTicketRow> findPublicByEventIdAndStatus(
+            @Param("eventId") String eventId,
+            @Param("status")  TicketStatus status,
+            Pageable pageable);
 }
