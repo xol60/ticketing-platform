@@ -49,7 +49,7 @@ server:
 # browse traffic. See PricingClient + CacheConfig "event-multiplier" region.
 clients:
   pricing-service:
-    url:               ${PRICING_SERVICE_URL:http://localhost:8086}
+    url:               ${PRICING_SERVICE_URL:http://localhost:8085}
     connect-timeout-ms: 500
     read-timeout-ms:    1000
 
@@ -102,7 +102,7 @@ db:
 
 clients:
   pricing-service:
-    url: http://pricing-service:8086
+    url: http://pricing-service:8085
 
 logging:
   level:
@@ -127,4 +127,4 @@ db:
 
 clients:
   pricing-service:
-    url: http://localhost:8086
+    url: http://localhost:8085

@@ -14,8 +14,8 @@ Microservice ticketing system — Java 21 + Spring Boot 3.2 + Kafka + Redis + Po
 ## System architecture
 
 Four-tier topology. Browser → nginx (edge) → API gateway (auth + circuit-breaker + rate-limit) →
-nine Spring Boot services that communicate **only via Kafka** (no service-to-service HTTP for
-business workflows) → shared Postgres + Redis storage.
+ten Spring Boot services that communicate **only via Kafka** (no service-to-service HTTP for
+business workflows) → shared Postgres + Redis + Elasticsearch storage.
 
 ```mermaid
 flowchart LR
@@ -26,9 +26,10 @@ flowchart LR
     Services --> PgMaster[(Postgres master)]
     Services -.reads.-> PgSlave[(Postgres slave)]
     Services <--> Redis[(Redis)]
+    S10 --> ES[(Elasticsearch)]
     PgMaster -.replication.-> PgSlave
 
-    subgraph Services[" 9 Spring Boot services "]
+    subgraph Services[" 10 Spring Boot services "]
         S1[Auth]
         S2[Order]
         S3[Ticket]
@@ -38,8 +39,14 @@ flowchart LR
         S7[Reservation]
         S8[SecMarket]
         S9[Notification]
+        S10[Search]
     end
 ```
+
+The **search-service** is intentionally out of the order saga — it consumes
+`event.search.indexed` from Kafka and projects events into a read-only
+Elasticsearch index. Postgres remains the source of truth; if ES or search-service
+is down the rest of the platform keeps working.
 
 > ▶️ **[Animated saga flows](https://htmlpreview.github.io/?https://github.com/xol60/ticketing-platform/blob/main/docs/animated-flows.html)** — interactive play/pause/step demo of all three scenarios.
 > 📄 **[Static reference](https://htmlpreview.github.io/?https://github.com/xol60/ticketing-platform/blob/main/docs/diagrams.html)** — scroll-through version for readers who prefer text + step lists.
@@ -67,6 +74,7 @@ ticketing-platform/
 ├── payment-service/         # External payment + DLQ + admin alert
 ├── secondary-market-service/# Ticket resale
 ├── notification-service/    # Email / push
+├── search-service/          # Elasticsearch read-only event search (multi-field + autocomplete + fuzzy)
 ├── tests/                   # Stress test — see tests/README.md
 ├── docs/                    # Animated saga flows + static reference
 └── docker/
@@ -167,9 +175,11 @@ docker-compose up --build --no-deps ticket-service
 | Payment Service      | 8087                           |
 | Secondary Market     | 8088                           |
 | Notification Service | 8089                           |
+| Search Service       | 8091                           |
 | Postgres Master      | 5432 (internal) / 5436 (host)  |
 | Redis                | 6379                           |
 | Kafka                | 9092 (internal) / 29092 (host) |
+| Elasticsearch        | 9200 (internal)                |
 
 ## Kafka topics
 
@@ -222,6 +232,7 @@ application-level locking.
 | Payment     | `payment.dlq`           | payment                 | notification       | `PaymentFailedEvent` (after retries exhausted) | **1** | orderId  |
 | Reservation | `reservation.promoted`  | reservation             | order              | `ReservationPromotedEvent`                     | 3     | ticketId |
 | Event mgmt  | `event.status.changed`  | ticket                  | (subscribers)      | `EventStatusChangedEvent`                      | 3     | eventId  |
+| Event mgmt  | `event.search.indexed`  | ticket                  | search             | `EventSearchIndexedEvent`                      | 3     | eventId  |
 | Notif       | `notification.send`     | any service             | notification       | `NotificationSendCommand`                      | 3     | orderId  |
 | Security    | `auth.security.alert`   | auth                    | notification       | `AuthSecurityAlertEvent`                       | **1** | userId   |
 
@@ -338,6 +349,59 @@ Layer 2 — @Version optimistic (safety net)
 `handleReserveCommand`, `handleConfirmCommand`, and `releaseTicket` all use this pattern:
 `findById` (no lock) → mutate → `saveAndFlush` → catch `OptimisticLockingFailureException`
 → publish the appropriate compensation event.
+
+## Search subsystem
+
+A dedicated `search-service` exposes two public REST endpoints backed by an
+Elasticsearch derived index. It is deliberately **outside** the order saga —
+Postgres remains the source of truth, ES is only a derived view of `OPEN`
+events, and a search-service outage degrades discovery without affecting
+ticket sales.
+
+### Indexing pipeline
+
+```
+ticket-service              Kafka                 search-service        Elasticsearch
+─────────────────           ─────────────────     ──────────────────    ──────────────
+EventService                event.search.indexed  EventIndexConsumer    events index
+  ├─ createEvent      ──▶   (3 partitions,        ├─ OPEN  → save()  ──▶ PUT _doc/{id}
+  ├─ updateEvent      ──▶    keyed by eventId)    └─ else  → delete()──▶ DELETE _doc/{id}
+  └─ changeStatus     ──▶
+```
+
+Manual-ack consumer + idempotent `save()` / `deleteById()` make Kafka redelivery
+safe. Keying by `eventId` keeps per-event updates serialized within a partition —
+no risk of a stale upsert overtaking a later delete.
+
+### Three features that justify ES
+
+| Feature                    | Mechanism                                                                                   |
+| -------------------------- | ------------------------------------------------------------------------------------------- |
+| Multi-field full-text + boost | `multi_match` over six fields: `name^3.0`, `primaryArtist^2.5`, `venueName^1.5`, `venueCity^1.0`, `shortDescription^0.8`, `fullDescription^0.4` |
+| Fuzzy matching             | `fuzziness=AUTO` — 1 edit for 3-5 chars, 2 edits for 6+ chars (e.g. `coldlpay` → Coldplay)  |
+| Autocomplete-as-you-type   | `name.edge` sub-field with custom `edge_ngram_analyzer` (min_gram=2, max_gram=20)           |
+
+### Endpoints
+
+```
+GET /api/search/events?q={query}&category=CONCERT&genre=POP&from=0&size=20
+   → EventSearchPage { query, totalHits, from, size, hits[] }
+
+GET /api/search/events/suggest?q={prefix}&size=5
+   → List<AutocompleteSuggestion> { eventId, text, primaryArtist }
+```
+
+Both endpoints are public (no auth) and capped server-side (`size` ≤ 100 for
+search, ≤ 10 for suggest). The hard filter `status = OPEN` is applied at the
+query layer as defense-in-depth — the indexer also removes non-OPEN events.
+
+### Explicitly out of scope
+
+- Geo "near me" / radius queries (needs lat/lng and map provider)
+- Multilingual / Vietnamese tokenisation (needs ICU analyzer + synonyms)
+- Popularity / click-through-rate ranking (needs separate event-tracking)
+- Aggregations / faceted counts (basic filter params only)
+- Bulk reindex job (deferred — Postgres can rebuild via republish if needed)
 
 ## Architecture decisions
 

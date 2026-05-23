@@ -68,7 +68,14 @@ public class PricingClient {
      *         the rule could not be fetched. Callers should default to
      *         {@link BigDecimal#ONE} (face price) on empty.
      */
-    @Cacheable(value = "event-multiplier", key = "#eventId", unless = "#result.isEmpty()")
+    // Null-safe `unless` — Spring's Cache abstraction passes `null` as #result when the
+    // method propagates an exception. We catch internally and return Optional.empty(),
+    // but the safe-navigation operator (`?.`) keeps the expression robust against any
+    // future code path that returns null directly. Empty Optionals are deliberately
+    // NOT cached so a transient pricing-service outage doesn't get latched in L1
+    // for the full 30s TTL.
+    @Cacheable(value = "event-multiplier", key = "#eventId",
+               unless = "#result == null || #result?.isEmpty()")
     public Optional<BigDecimal> getCurrentMultiplier(String eventId) {
         try {
             PriceRuleSummary summary = restClient.get()

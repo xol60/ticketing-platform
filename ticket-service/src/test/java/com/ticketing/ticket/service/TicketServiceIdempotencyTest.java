@@ -9,6 +9,7 @@ import com.ticketing.ticket.domain.model.Event;
 import com.ticketing.common.events.EventStatus;
 import com.ticketing.ticket.domain.model.Ticket;
 import com.ticketing.ticket.domain.model.TicketStatus;
+import com.ticketing.ticket.client.PricingClient;
 import com.ticketing.ticket.domain.repository.EventRepository;
 import com.ticketing.ticket.domain.repository.TicketRepository;
 import com.ticketing.ticket.kafka.TicketEventPublisher;
@@ -65,6 +66,9 @@ class TicketServiceIdempotencyTest {
     @Mock EventRepository       eventRepository;
     @Mock ObjectMapper          objectMapper;
     @Mock TransactionTemplate   txTemplate;
+    @Mock PricingClient         pricingClient;   // Not exercised by reserve-idempotency tests, but
+                                                  // required by the constructor since Phase 3b
+                                                  // wired the public ticket-list endpoint to it.
 
     private TicketService ticketService;
 
@@ -81,7 +85,8 @@ class TicketServiceIdempotencyTest {
     void setUp() {
         ticketService = new TicketService(
                 ticketRepository, ticketMapper, eventPublisher,
-                redisTemplate, eventRepository, objectMapper, txTemplate);
+                redisTemplate, eventRepository, objectMapper, txTemplate,
+                pricingClient);
 
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
         // Redis SETNX always succeeds in these tests — we're testing the DB-level idempotency

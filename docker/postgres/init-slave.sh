@@ -41,11 +41,11 @@ fi
 echo "Replica: starting PostgreSQL..."
 # Append to postgresql.auto.conf (highest-priority, overrides postgresql.conf):
 #   - listen_addresses: initdb default is 'localhost'; app services reach slave over Docker network
-#   - max_connections: must be >= master's value (200) or hot-standby recovery aborts
+#   - max_connections: must be >= master's value (400) or hot-standby recovery aborts
 #   - wal_level/hot_standby: ensure replica accepts read connections
 cat >> "$PGDATA/postgresql.auto.conf" << 'EOF'
 listen_addresses = '*'
-max_connections = 200
+max_connections = 400
 hot_standby = on
 EOF
 
