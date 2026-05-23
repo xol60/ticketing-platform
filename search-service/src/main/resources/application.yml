@@ -1,0 +1,68 @@
+spring:
+  application:
+    name: search-service
+
+  # ── Kafka ────────────────────────────────────────────────────────────────────
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+
+  # Disable JPA / SQL autoconfig — search-service has no relational DB
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+
+# ── Elasticsearch ──────────────────────────────────────────────────────────────
+# Single URL for now (single-node dev cluster). When we move to a multi-node
+# cluster the ElasticsearchConfig can switch to multiple comma-separated hosts.
+elasticsearch:
+  url: ${ELASTICSEARCH_URL:http://localhost:9200}
+
+server:
+  port: 8091
+
+# ── Actuator ──────────────────────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+logging:
+  level:
+    com.ticketing.search: DEBUG
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} traceId=%X{traceId} - %msg%n"
+
+---
+spring:
+  config:
+    activate:
+      on-profile: docker
+  kafka:
+    bootstrap-servers: kafka:9092
+
+elasticsearch:
+  url: http://elasticsearch:9200
+
+logging:
+  level:
+    com.ticketing.search: INFO
+
+---
+spring:
+  config:
+    activate:
+      on-profile: local
+  kafka:
+    bootstrap-servers: localhost:29092
+
+elasticsearch:
+  url: http://localhost:9200

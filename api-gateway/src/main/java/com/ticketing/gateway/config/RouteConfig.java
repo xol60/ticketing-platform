@@ -152,6 +152,23 @@ public class RouteConfig {
                                 .addRequestHeader("X-Gateway-Source", "api-gateway"))
                         .uri("http://notification-service:8089"))
 
+                // ── Search service (read-only Elasticsearch derived index) ────────
+                // Public endpoints — no auth required. Retries enabled because the
+                // user-facing search box should degrade gracefully through a brief
+                // ES hiccup, and the queries are pure reads (idempotent).
+                .route("search-service", r -> r
+                        .path("/api/search/**")
+                        .filters(f -> f
+                                .addRequestHeader("X-Gateway-Source", "api-gateway")
+                                .retry(config -> config
+                                        .setRetries(2)
+                                        .setStatuses(
+                                            org.springframework.http.HttpStatus.BAD_GATEWAY,
+                                            org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE
+                                        ))
+                        )
+                        .uri("http://search-service:8091"))
+
                 .build();
     }
 }

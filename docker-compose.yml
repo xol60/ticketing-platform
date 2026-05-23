@@ -9,6 +9,7 @@ volumes:
   postgres-slave-data:
   redis-data:
   kafka-data:
+  elasticsearch-data:
 
 services:
 
@@ -119,6 +120,29 @@ services:
     entrypoint: ["/bin/bash", "/create-topics.sh"]
     networks:
       - ticketing-net
+
+  # Elasticsearch — single-node dev cluster backing search-service.
+  # Security disabled for local development; HTTP on 9200 only.
+  # Tuned heap (512m) and disk-watermark relaxed so search-service can write
+  # to it on smaller laptops without ES going read-only.
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    container_name: elasticsearch
+    environment:
+      discovery.type:                                       single-node
+      xpack.security.enabled:                               "false"
+      ES_JAVA_OPTS:                                         "-Xms512m -Xmx512m"
+      cluster.routing.allocation.disk.threshold_enabled:    "false"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    # ports: not exposed in base — search-service reaches it via internal DNS
+    networks:
+      - ticketing-net
+    healthcheck:
+      test:     ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 15s
+      timeout:  10s
+      retries:  10
 
   # ─────────────────────────────────────────────
   # NGINX
@@ -402,3 +426,29 @@ services:
         condition: service_healthy
     networks:
       - ticketing-net
+
+  # search-service — read-only Elasticsearch-backed event search.
+  # No relational DB; consumes event.search.indexed from Kafka and projects
+  # into ES. Decoupled from the order saga: if ES or this service is down,
+  # the rest of the platform keeps working.
+  search-service:
+    build:
+      context: .
+      dockerfile: search-service/Dockerfile
+    container_name: search-service
+    environment:
+      SPRING_PROFILES_ACTIVE:   docker
+      ELASTICSEARCH_URL:        http://elasticsearch:9200
+      KAFKA_BOOTSTRAP_SERVERS:  kafka:9092
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    networks:
+      - ticketing-net
+    healthcheck:
+      test:     ["CMD-SHELL", "wget -qO- http://localhost:8091/actuator/health || exit 1"]
+      interval: 15s
+      timeout:  5s
+      retries:  5

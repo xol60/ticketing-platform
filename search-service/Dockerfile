@@ -17,19 +17,19 @@ COPY notification-service/pom.xml notification-service/pom.xml
 COPY search-service/pom.xml search-service/pom.xml
 
 # Download dependencies (layer-cached separately from source)
-RUN mvn dependency:go-offline -pl common-lib,pricing-service -am -q 2>/dev/null || true
+RUN mvn dependency:go-offline -pl common-lib,search-service -am -q 2>/dev/null || true
 
 # Copy only the source we need to compile
 COPY common-lib/src common-lib/src
-COPY pricing-service/src pricing-service/src
+COPY search-service/src search-service/src
 
-RUN mvn package -pl common-lib,pricing-service -am -DskipTests -q
+RUN mvn package -pl common-lib,search-service -am -DskipTests -q
 
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 USER appuser
-COPY --from=builder /build/pricing-service/target/*.jar app.jar
+COPY --from=builder /build/search-service/target/*.jar app.jar
 ENV JAVA_OPTS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:+UseG1GC -XX:+UseStringDeduplication -Djava.security.egd=file:/dev/./urandom"
-EXPOSE 8085
+EXPOSE 8091
 ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]

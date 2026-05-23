@@ -44,7 +44,8 @@ public class CircuitBreakerManager {
             "reservation-service",
             "payment-service",
             "notification-service",
-            "secondary-market-service"
+            "secondary-market-service",
+            "search-service"
     };
 
     @PostConstruct
@@ -148,6 +149,7 @@ public class CircuitBreakerManager {
         if (path.startsWith("/api/reservations"))  return "reservation-service";
         if (path.startsWith("/api/payments"))      return "payment-service";
         if (path.startsWith("/api/secondary"))     return "secondary-market-service";
+        if (path.startsWith("/api/search"))        return "search-service";
 
         // ── Admin routes — map to the owning service ─────────────────────────
         if (path.startsWith("/api/admin/users"))         return "auth-service";

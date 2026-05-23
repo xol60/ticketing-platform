@@ -59,6 +59,8 @@ gateway:
     - /api/auth/login
     - /api/auth/register
     - /api/auth/refresh
+    - /api/search/events
+    - /api/search/events/suggest
     - /actuator/health
     - /actuator/circuit-breakers
     - /health
