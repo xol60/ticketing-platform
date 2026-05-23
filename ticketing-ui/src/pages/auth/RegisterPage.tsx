@@ -3,13 +3,14 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
-import type { Role } from '../../types';
-
 export function RegisterPage() {
   const { register } = useAuth();
   const navigate = useNavigate();
 
-  const [form, setForm] = useState({ email: '', username: '', password: '', confirm: '', role: 'USER' as Role });
+  // Role is not part of the signup form — backend ignores any client-supplied
+  // role and always issues USER. Promotion to ADMIN / EVENT_OWNER happens via
+  // admin endpoints, not during registration.
+  const [form, setForm] = useState({ email: '', username: '', password: '', confirm: '' });
   const [errors, setErrors] = useState<Partial<typeof form>>({});
   const [apiError, setApiError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -30,7 +31,7 @@ export function RegisterPage() {
     setApiError('');
     setLoading(true);
     try {
-      await register(form.email, form.username, form.password, form.role);
+      await register(form.email, form.username, form.password);
       navigate('/', { replace: true });
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
@@ -75,25 +76,6 @@ export function RegisterPage() {
             value={form.confirm} error={errors.confirm}
             onChange={(e) => setForm({ ...form, confirm: e.target.value })}
             placeholder="Repeat password" />
-
-          {/* Role selector */}
-          <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium text-gray-700">I want to…</label>
-            <div className="grid grid-cols-2 gap-2">
-              {([['USER', '🎫 Buy tickets'], ['EVENT_OWNER', '🎭 Create events']] as [Role, string][]).map(([val, label]) => (
-                <button
-                  key={val} type="button"
-                  onClick={() => setForm({ ...form, role: val })}
-                  className={`px-3 py-2.5 rounded-lg border text-sm font-medium transition-colors
-                    ${form.role === val
-                      ? 'border-blue-600 bg-blue-50 text-blue-700'
-                      : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
 
           <Button type="submit" loading={loading} size="lg" className="mt-2 w-full">
             Create account

@@ -12,25 +12,112 @@ export interface User {
   createdAt: string;
 }
 
+/**
+ * Backend returns a flat envelope, not a nested `user`. Login flow:
+ *   1. POST /api/auth/login → store tokens
+ *   2. GET  /api/auth/me    → hydrate the full {@link User} (we use this rather
+ *                              than the flat fields below so role / email /
+ *                              verified state always come from one canonical
+ *                              source).
+ */
 export interface AuthResponse {
   accessToken: string;
   refreshToken: string;
   tokenType: string;
-  expiresIn: number;
-  user: User;
+  accessTokenExpiresIn: number;
+  userId: string;
+  username: string;
+  role: Role;
 }
 
 // ─── Events & Tickets ────────────────────────────────────────────────────────
 export type EventStatus = 'DRAFT' | 'OPEN' | 'CLOSED' | 'CANCELLED';
 
 export interface Event {
+  // ── Identity / lifecycle ───────────────────────────────────────────────────
   id: string;
+  /** Server-side field name (some endpoints return `eventId` instead) */
+  eventId?: string;
   name: string;
   status: EventStatus;
   salesOpenAt: string;
   salesCloseAt: string;
   eventDate: string;
-  createdAt: string;
+  createdAt?: string;
+
+  // ── Searchable metadata (added with the search-service / ES integration) ──
+  // Every field is optional — backend allows partial events and migration V6
+  // backfilled existing rows with NULLs.
+  primaryArtist?: string;
+  venueName?: string;
+  venueCity?: string;
+  shortDescription?: string;
+  fullDescription?: string;
+  /** CONCERT | SPORTS | THEATER | CONFERENCE | ... */
+  category?: string;
+  /** Free-form sub-genre — POP, ROCK, EDM, JAZZ, BASKETBALL, MUSICAL, ... */
+  genre?: string;
+}
+
+// ─── Search subsystem (Elasticsearch read-only derived index) ────────────────
+
+/** One row in {@link EventSearchPage.hits} — light projection of EventDocument. */
+export interface EventSearchHit {
+  id: string;
+  name: string;
+  primaryArtist?: string;
+  venueName?: string;
+  venueCity?: string;
+  category?: string;
+  genre?: string;
+  eventDate?: string;
+  /** Raw BM25 score from Elasticsearch — useful for debugging boost tuning. */
+  score: number;
+}
+
+/** Paged envelope returned by {@code GET /api/search/events}. */
+export interface EventSearchPage {
+  query: string;
+  totalHits: number;
+  from: number;
+  size: number;
+  hits: EventSearchHit[];
+}
+
+/** One row in the autocomplete dropdown. */
+export interface AutocompleteSuggestion {
+  eventId: string;
+  text: string;
+  primaryArtist?: string;
+}
+
+// ─── Phase 3b — paged ticket-list with batched pricing ───────────────────────
+
+/** One row in {@link AvailableTicketsPage.tickets} — light projection. */
+export interface AvailableTicketSummary {
+  id: string;
+  section?: string;
+  row?: string;
+  seat: string;
+  facePrice: number;
+  /** facePrice × surgeMultiplier (already rounded server-side). */
+  effectivePrice: number;
+}
+
+/**
+ * Page envelope returned by
+ * {@code GET /api/tickets/events/{eventId}/tickets?page=X&size=Y}.
+ *
+ * Collapses the per-ticket pricing N+1 by issuing a single pricing-service
+ * lookup per page (Caffeine-cached 30s on the server).
+ */
+export interface AvailableTicketsPage {
+  eventId: string;
+  surgeMultiplier: number;
+  totalAvailable: number;
+  size: number;
+  page: number;
+  tickets: AvailableTicketSummary[];
 }
 
 export type TicketStatus = 'AVAILABLE' | 'RESERVED' | 'CONFIRMED';

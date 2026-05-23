@@ -10,7 +10,10 @@ export function LoginPage() {
   const location = useLocation();
   const from = (location.state as { from?: string })?.from ?? '/';
 
-  const [form, setForm] = useState({ email: '', password: '' });
+  // Single identifier field — backend accepts either a username or an email.
+  // Using {@code type="text"} (not "email") so the browser doesn't reject
+  // values without "@". The seed user "demouser" has no email-shaped username.
+  const [form, setForm] = useState({ identifier: '', password: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -19,11 +22,11 @@ export function LoginPage() {
     setError('');
     setLoading(true);
     try {
-      await login(form.email, form.password);
+      await login(form.identifier.trim(), form.password);
       navigate(from, { replace: true });
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
-      setError(msg ?? 'Invalid email or password');
+      setError(msg ?? 'Invalid username/email or password');
     } finally {
       setLoading(false);
     }
@@ -45,13 +48,19 @@ export function LoginPage() {
             </div>
           )}
           <Input
-            id="email" label="Email" type="email" required autoFocus
-            value={form.email}
-            onChange={(e) => setForm({ ...form, email: e.target.value })}
-            placeholder="you@example.com"
+            id="identifier"
+            label="Username or email"
+            type="text"
+            autoComplete="username"
+            required autoFocus
+            value={form.identifier}
+            onChange={(e) => setForm({ ...form, identifier: e.target.value })}
+            placeholder="demouser  ·or·  you@example.com"
           />
           <Input
-            id="password" label="Password" type="password" required
+            id="password" label="Password" type="password"
+            autoComplete="current-password"
+            required
             value={form.password}
             onChange={(e) => setForm({ ...form, password: e.target.value })}
             placeholder="••••••••"

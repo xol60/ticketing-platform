@@ -14,11 +14,32 @@ public class GatewayProperties {
     private RateLimit rateLimit = new RateLimit();
     private CircuitBreaker circuitBreaker = new CircuitBreaker();
     private Cache cache = new Cache();
+    /**
+     * Paths that bypass auth for ALL HTTP methods (auth flow, health probes).
+     * Match is {@code path.startsWith(prefix)}.
+     */
     private List<String> publicPaths = List.of(
             "/api/auth/login",
             "/api/auth/register",
             "/api/auth/refresh",
             "/actuator/health"
+    );
+
+    /**
+     * Paths that bypass auth for GET requests only — public read-only browse
+     * endpoints. Catalogue-style data (events, tickets, search results,
+     * secondary-market listings, public price rules) is safe to expose without
+     * a token; the corresponding POST/PATCH/DELETE on the same prefix still
+     * requires auth (and possibly ADMIN role).
+     *
+     * <p>Match is {@code path.startsWith(prefix)} AND {@code method == GET}.
+     */
+    private List<String> publicGetPaths = List.of(
+            "/api/tickets/events",      // GET list + GET /{id}/tickets (Phase 3b)
+            "/api/tickets",             // GET ticket-by-id and event-scoped listings
+            "/api/search/",             // multi-field search + autocomplete
+            "/api/secondary/listings",  // browse the resale market
+            "/api/pricing/rules"        // current surge rule for an event (read-only)
     );
 
     @Data

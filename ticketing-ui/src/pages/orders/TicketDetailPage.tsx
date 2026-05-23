@@ -11,6 +11,7 @@ import { Button } from '../../components/ui/Button';
 import { Badge, TicketStatusBadge } from '../../components/ui/Badge';
 import { PageSpinner } from '../../components/ui/Spinner';
 import { Modal } from '../../components/ui/Modal';
+import { money } from '../../lib/format';
 import type { Order } from '../../types';
 
 export function TicketDetailPage() {
@@ -108,10 +109,10 @@ export function TicketDetailPage() {
               ) : (
                 <div className="flex items-baseline gap-2">
                   <p className={`text-3xl font-bold ${hasSurge ? 'text-orange-500' : 'text-gray-900'}`}>
-                    ${currentPrice.toFixed(2)}
+                    {money(currentPrice)}
                   </p>
                   {hasSurge && (
-                    <p className="text-sm text-gray-400 line-through">${ticket.facePrice.toFixed(2)}</p>
+                    <p className="text-sm text-gray-400 line-through">{money(ticket.facePrice)}</p>
                   )}
                 </div>
               )}
@@ -124,7 +125,7 @@ export function TicketDetailPage() {
             </div>
             <div className="text-right text-sm text-gray-400">
               <p>Face value</p>
-              <p className="font-medium text-gray-600">${ticket.facePrice.toFixed(2)}</p>
+              <p className="font-medium text-gray-600">{money(ticket.facePrice)}</p>
             </div>
           </div>
 
@@ -134,7 +135,7 @@ export function TicketDetailPage() {
           {isAvailable ? (
             isAuthenticated ? (
               <Button size="lg" className="w-full" onClick={() => setConfirmBuy(true)}>
-                🎫 Buy this ticket — ${currentPrice.toFixed(2)}
+                🎫 Buy this ticket — {money(currentPrice)}
               </Button>
             ) : (
               <Link to="/login" state={{ from: `/tickets/${ticketId}` }}>
@@ -176,7 +177,7 @@ export function TicketDetailPage() {
           <>
             <Button variant="secondary" onClick={() => setConfirmBuy(false)}>Cancel</Button>
             <Button loading={buyMutation.isPending} onClick={() => buyMutation.mutate()}>
-              Confirm — ${currentPrice.toFixed(2)}
+              Confirm — {money(currentPrice)}
             </Button>
           </>
         }
@@ -186,7 +187,7 @@ export function TicketDetailPage() {
           <div className="bg-gray-50 rounded-xl px-4 py-3 flex flex-col gap-1">
             <p className="font-semibold text-gray-900">{ticket.eventName}</p>
             <p>{ticket.section ? `Section ${ticket.section} · ` : ''}Row {ticket.row ?? '—'} · Seat {ticket.seat}</p>
-            <p className="text-blue-600 font-bold text-base mt-1">${currentPrice.toFixed(2)}</p>
+            <p className="text-blue-600 font-bold text-base mt-1">{money(currentPrice)}</p>
           </div>
           {hasSurge && (
             <p className="text-yellow-700 bg-yellow-50 rounded-lg px-3 py-2 text-xs">

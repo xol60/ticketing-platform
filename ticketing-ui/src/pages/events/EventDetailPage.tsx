@@ -1,49 +1,57 @@
+import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { ticketsApi } from '../../api/tickets';
-import { pricingApi } from '../../api/pricing';
-import { EventStatusBadge, TicketStatusBadge } from '../../components/ui/Badge';
+import { EventStatusBadge } from '../../components/ui/Badge';
 import { PageSpinner } from '../../components/ui/Spinner';
 import { Button } from '../../components/ui/Button';
 import { useAuth } from '../../context/AuthContext';
-import type { Ticket } from '../../types';
+import { money, multiplier } from '../../lib/format';
+import type { AvailableTicketSummary } from '../../types';
 
-function TicketRow({ ticket, eventOpen }: { ticket: Ticket; eventOpen: boolean }) {
+const PAGE_SIZE = 50;
+
+/**
+ * Single row in the available-tickets table.
+ *
+ * <p>Reads from the Phase 3b page projection — the server has already applied
+ * the per-event surge multiplier to {@code effectivePrice}, so the UI does
+ * not need to make N pricing calls (one per ticket). The "(surge X.Xx)"
+ * indicator on the header takes care of explaining what the orange price
+ * means.
+ */
+function AvailableTicketRow({
+  ticket,
+  surgeMultiplier,
+  eventOpen,
+}: {
+  ticket: AvailableTicketSummary;
+  surgeMultiplier: number;
+  eventOpen: boolean;
+}) {
   const { isAuthenticated } = useAuth();
-
-  const { data: priceData } = useQuery({
-    queryKey: ['ticket-price', ticket.id],
-    queryFn: () => pricingApi.getTicketPrice(ticket.id),
-    refetchInterval: 15_000,
-    enabled: ticket.status === 'AVAILABLE',
-  });
-
-  const displayPrice = priceData?.price ?? ticket.facePrice;
-  const hasSurge = priceData?.price != null && priceData.price > ticket.facePrice;
+  const hasSurge = surgeMultiplier > 1.0;
 
   return (
-    <div className={`flex items-center justify-between px-4 py-3 rounded-xl border transition-colors
-      ${ticket.status === 'AVAILABLE' ? 'border-gray-100 hover:border-blue-100 bg-white hover:bg-blue-50/20' : 'border-gray-100 bg-gray-50'}`}
-    >
-      <div className="flex items-center gap-4">
-        <div className="text-sm">
-          <p className="font-medium text-gray-900">
-            {ticket.section ? `${ticket.section} · ` : ''}Row {ticket.row ?? '—'} · Seat {ticket.seat}
-          </p>
-          <p className="text-gray-400 text-xs mt-0.5">ID: {ticket.id.slice(0, 8)}…</p>
-        </div>
+    <div className="flex items-center justify-between px-4 py-3 rounded-xl border border-gray-100 bg-white hover:border-blue-100 hover:bg-blue-50/20 transition-colors">
+      <div className="text-sm">
+        <p className="font-medium text-gray-900">
+          {ticket.section ? `${ticket.section} · ` : ''}Row {ticket.row ?? '—'} · Seat {ticket.seat}
+        </p>
+        <p className="text-gray-400 text-xs mt-0.5">ID: {ticket.id.slice(0, 8)}…</p>
       </div>
       <div className="flex items-center gap-4">
         <div className="text-right">
           <p className={`font-bold text-base ${hasSurge ? 'text-orange-600' : 'text-gray-900'}`}>
-            ${displayPrice.toFixed(2)}
+            {money(ticket.effectivePrice)}
           </p>
           {hasSurge && (
-            <p className="text-xs text-gray-400 line-through">${ticket.facePrice.toFixed(2)}</p>
+            <p className="text-xs text-gray-400 line-through">
+              {money(ticket.facePrice)}
+            </p>
           )}
         </div>
-        <TicketStatusBadge status={ticket.status} />
-        {ticket.status === 'AVAILABLE' && eventOpen && (
+        {eventOpen && (
           isAuthenticated
             ? <Link to={`/tickets/${ticket.id}`}>
                 <Button size="sm">Buy</Button>
@@ -57,24 +65,76 @@ function TicketRow({ ticket, eventOpen }: { ticket: Ticket; eventOpen: boolean }
   );
 }
 
+/** Pill-style row of event metadata under the title. */
+function EventMetadata({
+  primaryArtist,
+  venueName,
+  venueCity,
+  category,
+  genre,
+}: {
+  primaryArtist?: string;
+  venueName?: string;
+  venueCity?: string;
+  category?: string;
+  genre?: string;
+}) {
+  const meta: string[] = [];
+  if (primaryArtist) meta.push(primaryArtist);
+  if (venueName)     meta.push(venueName);
+  if (venueCity)     meta.push(venueCity);
+
+  return (
+    <>
+      {meta.length > 0 && (
+        <p className="text-sm text-gray-600 mt-1">{meta.join(' · ')}</p>
+      )}
+      {(category || genre) && (
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          {category && (
+            <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-indigo-50 text-indigo-700">
+              {category}
+            </span>
+          )}
+          {genre && (
+            <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-purple-50 text-purple-700">
+              {genre}
+            </span>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
 export function EventDetailPage() {
   const { eventId } = useParams<{ eventId: string }>();
+  const [page, setPage] = useState(0);
 
+  // Event metadata — still served by the existing list endpoint. (We could
+  // switch this to a single /api/tickets/events/{id} call once that endpoint
+  // exists publicly; for now it's a list lookup.)
   const { data: events = [], isLoading: eventsLoading } = useQuery({
     queryKey: ['events'],
-    queryFn: ticketsApi.listEvents,
+    queryFn:  ticketsApi.listEvents,
   });
 
-  const { data: tickets = [], isLoading: ticketsLoading } = useQuery({
-    queryKey: ['tickets', eventId],
-    queryFn:  () => ticketsApi.listByEvent(eventId!),
+  // Available tickets — Phase 3b paged endpoint.
+  // One pricing-service call PER PAGE (Caffeine-cached server-side for 30s),
+  // not per ticket. This is the surge multiplier visible at "(surge 1.5x)".
+  const { data: ticketsPage, isLoading: ticketsLoading } = useQuery({
+    queryKey: ['available-tickets', eventId, page],
+    queryFn:  () => ticketsApi.listAvailableForEvent(eventId!, { page, size: PAGE_SIZE }),
     enabled:  !!eventId,
+    placeholderData: keepPreviousData,
+    // Refetch every 15s so newly released tickets show up and surge changes
+    // propagate. The cache absorbs the actual upstream pricing call.
+    refetchInterval: 15_000,
   });
 
   const event = events.find((e) => e.id === eventId);
-  const available = tickets.filter((t) => t.status === 'AVAILABLE');
+  const isLoading = eventsLoading || (ticketsLoading && !ticketsPage);
 
-  const isLoading = eventsLoading || ticketsLoading;
   if (isLoading) return <PageSpinner />;
   if (!event) return (
     <div className="text-center py-20 text-gray-400">
@@ -85,6 +145,10 @@ export function EventDetailPage() {
   );
 
   const eventOpen = event.status === 'OPEN';
+  const surge = ticketsPage?.surgeMultiplier ?? 1.0;
+  const totalAvailable = ticketsPage?.totalAvailable ?? 0;
+  const totalPages = ticketsPage ? Math.ceil(totalAvailable / PAGE_SIZE) : 0;
+  const tickets = ticketsPage?.tickets ?? [];
 
   return (
     <div className="flex flex-col gap-6">
@@ -102,7 +166,20 @@ export function EventDetailPage() {
             <h1 className="text-2xl font-bold text-gray-900">{event.name}</h1>
             <EventStatusBadge status={event.status} />
           </div>
-          <div className="flex flex-wrap gap-4 text-sm text-gray-500 mt-1">
+
+          <EventMetadata
+            primaryArtist={event.primaryArtist}
+            venueName={event.venueName}
+            venueCity={event.venueCity}
+            category={event.category}
+            genre={event.genre}
+          />
+
+          {event.shortDescription && (
+            <p className="text-sm text-gray-600 mt-2 max-w-prose">{event.shortDescription}</p>
+          )}
+
+          <div className="flex flex-wrap gap-4 text-sm text-gray-500 mt-2">
             <span className="flex items-center gap-1">
               📅 {new Date(event.eventDate).toLocaleDateString('en-US', { dateStyle: 'long' })}
             </span>
@@ -114,41 +191,69 @@ export function EventDetailPage() {
             Sales: {new Date(event.salesOpenAt).toLocaleDateString()} – {new Date(event.salesCloseAt).toLocaleDateString()}
           </p>
         </div>
-        <div className="text-right shrink-0">
-          <p className="text-2xl font-bold text-blue-600">{available.length}</p>
-          <p className="text-sm text-gray-400">tickets available</p>
+
+        <div className="text-right shrink-0 flex flex-col items-end gap-2">
+          <div>
+            <p className="text-2xl font-bold text-blue-600">{totalAvailable}</p>
+            <p className="text-sm text-gray-400">available</p>
+          </div>
+          {surge > 1.0 && (
+            <span
+              className="px-3 py-1 rounded-full text-xs font-semibold bg-orange-50 text-orange-700"
+              title="Effective prices reflect this surge multiplier"
+            >
+              ⚡ Surge {multiplier(surge)}
+            </span>
+          )}
         </div>
       </div>
 
       {/* Tickets */}
       <div className="flex flex-col gap-3">
-        <h2 className="text-lg font-semibold text-gray-800">
-          Tickets
-          <span className="ml-2 text-sm font-normal text-gray-400">({tickets.length} total)</span>
+        <h2 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+          Available tickets
+          <span className="text-sm font-normal text-gray-400">
+            (showing {tickets.length} of {totalAvailable})
+          </span>
         </h2>
 
-        {tickets.length === 0 ? (
+        {totalAvailable === 0 ? (
           <div className="text-center py-16 text-gray-400 bg-white rounded-2xl border border-gray-100">
             <p className="text-4xl mb-3">🎫</p>
-            <p>No tickets available for this event yet.</p>
+            <p>No tickets currently available for this event.</p>
           </div>
         ) : (
           <div className="flex flex-col gap-2">
-            {/* Available first */}
-            {available.length > 0 && (
-              <>
-                <p className="text-xs font-medium text-gray-400 uppercase tracking-wider px-1">Available</p>
-                {available.map((t) => <TicketRow key={t.id} ticket={t} eventOpen={eventOpen} />)}
-              </>
-            )}
-            {tickets.filter((t) => t.status !== 'AVAILABLE').length > 0 && (
-              <>
-                <p className="text-xs font-medium text-gray-400 uppercase tracking-wider px-1 mt-2">Sold / Reserved</p>
-                {tickets.filter((t) => t.status !== 'AVAILABLE').map((t) => (
-                  <TicketRow key={t.id} ticket={t} eventOpen={eventOpen} />
-                ))}
-              </>
-            )}
+            {tickets.map((t) => (
+              <AvailableTicketRow
+                key={t.id}
+                ticket={t}
+                surgeMultiplier={surge}
+                eventOpen={eventOpen}
+              />
+            ))}
+          </div>
+        )}
+
+        {totalPages > 1 && (
+          <div className="flex items-center justify-center gap-2 pt-2">
+            <button
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={page === 0}
+              className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm disabled:opacity-40"
+            >
+              ← Prev
+            </button>
+            <span className="text-sm text-gray-500">
+              Page {page + 1} of {totalPages}
+            </span>
+            <button
+              onClick={() => setPage((p) => (p + 1 < totalPages ? p + 1 : p))}
+              disabled={page + 1 >= totalPages}
+              className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm disabled:opacity-40"
+            >
+              Next →
+            </button>
           </div>
         )}
       </div>

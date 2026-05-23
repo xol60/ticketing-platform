@@ -11,6 +11,7 @@ import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -48,9 +49,16 @@ public class AuthFilter implements GlobalFilter, Ordered {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         String path = exchange.getRequest().getPath().value();
+        HttpMethod method = exchange.getRequest().getMethod();
 
-        // Skip public paths entirely
+        // Skip public paths entirely (all methods)
         if (isPublicPath(path)) {
+            return chain.filter(exchange);
+        }
+        // Skip public GET endpoints — read-only browse traffic (events list,
+        // ticket list per event, search, market listings, public price rules).
+        // Mutating verbs on the same prefix still go through full auth.
+        if (HttpMethod.GET.equals(method) && isPublicGetPath(path)) {
             return chain.filter(exchange);
         }
 
@@ -157,6 +165,12 @@ public class AuthFilter implements GlobalFilter, Ordered {
 
     private boolean isPublicPath(String path) {
         return properties.getPublicPaths().stream()
+                .anyMatch(path::startsWith);
+    }
+
+    /** True if {@code path} matches any prefix in {@code publicGetPaths} (read-only browse). */
+    private boolean isPublicGetPath(String path) {
+        return properties.getPublicGetPaths().stream()
                 .anyMatch(path::startsWith);
     }
 }

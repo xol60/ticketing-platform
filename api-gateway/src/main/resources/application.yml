@@ -59,11 +59,17 @@ gateway:
     - /api/auth/login
     - /api/auth/register
     - /api/auth/refresh
-    - /api/search/events
-    - /api/search/events/suggest
     - /actuator/health
     - /actuator/circuit-breakers
     - /health
+  # GET-only browse paths — no auth needed to read, but POST/PATCH/DELETE on
+  # the same prefix still require a token (and may require ADMIN role).
+  public-get-paths:
+    - /api/tickets/events       # list events + per-event ticket list (Phase 3b)
+    - /api/tickets              # /api/tickets/{id} and event-scoped listings
+    - /api/search/              # multi-field search + autocomplete
+    - /api/secondary/listings   # browse the resale market
+    - /api/pricing/rules        # current surge multiplier per event
 
 # ── Actuator ───────────────────────────────────────────────────────────────────
 management:

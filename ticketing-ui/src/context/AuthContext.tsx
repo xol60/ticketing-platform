@@ -5,14 +5,26 @@ import type { User, Role } from '../types';
 interface AuthState {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  register: (email: string, username: string, password: string, role?: Role) => Promise<void>;
+  /**
+   * Log in with either a username OR an email address — the backend resolves
+   * either against {@code users.username} / {@code users.email}.
+   */
+  login: (emailOrUsername: string, password: string) => Promise<void>;
+  register: (email: string, username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   isAuthenticated: boolean;
   hasRole: (role: Role) => boolean;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
+
+/** Shared helper — backend returns a flat AuthResponse, but we want the full
+ *  {@link User} in context. So after every token-receiving call we hit /me. */
+async function persistTokensAndLoadUser(accessToken: string, refreshToken: string): Promise<User> {
+  localStorage.setItem('accessToken', accessToken);
+  localStorage.setItem('refreshToken', refreshToken);
+  return await authApi.me();
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -28,22 +40,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
-  const login = async (email: string, password: string) => {
-    const data = await authApi.login({ email, password });
-    localStorage.setItem('accessToken', data.accessToken);
-    localStorage.setItem('refreshToken', data.refreshToken);
-    setUser(data.user);
+  const login = async (emailOrUsername: string, password: string) => {
+    const data = await authApi.login({ emailOrUsername, password });
+    const u = await persistTokensAndLoadUser(data.accessToken, data.refreshToken);
+    setUser(u);
   };
 
-  const register = async (email: string, username: string, password: string, role: Role = 'USER') => {
-    const data = await authApi.register({ email, username, password, role });
-    localStorage.setItem('accessToken', data.accessToken);
-    localStorage.setItem('refreshToken', data.refreshToken);
-    setUser(data.user);
+  // Register is USER-only — the backend ignores any client-supplied role.
+  // ADMIN / EVENT_OWNER promotion happens through admin endpoints, not signup.
+  const register = async (email: string, username: string, password: string) => {
+    const data = await authApi.register({ email, username, password });
+    const u = await persistTokensAndLoadUser(data.accessToken, data.refreshToken);
+    setUser(u);
   };
 
   const logout = async () => {
-    try { await authApi.logout(); } catch { /* ignore */ }
+    try { await authApi.logout(); } catch { /* ignore — token cleared either way */ }
     localStorage.clear();
     setUser(null);
   };
