@@ -2,12 +2,14 @@ package com.ticketing.search.service;
 
 import co.elastic.clients.elasticsearch._types.query_dsl.TextQueryType;
 import com.ticketing.common.events.EventStatus;
+import com.ticketing.search.config.CacheConfig;
 import com.ticketing.search.domain.model.EventDocument;
 import com.ticketing.search.dto.response.AutocompleteSuggestion;
 import com.ticketing.search.dto.response.EventSearchHit;
 import com.ticketing.search.dto.response.EventSearchPage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.elasticsearch.client.elc.NativeQuery;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
@@ -135,7 +137,38 @@ public class EventSearchService {
      *
      * <p>Restricted to OPEN events. Capped at 10 results to keep the dropdown
      * tight and the response small.
+     *
+     * <h3>Caching</h3>
+     * Results are cached in the Caffeine {@code search-suggest} region
+     * (60 s TTL, 50 000 entries, W-TinyLFU eviction). Three SpEL knobs
+     * shape what gets cached:
+     *
+     * <ul>
+     *   <li><b>{@code key}</b> uses {@link SearchKey#normalise(String)} so
+     *       {@code "Co"}, {@code "co"}, {@code "co  "} all share the same
+     *       entry. Size is part of the key because asking for 6 vs 10
+     *       suggestions returns different rows.</li>
+     *   <li><b>{@code condition}</b> uses {@link SearchKey#cacheable(String)}
+     *       to bypass the cache entirely for pathological inputs (too
+     *       short, too long, or no letters). Such requests still produce
+     *       a correct answer — they just don't burn a cache slot.</li>
+     *   <li><b>{@code unless}</b> declines to cache nulls (the cache
+     *       interceptor would explode on a null otherwise; we always
+     *       return a non-null list in practice but the guard is cheap
+     *       insurance against future refactors).</li>
+     * </ul>
+     *
+     * <p>Cache freshness is enforced by
+     * {@link com.ticketing.search.kafka.EventIndexConsumer} which calls
+     * {@code cache.invalidate()} after every successful ES write — so
+     * users see edits within Kafka latency (~1-2 s), not after the
+     * 60 s TTL expires.
      */
+    @Cacheable(
+            value     = CacheConfig.SUGGEST_REGION,
+            key       = "T(com.ticketing.search.service.SearchKey).normalise(#prefix) + ':' + #size",
+            condition = "T(com.ticketing.search.service.SearchKey).cacheable(#prefix)",
+            unless    = "#result == null")
     public List<AutocompleteSuggestion> suggest(String prefix, int size) {
         final int safeSize = Math.min(Math.max(size, 1), 10);
 

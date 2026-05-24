@@ -9,8 +9,14 @@ import type { Event, EventSearchHit, AutocompleteSuggestion } from '../../types'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Debounce a value — used to avoid firing /suggest on every keystroke. */
-function useDebounced<T>(value: T, ms = 200): T {
+/**
+ * Debounce a value — used to avoid firing /suggest on every keystroke.
+ *
+ * <p>Default is 300 ms (was 200 ms). At ~4-5 chars/sec a fluent typist
+ * pauses between groups; 300 ms collapses the in-between requests
+ * without feeling laggy.
+ */
+function useDebounced<T>(value: T, ms = 300): T {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
     const t = setTimeout(() => setDebounced(value), ms);
@@ -180,15 +186,26 @@ export function EventListPage() {
   const inputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
-  const debouncedInput = useDebounced(input, 200);
+  // 300 ms debounce — matches the new default in useDebounced. A typist
+  // typing "coldplay" (8 chars in ~2 s) used to emit 3-4 suggest requests
+  // at 200 ms; at 300 ms it's typically 1-2.
+  const debouncedInput = useDebounced(input, 300);
   const showSuggestions = open && debouncedInput.trim().length >= 2;
 
   // ── Autocomplete (only fires on debounced input, when ≥2 chars) ──────────
+  //   • signal: aborts the in-flight request on the next keystroke so we
+  //     never have racing /suggest calls writing out-of-order results.
+  //   • staleTime: 60 s matches the server-side Caffeine TTL. Within a
+  //     session, back-spacing and re-typing the same prefix is a cache hit
+  //     in the browser — zero network round-trips.
+  //   • placeholderData: keepPreviousData prevents the dropdown from
+  //     flickering to empty between debounced requests.
   const { data: suggestions = [] } = useQuery<AutocompleteSuggestion[]>({
     queryKey: ['search-suggest', debouncedInput],
-    queryFn: () => searchApi.suggestEvents(debouncedInput, 6),
+    queryFn: ({ signal }) => searchApi.suggestEvents(debouncedInput, 6, signal),
     enabled: showSuggestions,
-    staleTime: 5_000,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
   });
 
   // ── Full search — only fires when user commits (Enter or click). ─────────
@@ -275,22 +292,41 @@ export function EventListPage() {
             />
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔎</span>
 
-            {/* Autocomplete dropdown */}
+            {/*
+              Autocomplete dropdown
+                • min-w-full  : at least as wide as the input
+                • w-[28rem]   : 448 px on desktop — fits "Coldplay World Tour 2026"
+                                without truncation, which was the "no space" complaint
+                • max-w-[90vw]: never bleed past the viewport on small screens
+                • right-0     : anchor to the input's right edge so a 448 px dropdown
+                                under a right-aligned input doesn't overflow the page
+                • z-20        : sits above page content but below the sticky navbar (z-30)
+            */}
             {showSuggestions && suggestions.length > 0 && (
-              <ul className="absolute z-10 mt-1 w-full bg-white rounded-xl border border-gray-100 shadow-lg overflow-hidden">
+              <ul className="absolute right-0 z-20 mt-1 min-w-full w-[28rem] max-w-[90vw]
+                             bg-white rounded-xl border border-gray-100 shadow-lg overflow-hidden">
                 {suggestions.map((s) => (
                   <li
                     key={s.eventId}
+                    // onMouseDown preventDefault keeps the input from blurring
+                    // before the onClick fires — otherwise the setTimeout in
+                    // onBlur would close the dropdown first.
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => onSuggestionClick(s)}
-                    className="px-3 py-2 hover:bg-blue-50 cursor-pointer text-sm"
+                    className="px-4 py-3 hover:bg-blue-50 cursor-pointer text-sm
+                               border-b border-gray-50 last:border-b-0"
                   >
                     <div className="font-medium text-gray-900 truncate">{s.text}</div>
                     {s.primaryArtist && (
-                      <div className="text-xs text-gray-500 truncate">{s.primaryArtist}</div>
+                      <div className="text-xs text-gray-500 truncate mt-0.5">🎤 {s.primaryArtist}</div>
                     )}
                   </li>
                 ))}
+                {/* Footer hint — clarifies that the dropdown is suggestions,
+                    not the only search path. Cheap UX win. */}
+                <li className="px-4 py-2 text-[11px] text-gray-400 bg-gray-50 border-t border-gray-100">
+                  Press <kbd className="px-1 py-px rounded border border-gray-200 bg-white text-gray-600 text-[10px] font-mono">Enter</kbd> to search all matches
+                </li>
               </ul>
             )}
           </div>

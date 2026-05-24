@@ -38,6 +38,22 @@
       <groupId>org.springframework.kafka</groupId>
       <artifactId>spring-kafka</artifactId>
     </dependency>
+    <!-- Caffeine cache for the autocomplete /suggest endpoint. Using Caffeine
+         (vs Redis) for two reasons: (1) matches the existing pattern in
+         ticket-service (event-multiplier region) and pricing-service, so the
+         monitoring + tuning playbook carries over; (2) suggest is read-only
+         and trivially regenerable, so per-replica caches are fine — no need
+         for cross-instance coherency.
+         Caffeine's default eviction is W-TinyLFU (frequency-aware), so
+         one-shot junk queries can't evict hot prefixes. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-cache</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.github.ben-manes.caffeine</groupId>
+      <artifactId>caffeine</artifactId>
+    </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-validation</artifactId>

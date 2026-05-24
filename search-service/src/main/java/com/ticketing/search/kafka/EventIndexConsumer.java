@@ -3,10 +3,13 @@ package com.ticketing.search.kafka;
 import com.ticketing.common.events.EventSearchIndexedEvent;
 import com.ticketing.common.events.EventStatus;
 import com.ticketing.common.events.Topics;
+import com.ticketing.search.config.CacheConfig;
 import com.ticketing.search.domain.model.EventDocument;
 import com.ticketing.search.domain.repository.EventSearchRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
@@ -48,6 +51,9 @@ import org.springframework.stereotype.Component;
 public class EventIndexConsumer {
 
     private final EventSearchRepository repository;
+    /** Used to invalidate the autocomplete cache after every successful ES write
+     *  so consumers see edits within Kafka latency, not after the 60 s TTL. */
+    private final CacheManager cacheManager;
 
     @KafkaListener(
             topics    = Topics.EVENT_SEARCH_INDEXED,
@@ -71,6 +77,18 @@ public class EventIndexConsumer {
                 log.info("Removed event id={} status={} from search index",
                         event.getEventId(), event.getStatus());
             }
+
+            // Any event change can affect what /suggest returns — a new OPEN
+            // event must appear in its prefix's results, a CANCELLED event
+            // must disappear from results that previously matched it. We
+            // can't enumerate which prefixes a given event hits without
+            // re-running the analyzer, so we invalidate the whole region.
+            // Suggest cache entries are cheap (~1 KB) and the working set
+            // rebuilds within seconds of live traffic, so this is fine.
+            // Done AFTER the ES write so a failed write doesn't blow the
+            // cache for nothing (we'd just refill with the same stale data).
+            invalidateSuggestCache();
+
             ack.acknowledge();
         } catch (Exception e) {
             // Do NOT ack — let Spring-Kafka redeliver. Losing an index update
@@ -78,6 +96,13 @@ public class EventIndexConsumer {
             log.error("Failed to apply index update for event id={}: {}",
                     event.getEventId(), e.getMessage(), e);
             throw e;
+        }
+    }
+
+    private void invalidateSuggestCache() {
+        Cache suggest = cacheManager.getCache(CacheConfig.SUGGEST_REGION);
+        if (suggest != null) {
+            suggest.invalidate();
         }
     }
 

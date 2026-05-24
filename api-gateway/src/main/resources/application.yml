@@ -43,7 +43,22 @@ gateway:
     burst-capacity: 40
     window-seconds: 60
     path-overrides:
+      # Tight bucket on auth endpoints (login/refresh) — protects against
+      # credential stuffing.
       /api/auth: 5
+      # Generous bucket on search endpoints. Autocomplete-as-you-type is
+      # naturally bursty (one typist ≈ 3-4 req/s after debounce). With the
+      # default 20 r/s per (IP, userId) bucket, all anonymous users sharing
+      # one NAT'd IP collectively get only 20 r/s — five concurrent
+      # typists fill the bucket and the rest get 429s.
+      #
+      # 60 r/s gives ~15-20 simultaneous typists per shared IP. ES is
+      # already protected by the search-service Caffeine cache, so letting
+      # more requests through here is cheap.
+      #
+      # Still bounded — well below nginx's 200 r/s per-IP ceiling, so a
+      # malicious key-holder hits that wall before doing real damage.
+      /api/search: 60
   circuit-breaker:
     failure-rate-threshold: 50
     slow-call-rate-threshold: 80

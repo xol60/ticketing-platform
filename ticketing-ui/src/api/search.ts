@@ -34,12 +34,18 @@ export const searchApi = {
    * Autocomplete-as-you-type. Designed to be called on every keystroke from
    * the second character onward. The server returns at most {@link size}
    * suggestions (hard-capped at 10).
+   *
+   * <p>Optional {@code signal} parameter lets React Query (or any caller)
+   * abort the in-flight HTTP request when a newer keystroke arrives. Without
+   * this, fast typing leaves a queue of racing requests — the slowest one
+   * eventually overwrites the dropdown with stale suggestions, AND
+   * search-service receives N parallel queries it doesn't need.
    */
-  suggestEvents: (q: string, size = 5) =>
+  suggestEvents: (q: string, size = 5, signal?: AbortSignal) =>
     api
       .get<ApiResponse<AutocompleteSuggestion[]>>(
         '/api/search/events/suggest',
-        { params: { q, size } },
+        { params: { q, size }, signal },
       )
       .then((r: AxiosResponse<ApiResponse<AutocompleteSuggestion[]>>) => r.data.data),
 };

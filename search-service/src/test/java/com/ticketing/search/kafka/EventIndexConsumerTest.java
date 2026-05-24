@@ -4,6 +4,7 @@ import com.ticketing.common.events.EventSearchIndexedEvent;
 import com.ticketing.common.events.EventStatus;
 import com.ticketing.search.domain.model.EventDocument;
 import com.ticketing.search.domain.repository.EventSearchRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -11,6 +12,10 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
 import org.springframework.kafka.support.Acknowledgment;
 
 import java.time.Instant;
@@ -22,6 +27,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 /**
  * Behavioural contract for {@link EventIndexConsumer}.
@@ -46,13 +52,26 @@ import static org.mockito.Mockito.verifyNoInteractions;
  * resolves.
  */
 @ExtendWith(MockitoExtension.class)
+// Lenient because the cache-manager stubs aren't exercised by every test —
+// the malformed-payload and ES-failure cases legitimately don't reach the
+// invalidation path, so strict mode would flag them as "unused".
+@MockitoSettings(strictness = Strictness.LENIENT)
 @DisplayName("EventIndexConsumer — Kafka → ES indexing contract")
 class EventIndexConsumerTest {
 
     @Mock EventSearchRepository repository;
     @Mock Acknowledgment        ack;
+    @Mock CacheManager          cacheManager;
+    @Mock Cache                 suggestCache;
 
     @InjectMocks EventIndexConsumer consumer;
+
+    @BeforeEach
+    void wireCacheManager() {
+        // Every success path looks up the suggest region via the manager;
+        // pre-stub it here so each test doesn't have to repeat the wiring.
+        when(cacheManager.getCache("search-suggest")).thenReturn(suggestCache);
+    }
 
     @Test
     @DisplayName("OPEN event → repository.save() and the document carries every field")
@@ -142,7 +161,7 @@ class EventIndexConsumerTest {
     }
 
     @Test
-    @DisplayName("ES failure → exception propagates AND ack is NOT called (Kafka redelivers)")
+    @DisplayName("ES failure → exception propagates, ack NOT called, cache NOT invalidated")
     void esFailure_doesNotAck() {
         EventSearchIndexedEvent in = openEvent("evt-50");
         doThrow(new RuntimeException("ES down")).when(repository).save(any());
@@ -157,10 +176,14 @@ class EventIndexConsumerTest {
 
         verify(repository).save(any());
         verify(ack, never()).acknowledge();
+        // The cache MUST NOT be invalidated on a failed write — otherwise a
+        // long ES outage would repeatedly blow the cache for nothing while
+        // the same stale data refills it from queries that bypass us.
+        verify(suggestCache, never()).invalidate();
     }
 
     @Test
-    @DisplayName("Malformed payload (null eventId) → acked and skipped, no repository call")
+    @DisplayName("Malformed payload (null eventId) → acked and skipped, no repository or cache call")
     void malformedPayload_ackedAndSkipped() {
         EventSearchIndexedEvent in = new EventSearchIndexedEvent();
         // eventId is null
@@ -168,6 +191,34 @@ class EventIndexConsumerTest {
         consumer.onEvent(in, ack);
 
         verifyNoInteractions(repository);
+        verify(ack).acknowledge();
+        verify(suggestCache, never()).invalidate();
+    }
+
+    @Test
+    @DisplayName("Successful upsert → suggest cache is invalidated AFTER the ES write")
+    void successfulUpsert_invalidatesSuggestCache() {
+        EventSearchIndexedEvent in = openEvent("evt-cache-1");
+
+        consumer.onEvent(in, ack);
+
+        // Both the ES write AND the cache invalidation must run for users
+        // to see the new event in /suggest results within Kafka latency.
+        verify(repository).save(any());
+        verify(suggestCache).invalidate();
+        verify(ack).acknowledge();
+    }
+
+    @Test
+    @DisplayName("Successful delete (CANCELLED) → suggest cache is invalidated")
+    void successfulDelete_invalidatesSuggestCache() {
+        EventSearchIndexedEvent in = openEvent("evt-cache-2");
+        in.setStatus(EventStatus.CANCELLED.name());
+
+        consumer.onEvent(in, ack);
+
+        verify(repository).deleteById("evt-cache-2");
+        verify(suggestCache).invalidate();
         verify(ack).acknowledge();
     }
 
