@@ -1,13 +1,28 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { ticketsApi } from '../../api/tickets';
+import { ordersApi } from '../../api/orders';
 import { EventStatusBadge } from '../../components/ui/Badge';
 import { PageSpinner } from '../../components/ui/Spinner';
 import { Button } from '../../components/ui/Button';
 import { useAuth } from '../../context/AuthContext';
 import { money, multiplier } from '../../lib/format';
-import type { AvailableTicketSummary } from '../../types';
+import type { AvailableTicketSummary, Order } from '../../types';
+
+/**
+ * An order is "blocking" the Buy button for a ticket if it's in any
+ * non-terminal or already-successful state — anything that means "the
+ * user has already committed (or is committing) to this ticket."
+ *
+ * <p>FAILED and CANCELLED orders do NOT block — the user is free to try
+ * again with a fresh order.
+ */
+const BLOCKING_ORDER_STATUSES = new Set<Order['status']>([
+  'PENDING',
+  'PRICE_CHANGED',
+  'CONFIRMED',
+]);
 
 const PAGE_SIZE = 50;
 
@@ -24,13 +39,21 @@ function AvailableTicketRow({
   ticket,
   surgeMultiplier,
   eventOpen,
+  /** Order this user already has for this exact ticket (if any). */
+  existingOrder,
 }: {
   ticket: AvailableTicketSummary;
   surgeMultiplier: number;
   eventOpen: boolean;
+  existingOrder?: Order;
 }) {
   const { isAuthenticated } = useAuth();
   const hasSurge = surgeMultiplier > 1.0;
+  // Disable the Buy button if the logged-in user already has a non-terminal
+  // (or already-confirmed) order for this exact ticket. Stops the most
+  // common panic-click case — the user clicks Buy, watches the saga work,
+  // gets impatient and clicks Buy again on the same ticket from another tab.
+  const blocked = existingOrder != null;
 
   return (
     <div className="flex items-center justify-between px-4 py-3 rounded-xl border border-gray-100 bg-white hover:border-blue-100 hover:bg-blue-50/20 transition-colors">
@@ -52,13 +75,23 @@ function AvailableTicketRow({
           )}
         </div>
         {eventOpen && (
-          isAuthenticated
-            ? <Link to={`/tickets/${ticket.id}`}>
-                <Button size="sm">Buy</Button>
-              </Link>
-            : <Link to="/login" state={{ from: `/tickets/${ticket.id}` }}>
+          !isAuthenticated
+            ? <Link to="/login" state={{ from: `/tickets/${ticket.id}` }}>
                 <Button size="sm" variant="secondary">Sign in to buy</Button>
               </Link>
+            : blocked
+              ? <Link to={`/orders/${existingOrder!.id}`}>
+                  {/* Disabled-looking but still a link to the user's
+                      existing order — gives them a path forward instead of
+                      a dead end. */}
+                  <Button size="sm" variant="secondary"
+                          title={`You already have an order for this ticket (${existingOrder!.status})`}>
+                    {existingOrder!.status === 'CONFIRMED' ? '✓ Owned' : '⏳ In progress'}
+                  </Button>
+                </Link>
+              : <Link to={`/tickets/${ticket.id}`}>
+                  <Button size="sm">Buy</Button>
+                </Link>
         )}
       </div>
     </div>
@@ -110,6 +143,7 @@ function EventMetadata({
 export function EventDetailPage() {
   const { eventId } = useParams<{ eventId: string }>();
   const [page, setPage] = useState(0);
+  const { isAuthenticated } = useAuth();
 
   // Event metadata — still served by the existing list endpoint. (We could
   // switch this to a single /api/tickets/events/{id} call once that endpoint
@@ -118,6 +152,33 @@ export function EventDetailPage() {
     queryKey: ['events'],
     queryFn:  ticketsApi.listEvents,
   });
+
+  // User's own orders — only fetched when logged in. Used to disable the
+  // Buy button on tickets the user already has a live or confirmed order
+  // for. Short staleTime so the disable flips back to "Buy" quickly if the
+  // user cancels a pending order.
+  const { data: myOrders = [] } = useQuery({
+    queryKey: ['my-orders'],
+    queryFn:  ordersApi.listMyOrders,
+    enabled:  isAuthenticated,
+    staleTime: 15_000,
+  });
+
+  // Map ticketId → blocking order (if any) so the per-row check is O(1).
+  // We only consider orders for ANY ticket on this event, but the index
+  // is by ticketId so the row component just looks itself up.
+  const blockingOrderByTicket = useMemo(() => {
+    const m = new Map<string, Order>();
+    for (const o of myOrders) {
+      if (BLOCKING_ORDER_STATUSES.has(o.status)) {
+        // If a user somehow has multiple non-terminal orders for the same
+        // ticket, prefer the most recent one (already-CONFIRMED beats PENDING).
+        const prior = m.get(o.ticketId);
+        if (!prior || prior.status !== 'CONFIRMED') m.set(o.ticketId, o);
+      }
+    }
+    return m;
+  }, [myOrders]);
 
   // Available tickets — Phase 3b paged endpoint.
   // One pricing-service call PER PAGE (Caffeine-cached server-side for 30s),
@@ -230,6 +291,7 @@ export function EventDetailPage() {
                 ticket={t}
                 surgeMultiplier={surge}
                 eventOpen={eventOpen}
+                existingOrder={blockingOrderByTicket.get(t.id)}
               />
             ))}
           </div>

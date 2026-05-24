@@ -28,6 +28,16 @@ spring:
 server:
   port: 8088
 
+# ── HTTP idempotency ─────────────────────────────────────────────────────────
+# Enables the common-lib IdempotencyFilter on POST /api/secondary/listings.
+# Same Stripe-style protection as order-service: client sends Idempotency-Key,
+# server dedups by (userId, key) for 24 h. Prevents a double-click on the
+# "List this ticket" button from creating two listings against the same ticket.
+idempotency:
+  enabled: true
+  paths:
+    - /api/secondary/listings
+
 # ── Upstream service URLs ────────────────────────────────────────────────────
 clients:
   ticket-service:

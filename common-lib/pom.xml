@@ -37,6 +37,14 @@
       <artifactId>spring-boot-starter-web</artifactId>
       <scope>provided</scope>
     </dependency>
+    <!-- IdempotencyFilter uses StringRedisTemplate. Provided scope because
+         each service brings its own Redis starter — common-lib must not pull
+         it transitively into modules that have no need for Redis. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+      <scope>provided</scope>
+    </dependency>
     <!-- GlobalExceptionHandler uses @Slf4j; slf4j-api must be on compile classpath -->
     <dependency>
       <groupId>org.slf4j</groupId>

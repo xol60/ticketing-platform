@@ -37,6 +37,16 @@ spring:
 server:
   port: 8083
 
+# ── HTTP idempotency ─────────────────────────────────────────────────────────
+# Enables the common-lib IdempotencyFilter on POST /api/orders. Clients send
+# an `Idempotency-Key` header; the gateway-injected `X-User-Id` scopes the
+# dedup table. Same key + same body within the TTL → cached response replayed
+# (no DB write, no Kafka publish). Same key + different body → 422.
+idempotency:
+  enabled: true
+  paths:
+    - /api/orders
+
 # ── Upstream service URLs ────────────────────────────────────────────────────
 clients:
   ticket-service:

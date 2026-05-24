@@ -42,7 +42,9 @@ export function TicketDetailPage() {
   });
 
   const buyMutation = useMutation({
-    mutationFn: () => ordersApi.create({ ticketId: ticketId!, userPrice: currentPrice }),
+    // Backend's CreateOrderRequest uses `requestedPrice`, not `userPrice` —
+    // a long-standing mismatch surfaced by the new idempotency POST flow.
+    mutationFn: () => ordersApi.create({ ticketId: ticketId!, requestedPrice: currentPrice }),
     onSuccess: (order: Order) => navigate(`/orders/${order.id}/track`),
   });
 

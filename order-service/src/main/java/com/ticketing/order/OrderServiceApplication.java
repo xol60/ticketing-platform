@@ -1,5 +1,6 @@
 package com.ticketing.order;
 
+import com.ticketing.common.idempotency.IdempotencyProperties;
 import com.ticketing.order.config.ClientProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -7,7 +8,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.cache.annotation.EnableCaching;
 
 @SpringBootApplication(scanBasePackages = {"com.ticketing.order", "com.ticketing.common"})
-@EnableConfigurationProperties(ClientProperties.class)
+@EnableConfigurationProperties({ ClientProperties.class, IdempotencyProperties.class })
 @EnableCaching
 public class OrderServiceApplication {
 
