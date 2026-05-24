@@ -75,7 +75,7 @@ ticketing-platform/
 ├── secondary-market-service/# Ticket resale
 ├── notification-service/    # Email / push
 ├── search-service/          # Elasticsearch read-only event search (multi-field + autocomplete + fuzzy)
-├── tests/                   # Stress test — see tests/README.md
+├── tests/                   # Stress test + demo-data seeder (SQL + bash wrapper) — see tests/README.md
 ├── docs/                    # Animated saga flows + static reference
 └── docker/
     ├── kafka/               # Topic creation script
@@ -395,6 +395,39 @@ Both endpoints are public (no auth) and capped server-side (`size` ≤ 100 for
 search, ≤ 10 for suggest). The hard filter `status = OPEN` is applied at the
 query layer as defense-in-depth — the indexer also removes non-OPEN events.
 
+### Load-shaping for /suggest
+
+Autocomplete is naturally bursty: a single typist fires several requests per
+second, and many users hit hot prefixes (`co`, `col`, …) simultaneously.
+Four layers cooperate to keep ES from being hammered:
+
+- **UI debounce (300 ms)** and **`AbortSignal` cancellation** of in-flight
+  requests on each new keystroke. Stops "c → co → col" from leaving three
+  parallel ES queries open at the gateway.
+- **React Query `staleTime: 60 s`** on the suggest cache key — back-spacing
+  and re-typing the same prefix is a free in-memory hit.
+- **Gateway per-path rate-limit override** for `/api/search/*` (60 r/s vs
+  the default 20 r/s) — autocomplete-friendly, still well below nginx's
+  200 r/s per-IP ceiling.
+- **Caffeine `search-suggest` cache in search-service** (TTL 60 s, 50 000
+  entries, default W-TinyLFU eviction). Two SpEL guards keep it clean:
+  - `key = normalise(prefix)` — lowercases + trims + collapses whitespace,
+    so `"Co"`, `"co"`, `"  CO  "` all share one entry.
+  - `condition = cacheable(prefix)` — admission filter rejecting prefixes
+    that are too short, too long, or have no letters (pure-digit / pure-
+    punctuation inputs bypass the cache entirely, so they can't pollute it).
+
+`EventIndexConsumer` calls `cache.invalidate()` after every successful ES
+write — so users see edits within Kafka latency (~1–2 s), not after the
+60 s TTL. Measured outcome: in a 30-call replay across 6 hot prefixes,
+only **1** request reached Elasticsearch (~30× reduction).
+
+The full search endpoint (`/api/search/events`) is deliberately **not**
+cached. Free-text queries plus paging + facets give every key high
+cardinality and low reuse, so caching them would pollute the table
+without measurably reducing load. The gateway rate-limit + client debounce
+are sufficient there.
+
 ### Explicitly out of scope
 
 - Geo "near me" / radius queries (needs lat/lng and map provider)
@@ -403,6 +436,84 @@ query layer as defense-in-depth — the indexer also removes non-OPEN events.
 - Aggregations / faceted counts (basic filter params only)
 - Bulk reindex job (deferred — Postgres can rebuild via republish if needed)
 
+## Request idempotency — defence in depth
+
+Mutating POST endpoints (`POST /api/orders`, `POST /api/secondary/listings`)
+are protected by a three-tier stack. Each tier catches a different failure
+mode; if one is bypassed, the next still catches the duplicate.
+
+### Tier 1 — UI: keep the duplicate intent in the browser
+
+- **Button disabled while the mutation is pending.** React Query's
+  `useMutation` flips the Buy / List button to disabled the instant the
+  user clicks, and re-enables on settle. Catches the same-tab same-second
+  double-click.
+- **Buy-button gating on existing orders.** `EventDetailPage` indexes the
+  user's orders by `ticketId`; any non-terminal order (`PENDING` /
+  `PRICE_CHANGED` / `CONFIRMED`) renders "⏳ In progress" or "✓ Owned"
+  instead of "Buy". Catches cross-tab clicks, returns-to-the-page-then-
+  click, refresh-then-retry.
+- **Client-generated `Idempotency-Key` (UUIDv4) per click.** Same key reused
+  across React Query's auto-retries. Alone it catches nothing — it's the
+  pairing with Tier 2 that makes network retries safe.
+
+### Tier 2 — HTTP boundary: Stripe-pattern dedup
+
+`common-lib/idempotency/IdempotencyFilter` opt-in per service via
+`idempotency.enabled: true` + `idempotency.paths: [...]`:
+
+```
+on POST {configured path}:
+  read Idempotency-Key header
+  read X-User-Id (injected by gateway)
+  hash request body with SHA-256
+  redis: GET idem:{userId}:{key}
+    miss               → run controller, cache 2xx response for 24 h
+    hit, same hash     → REPLAY cached response (controller never runs)
+    hit, different hash → 422 IDEMPOTENCY_KEY_REUSED
+  redis throws         → log + pass through (fail-open)
+```
+
+- Failures (non-2xx) are deliberately **not** cached — a transient outage
+  shouldn't latch a failure response for 24 h.
+- Per-user scope on the dedup key makes cross-user collision attacks
+  impossible — a malicious key can only collide with the attacker's own.
+- 9 unit tests in `common-lib` cover hit, miss, 422, failure-not-cached,
+  fail-open, GET-bypass, unconfigured-path bypass, missing-key, missing-user.
+
+### Tier 3 — Async / saga / DB: the safety net
+
+If a duplicate slips past Tier 1 and 2 (e.g. DevTools-crafted retry with a
+fresh UUID), the existing saga safety nets still catch it:
+
+- **`orderId`-keyed Kafka partitioning** keeps per-order commands sequential.
+- **Redis `SETNX` on `ticket:lock:{ticketId}`** sub-millisecond-fails a
+  second saga trying to reserve the same ticket.
+- **Status-and-owner idempotency** in `handleReserveCommand` /
+  `handleConfirmCommand` handles Kafka redelivery: if the ticket is already
+  in the expected state owned by this order, the handler republishes the
+  prior success event instead of re-processing.
+- **JPA optimistic locking (`@Version`)** catches any race that bypassed
+  Redis (Redis outage, lock TTL expired mid-flight, direct SQL).
+- **Hybrid transactional outbox** ensures a Kafka publish failure during a
+  write tx doesn't lose the event — it's persisted in DB and retried.
+- **Stuck-reservation watchdog** (every 60 s) releases `RESERVED` tickets
+  past their `reservedUntil` deadline so a saga that crashed mid-flow
+  doesn't lock the ticket forever.
+
+### Verified outcome
+
+Sending three POSTs of the same intent — two with the same Idempotency-Key
+and one with a different body — yields:
+
+| POST | Status | Result |
+|------|--------|--------|
+| #1, key X, body A | 201 | New order O created |
+| #2, key X, body A | 201 | **Replay** — same orderId, same traceId, controller never runs |
+| #3, key X, body B | 422 | `IDEMPOTENCY_KEY_REUSED` |
+
+DB count for `(userId, ticketId)`: **exactly one row**.
+
 ## Architecture decisions
 
 ### Auth — gateway-only, internal trust model
@@ -410,6 +521,16 @@ query layer as defense-in-depth — the indexer also removes non-OPEN events.
 JWT is validated once at the API Gateway using a two-layer cache (L1 in-process LRU + L2 Redis).
 Internal services receive `X-User-Id`, `X-User-Role`, `X-Trace-Id` headers — no JWT re-validation.
 Internal services are network-isolated: only reachable from within the Docker network.
+
+Two path categories bypass auth:
+- **`publicPaths`** (all HTTP methods) — `/api/auth/login`, `/api/auth/register`,
+  `/api/auth/refresh`, `/actuator/health`.
+- **`publicGetPaths`** (GET only) — `/api/tickets/events`, `/api/tickets`,
+  `/api/search/`, `/api/secondary/listings`, `/api/pricing/rules`. The
+  method-aware check means anonymous users can browse the catalog and
+  search results, while the corresponding POST / PATCH / DELETE on the
+  same prefix still require a token. Implemented in `AuthFilter` by checking
+  `HttpMethod.GET == request.getMethod()` before the public-GET prefix match.
 
 ### Saga — orchestration pattern
 
@@ -426,3 +547,11 @@ Each service has its own database (bounded context isolation — no cross-servic
 
 Resilience4j circuit breaker wraps each upstream service independently.
 Rate limiter uses Redis sliding window counters keyed by `IP:userId`.
+
+Per-path overrides via `gateway.rate-limit.path-overrides`:
+
+| Path prefix     | Limit (r/s) | Why |
+| --------------- | ----------- | --- |
+| `/api/auth`     | 5           | Tighter on login / refresh — credential-stuffing surface |
+| `/api/search`   | 60          | Autocomplete-as-you-type is naturally bursty; anonymous users from one NAT IP share the bucket. Higher limit safe because the search-service Caffeine cache already protects ES. |
+| (default)       | 20          | Everything else |
