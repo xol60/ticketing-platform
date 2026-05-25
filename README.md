@@ -183,10 +183,27 @@ docker-compose up --build --no-deps ticket-service
 
 ## Kafka topics
 
-25 topics, all saga-flow topics keyed by `orderId` with **3 partitions** to match
-`concurrency=3` on every consumer. Two topics keep **1 partition** intentionally
-(`payment.dlq`, `auth.security.alert`) so that DLQ replay and security forensics get
-strict global ordering.
+26 topics in total. Saga-flow topics use **10 partitions** by default, with the
+partition key chosen so messages that need ordering land on the same partition
+(usually `orderId`, sometimes `eventId` or `ticketId`). Two topics keep
+**1 partition** intentionally (`payment.dlq`, `auth.security.alert`) so DLQ
+replay and security forensics get strict global ordering.
+
+**Consumer concurrency is set per `@KafkaListener`, not per service.** One
+listener bumps to 10 threads because it's the single hottest consumer in
+the system; everything else stays at the default of 3 threads per listener:
+
+| Listener | Concurrency | Partitions each thread owns |
+| -------- | ----------- | --------------------------- |
+| `ticket-service` on `ticket.cmd` (the hot consumer) | **10** | Exactly 1 — one thread per partition for maximum parallelism on the saga's hot path |
+| Every other `@KafkaListener` in the system | **3** | ~3-4 each — handles lower per-listener volume on a 10-partition topic |
+
+Total consumer thread counts per service therefore depend on how many
+listeners each service has (saga-orchestrator alone hosts 11 listeners ×
+3 threads = 33 total). The *single* place we depart from "3 per listener"
+is the `ticket.cmd` consumer.
+
+See [Consumer concurrency and stalls — the slow-lane design](#consumer-concurrency-and-stalls--the-slow-lane-design) below for why this one exception, and what happens when a thread stalls.
 
 ### Unified command topics — the key ordering decision
 
@@ -207,37 +224,56 @@ application-level locking.
 
 ### Catalog (consolidated)
 
-| Domain      | Topic                   | Producers               | Consumers          | Carries (event/command DTOs)                   | P     | Key      |
-| ----------- | ----------------------- | ----------------------- | ------------------ | ---------------------------------------------- | ----- | -------- |
-| Order       | `order.created`         | order, secondary-market | saga               | `OrderCreatedEvent`                            | 3     | orderId  |
-| Order       | `order.confirmed`       | saga                    | order              | `OrderConfirmedEvent`                          | 3     | orderId  |
-| Order       | `order.failed`          | saga                    | order              | `OrderFailedEvent`                             | 3     | orderId  |
-| Order       | `order.cancelled`       | saga                    | order              | `OrderCancelledEvent`                          | 3     | orderId  |
-| Order       | `order.price.changed`   | saga                    | order              | `OrderPriceChangedEvent`                       | 3     | orderId  |
-| Order       | `order.price.confirm`   | order                   | saga               | `OrderPriceConfirmCommand`                     | 3     | orderId  |
-| Order       | `order.price.cancel`    | order                   | saga               | `OrderPriceCancelCommand`                      | 3     | orderId  |
-| Ticket      | **`ticket.cmd`**        | saga                    | ticket             | `Reserve` / `Confirm` / `Release` Command      | 3     | orderId  |
-| Ticket      | `ticket.reserved`       | ticket                  | saga               | `TicketReservedEvent`                          | 3     | orderId  |
-| Ticket      | `ticket.released`       | ticket                  | saga, reservation  | `TicketReleasedEvent`                          | 3     | orderId  |
-| Ticket      | `ticket.confirmed`      | ticket                  | saga, notification | `TicketConfirmedEvent`                         | 3     | orderId  |
-| Pricing     | `pricing.lock.cmd`      | saga                    | pricing            | `PriceLockCommand`                             | 3     | orderId  |
-| Pricing     | `pricing.locked`        | pricing                 | saga               | `PricingLockedEvent`                           | 3     | orderId  |
-| Pricing     | `pricing.price.changed` | pricing                 | saga               | `PriceChangedEvent`                            | 3     | orderId  |
-| Pricing     | `pricing.failed`        | pricing                 | saga               | `PricingFailedEvent`                           | 3     | orderId  |
-| Pricing     | `price.updated`         | pricing                 | (SSE push)         | `PriceUpdatedEvent`                            | 3     | eventId  |
-| Payment     | **`payment.cmd`**       | saga                    | payment            | `Charge` / `Cancel` Command                    | 3     | orderId  |
-| Payment     | `payment.succeeded`     | payment                 | saga               | `PaymentSucceededEvent`                        | 3     | orderId  |
-| Payment     | `payment.failed`        | payment                 | saga               | `PaymentFailedEvent`                           | 3     | orderId  |
-| Payment     | `payment.refunded`      | payment                 | saga               | `PaymentRefundedEvent`                         | 3     | orderId  |
-| Payment     | `payment.dlq`           | payment                 | notification       | `PaymentFailedEvent` (after retries exhausted) | **1** | orderId  |
-| Reservation | `reservation.promoted`  | reservation             | order              | `ReservationPromotedEvent`                     | 3     | ticketId |
-| Event mgmt  | `event.status.changed`  | ticket                  | (subscribers)      | `EventStatusChangedEvent`                      | 3     | eventId  |
-| Event mgmt  | `event.search.indexed`  | ticket                  | search             | `EventSearchIndexedEvent`                      | 3     | eventId  |
-| Notif       | `notification.send`     | any service             | notification       | `NotificationSendCommand`                      | 3     | orderId  |
-| Security    | `auth.security.alert`   | auth                    | notification       | `AuthSecurityAlertEvent`                       | **1** | userId   |
+| Domain      | Topic                   | Producers               | Consumers (`@KafkaListener`) | Carries (event/command DTOs)                   | P     | C      | Key      |
+| ----------- | ----------------------- | ----------------------- | ---------------------------- | ---------------------------------------------- | ----- | ------ | -------- |
+| Order       | `order.created`         | order, secondary-market | saga                         | `OrderCreatedEvent`                            | 10    | 3      | orderId  |
+| Order       | `order.confirmed`       | saga                    | order, reservation           | `OrderConfirmedEvent`                          | 10    | 3      | orderId  |
+| Order       | `order.failed`          | saga                    | order                        | `OrderFailedEvent`                             | 10    | 3      | orderId  |
+| Order       | `order.cancelled`       | saga                    | order                        | `OrderCancelledEvent`                          | 10    | 3      | orderId  |
+| Order       | `order.price.changed`   | saga                    | order                        | `OrderPriceChangedEvent`                       | 10    | 3      | orderId  |
+| Order       | `order.price.confirm`   | order                   | saga                         | `OrderPriceConfirmCommand`                     | 10    | 3      | orderId  |
+| Order       | `order.price.cancel`    | order                   | saga                         | `OrderPriceCancelCommand`                      | 10    | 3      | orderId  |
+| Ticket      | **`ticket.cmd`**        | saga                    | ticket                       | `Reserve` / `Confirm` / `Release` Command      | 10    | **10** | orderId  |
+| Ticket      | `ticket.reserved`       | ticket                  | saga, pricing                | `TicketReservedEvent`                          | 10    | 3      | orderId  |
+| Ticket      | `ticket.released`       | ticket                  | saga, reservation, pricing   | `TicketReleasedEvent`                          | 10    | 3      | orderId  |
+| Ticket      | `ticket.confirmed`      | ticket                  | saga, notification           | `TicketConfirmedEvent`                         | 10    | 3      | orderId  |
+| Pricing     | `pricing.lock.cmd`      | saga                    | pricing                      | `PriceLockCommand`                             | 10    | 3      | orderId  |
+| Pricing     | `pricing.locked`        | pricing                 | saga                         | `PricingLockedEvent`                           | 10    | 3      | orderId  |
+| Pricing     | `pricing.price.changed` | pricing                 | saga                         | `PriceChangedEvent`                            | 10    | 3      | orderId  |
+| Pricing     | `pricing.failed`        | pricing                 | saga                         | `PricingFailedEvent`                           | 10    | 3      | orderId  |
+| Pricing     | `price.updated`         | pricing                 | _(SSE fan-out, no listener)_ | `PriceUpdatedEvent`                            | 10    | —      | eventId  |
+| Payment     | **`payment.cmd`**       | saga                    | payment                      | `Charge` / `Cancel` Command                    | 10    | 3      | orderId  |
+| Payment     | `payment.succeeded`     | payment                 | saga                         | `PaymentSucceededEvent`                        | 10    | 3      | orderId  |
+| Payment     | `payment.failed`        | payment                 | saga                         | `PaymentFailedEvent`                           | 10    | 3      | orderId  |
+| Payment     | `payment.refunded`      | payment                 | _(none — fan-out)_           | `PaymentRefundedEvent`                         | 10    | —      | orderId  |
+| Payment     | `payment.dlq`           | payment                 | notification                 | `PaymentFailedEvent` (after retries exhausted) | **1** | 3      | orderId  |
+| Reservation | `reservation.promoted`  | reservation             | _(none — fan-out)_           | `ReservationPromotedEvent`                     | 10    | —      | ticketId |
+| Event mgmt  | `event.status.changed`  | ticket                  | _(none — fan-out)_           | `EventStatusChangedEvent`                      | 10    | —      | eventId  |
+| Event mgmt  | `event.search.indexed`  | ticket                  | search                       | `EventSearchIndexedEvent`                      | 10    | 3      | eventId  |
+| Notif       | `notification.send`     | any service             | notification                 | `NotificationSendCommand`                      | 10    | 3      | orderId  |
+| Security    | `auth.security.alert`   | auth                    | notification                 | `AuthSecurityAlertEvent`                       | **1** | 3      | userId   |
 
-P = partitions. `payment.dlq` and `auth.security.alert` keep 1 partition for strict
-global ordering (chronological DLQ replay and security forensics).
+**P** = partitions. **C** = per-listener consumer concurrency. `payment.dlq`
+and `auth.security.alert` keep 1 partition for strict global ordering
+(chronological DLQ replay and security forensics). The C column shows the
+deliberate exception: `ticket.cmd` is the one consumer bumped to 10 threads
+(one per partition) because it's the hot path of every saga; everywhere else
+the default 3 is enough. Topics with `—` are produced but have no
+`@KafkaListener` consumer today (fan-out / future-subscribers / pulled via
+SSE) — see notes below.
+
+**Why some topics have no listener:**
+- `price.updated`: pulled by clients via the SSE stream at `/api/pricing/stream/**`,
+  not consumed by any service.
+- `payment.refunded`: emitted as a notification-style fact; the saga has
+  already advanced to compensation by the time refunds happen, and the
+  refund itself is observable via `payment.dlq` if it fails.
+- `reservation.promoted`: emitted as a fact; the waitlist promotion is
+  visible through the order's own state transitions.
+- `event.status.changed`: kept as a separate topic so future subscribers
+  (analytics, audit, indexers) can opt in without ticket-service knowing
+  about them. The search-service uses the related `event.search.indexed`
+  topic instead.
 
 ## Order placement — saga flows
 
@@ -276,7 +312,7 @@ no orphan rows, no half-charged payments, no leaked ticket locks.
 | Layer                      | Capacity              | Limited by                                |
 | -------------------------- | --------------------- | ----------------------------------------- |
 | Order API ingress          | ~2,000 req/s          | Nginx `limit_req` (200r/s/IP × keepalive) |
-| Kafka consumer per service | ~600 msg/s            | 3 partitions × ~5ms DB tx                 |
+| Kafka consumer (per listener) | ~600 msg/s @ concurrency=3; ~2,000 msg/s on `ticket.cmd` @ concurrency=10 | threads × ~5 ms DB tx |
 | End-to-end saga (10 hops)  | < 1s p50, < 2s p99    | Race-test measured                        |
 | Payment retry watchdog     | 50 payments / 2s tick | `BATCH_SIZE=50`, `fixedDelay=2s`          |
 | SSE connections per pod    | ~10,000               | Nginx `worker_connections × cores`        |
@@ -315,7 +351,9 @@ so adding replicas is a Kafka rebalance:
 Two pods consuming different partitions can race on the same `orderId` or the same DB row.
 Every such race closes at a **durable boundary** — DB, Kafka, or Redis. **All mechanisms
 are non-blocking** — no `SELECT … FOR UPDATE`, no app-level `synchronized` blocks. Both
-would tie up a Kafka consumer thread on a pool of just 3 per service.
+would tie up Kafka consumer threads, and per-listener thread counts are sized tight
+(3 per listener everywhere, 10 on the one hot `ticket.cmd` listener), so a parked
+thread is a visible loss of capacity on that listener's topic.
 
 | Mechanism                             | Closes which race                                       |
 | ------------------------------------- | ------------------------------------------------------- |
@@ -331,8 +369,9 @@ would tie up a Kafka consumer thread on a pool of just 3 per service.
 ### Ticket reservation — two-layer non-blocking locking
 
 The ticket-service uses **Redis SETNX + JPA `@Version` optimistic locking**, deliberately
-avoiding `SELECT … FOR UPDATE`. The consumer pool is only 3 threads (matching partition
-count); a single pessimistic-lock waiter would tie up 1/3 of capacity indefinitely.
+avoiding `SELECT … FOR UPDATE`. The consumer pool is 10 threads (one per partition on
+`ticket.cmd`); a single pessimistic-lock waiter would tie up 10% of capacity until the
+DB released the row.
 
 ```
 Layer 1 — Redis SETNX (fast path)
@@ -350,6 +389,96 @@ Layer 2 — @Version optimistic (safety net)
 `findById` (no lock) → mutate → `saveAndFlush` → catch `OptimisticLockingFailureException`
 → publish the appropriate compensation event.
 
+### Consumer concurrency and stalls — the slow-lane design
+
+A common question: with `concurrency=3` on the typical listener, doesn't a
+single stuck thread (waiting on Postgres, GC pause, network hang) drop that
+listener to 66 % throughput? Yes — and that's the intended shape of the
+failure mode, not a defect. The choice is deliberate; here's the reasoning.
+
+**Concurrency is per `@KafkaListener`, not per service.** Each annotated
+listener gets its own container, and the container factory's concurrency
+setting applies to each container independently. So saga-orchestrator's 11
+listeners × 3 threads = 33 total consumer threads, but each individual
+listener is still a 3-thread pool. A thread stuck inside the
+`TICKET_RESERVED` listener costs 1/3 of *that listener's* throughput; the
+adjacent `PAYMENT_SUCCEEDED` listener (different container, different
+threads) keeps going at full rate.
+
+**Why `concurrency` ≈ partition count.** Kafka's unit of parallelism is
+the partition: within one consumer group, at most one thread reads from a
+given partition at any moment. So the per-listener thread count caps
+parallelism at the partition count; adding more threads beyond that gives
+idle threads (Kafka won't assign two threads to the same partition). The
+thread-per-partition pinning is also what gives us the per-`orderId`
+ordering guarantee the whole saga is built on — without it, a `Release`
+could overtake a `Reserve` for the same order across pods.
+
+**Why one listener (`ticket.cmd`) bumps to 10 and everything else stays at 3.**
+`ticket.cmd` is the hot path: every order goes through it three times
+(Reserve / Confirm / Release), it's the most contended topic, and a stall
+there visibly slows checkout. We give it one thread per partition (10 of
+10) so each partition has dedicated capacity. Every other listener handles
+lower per-listener volume; 3 threads each owning ~3-4 partitions of a
+10-partition topic is enough headroom, and over-provisioning consumer
+threads wastes memory and connection-pool slots that better serve
+user-facing requests.
+
+**What "stuck" actually does.** When one thread of a 3-thread listener
+stalls:
+
+| Effect | What happens |
+| ------ | ------------ |
+| The ~3-4 partitions assigned to that thread | Stop being processed entirely |
+| The other ~6-7 partitions on the other threads of the same listener | Keep flowing at full rate |
+| That listener's throughput | Drops to roughly 2/3 of nominal |
+| Consumer lag | Builds monotonically on the stuck partitions of that one topic |
+| Other `@KafkaListener`s on the same service | Unaffected — they're separate containers with separate threads |
+| Other services / the user-facing POST | Unaffected |
+
+It's a deterministic, scoped degradation — a **slow lane**, not a full
+outage. Roughly 1/3 of messages on one topic queue while the other 2/3
+ship normally, and adjacent topics on the same service stay green. The
+user-facing `POST /api/orders` doesn't move because the saga is async
+under it; the symptom surfaces as "my order is PENDING for longer than
+usual" on the tracker page.
+
+**Why a stuck thread can't cascade into a full outage.** Five properties
+combine so the 66% drop is the worst case, not a death-spiral precursor:
+
+1. **Tight transactional scope.** Handlers use `TransactionTemplate` around
+   the actual UPDATE, not `@Transactional` on the whole method. The DB
+   connection is checked out for ~5 ms per message, so the consumer pool
+   can't exhaust the connection pool from contention.
+2. **Non-blocking concurrency primitives.** SETNX + `@Version` instead of
+   `SELECT … FOR UPDATE`. Application-level hot-row contention cannot park
+   a thread — the only way to stick a thread is genuine infrastructure
+   trouble (network hang, GC pause).
+3. **`next_retry_at` for slow downstreams.** Payment retries don't sit on
+   the consumer thread waiting for backoff. The handler stores
+   `status=PENDING_RETRY, next_retry_at=now+backoff`, acks the message, and
+   a `@Scheduled` job picks the retry up later on its own threadpool.
+4. **DLQ on retry exhaustion.** When payment retries run out, the message
+   moves to `payment.dlq` for human inspection. The consumer doesn't loop
+   forever on a permanently broken message.
+5. **Watchdogs as the time bound.** Even if a saga genuinely wedges, the
+   stuck-reservation watchdog releases the ticket within 60-120 s, so the
+   stall is bounded in *time* rather than just *space*.
+
+**When you'd diverge from this design.** Three signals would push toward
+something different:
+
+| Signal | What to do |
+| ------ | ---------- |
+| Lag grows during normal load (not stalls) | Bump partition count + consumer concurrency; the cheapest scale knob |
+| Handler genuinely needs to wait on slow I/O | Reactive consumer (`reactor-kafka`) so one thread handles many in-flight messages; cost is reactive-everywhere |
+| Single hot key creates partition skew | Add a sharding suffix to the key; cost is losing strict per-original-key ordering |
+
+Nothing in the current load profile triggers any of those. The 66% drop on
+a stalled thread is acceptable because it's bounded, visible (lag metric
+spikes on one partition), and recoverable — the slow-lane shape we
+designed for.
+
 ## Search subsystem
 
 A dedicated `search-service` exposes two public REST endpoints backed by an
@@ -364,7 +493,7 @@ ticket sales.
 ticket-service              Kafka                 search-service        Elasticsearch
 ─────────────────           ─────────────────     ──────────────────    ──────────────
 EventService                event.search.indexed  EventIndexConsumer    events index
-  ├─ createEvent      ──▶   (3 partitions,        ├─ OPEN  → save()  ──▶ PUT _doc/{id}
+  ├─ createEvent      ──▶   (10 partitions,       ├─ OPEN  → save()  ──▶ PUT _doc/{id}
   ├─ updateEvent      ──▶    keyed by eventId)    └─ else  → delete()──▶ DELETE _doc/{id}
   └─ changeStatus     ──▶
 ```
