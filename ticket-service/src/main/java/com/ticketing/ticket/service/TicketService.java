@@ -216,7 +216,11 @@ public class TicketService {
      * Read single ticket — L1 (Caffeine) → L2 (Redis) → DB.
      */
     @Transactional(readOnly = true)
-    @Cacheable(value = "tickets", key = "#id")
+    // sync=true: per-JVM stampede protection. On a cache miss for a hot
+    // ticketId (e.g. dozens of users opening the same ticket detail page),
+    // only ONE caller actually runs the L2/DB lookup; the rest wait for its
+    // result. Cuts N concurrent DB queries to 1 per JVM.
+    @Cacheable(value = "tickets", key = "#id", sync = true)
     public TicketResponse getTicket(String id) {
         // L2 check
         String cached = redisTemplate.opsForValue().get(L2_PREFIX + id);
@@ -237,7 +241,11 @@ public class TicketService {
      * Read all tickets for event — L1 (Caffeine) → L2 (Redis) → DB.
      */
     @Transactional(readOnly = true)
-    @Cacheable(value = "tickets-event", key = "#eventId")
+    // sync=true: same per-JVM coalescing as getTicket. Browse page traffic
+    // for one event hits this; on a cold cache without sync, N readers all
+    // run the L2 + DB fan-out. Empty results are intentionally cached (no
+    // `unless`) — "no available tickets" is a stable answer for the TTL window.
+    @Cacheable(value = "tickets-event", key = "#eventId", sync = true)
     public List<TicketResponse> getTicketsByEvent(String eventId) {
         String cached = redisTemplate.opsForValue().get(L2_EVT_PREFIX + eventId);
         if (cached != null) {

@@ -75,7 +75,11 @@ public class SecondaryMarketService {
     }
 
     @Transactional(readOnly = true)
-    @Cacheable(value = "listings", key = "#eventId")
+    // sync=true: stampede protection on the resale-market browse path.
+    // Empty list is intentionally cached (no `unless`) — "no listings right
+    // now" is a stable answer for the TTL window and protects against repeat
+    // misses on quiet events.
+    @Cacheable(value = "listings", key = "#eventId", sync = true)
     public List<ListingResponse> getListingsByEvent(String eventId) {
         return listingRepository.findByEventIdAndStatus(eventId, ListingStatus.ACTIVE)
                 .stream().map(listingMapper::toResponse).collect(Collectors.toList());

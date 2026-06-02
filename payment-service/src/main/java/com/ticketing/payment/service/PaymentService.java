@@ -339,7 +339,8 @@ public class PaymentService {
     // ── Read path ────────────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
-    @Cacheable(value = "payments", key = "#orderId")
+    // sync=true: stampede protection — coalesce concurrent misses on the same orderId.
+    @Cacheable(value = "payments", key = "#orderId", sync = true)
     public PaymentResponse getPaymentByOrderId(String orderId) {
         String cached = redisTemplate.opsForValue().get(REDIS_PREFIX + orderId);
         if (cached != null) {

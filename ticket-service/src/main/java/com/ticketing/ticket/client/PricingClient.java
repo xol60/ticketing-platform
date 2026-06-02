@@ -71,13 +71,12 @@ public class PricingClient {
     // Spring Cache automatically unwraps Optional return values:
     //   • Optional.of(x)   → cached as x (the BigDecimal)
     //   • Optional.empty() → not cached at all (no put fires)
-    // So inside the `unless` SpEL #result is the unwrapped BigDecimal (or null
-    // if the method threw / returned empty). The old guard "#result.isEmpty()"
-    // therefore tried to call isEmpty() on a BigDecimal and failed with
-    // SpEL EL1004E. Reduced to a plain null-check now that we know the
-    // unwrapping rule.
-    @Cacheable(value = "event-multiplier", key = "#eventId",
-               unless = "#result == null")
+    // So the negative-caching guard we'd otherwise need is built into Spring.
+    // sync=true adds stampede protection: when many orders for the same event
+    // race on a cold cache, only one actually fetches from pricing-service.
+    // (Note: Spring's @Cacheable forbids combining sync=true with `unless`,
+    // but the Optional auto-skip behaviour makes `unless` redundant anyway.)
+    @Cacheable(value = "event-multiplier", key = "#eventId", sync = true)
     public Optional<BigDecimal> getCurrentMultiplier(String eventId) {
         try {
             PriceRuleSummary summary = restClient.get()

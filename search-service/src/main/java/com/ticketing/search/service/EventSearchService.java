@@ -164,11 +164,24 @@ public class EventSearchService {
      * users see edits within Kafka latency (~1-2 s), not after the
      * 60 s TTL expires.
      */
+    // sync=true: stampede protection. After cache invalidation by
+    // EventIndexConsumer (or 60s TTL expiry), many concurrent typists can land
+    // on the same hot prefix; without coalescing they'd all hit Elasticsearch
+    // simultaneously. Per-JVM Spring Cache locks them to one loader per key.
+    //
+    // `unless` removed (was "#result == null") because suggest() always returns
+    // a non-null List (stream().toList()) — dead-code defence, and Spring's
+    // @Cacheable forbids combining `unless` with `sync=true`.
+    //
+    // `condition` (the admission filter) is kept. If a future Spring version
+    // disallows the condition+sync combo and breaks suggestions, the fallback
+    // is to drop `sync` here and accept stampede after invalidation — the
+    // 60 s TTL makes that a rare event in practice.
     @Cacheable(
             value     = CacheConfig.SUGGEST_REGION,
             key       = "T(com.ticketing.search.service.SearchKey).normalise(#prefix) + ':' + #size",
             condition = "T(com.ticketing.search.service.SearchKey).cacheable(#prefix)",
-            unless    = "#result == null")
+            sync      = true)
     public List<AutocompleteSuggestion> suggest(String prefix, int size) {
         final int safeSize = Math.min(Math.max(size, 1), 10);
 

@@ -68,7 +68,10 @@ public class TicketValidationClient {
      * Fetches ticket summary (facePrice + eventId) from ticket-service.
      * Cached in Caffeine for 10 minutes — facePrice and eventId rarely change.
      */
-    @Cacheable(value = CacheConfig.FACE_PRICE_CACHE, key = "#ticketId")
+    // sync=true: stampede protection — concurrent saga lock-price calls for the
+    // same ticketId after cache expiry would otherwise all hit ticket-service
+    // simultaneously. Per-JVM Spring Cache coalesces them to one HTTP call.
+    @Cacheable(value = CacheConfig.FACE_PRICE_CACHE, key = "#ticketId", sync = true)
     public TicketSummary getTicketSummary(String ticketId) {
         try {
             TicketSummary summary = restClient.get()

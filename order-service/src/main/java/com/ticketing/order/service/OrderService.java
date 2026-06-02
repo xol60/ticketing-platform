@@ -125,7 +125,10 @@ public class OrderService {
         return orderMapper.toResponse(order);
     }
 
-    @Cacheable(value = "orders", key = "#id")
+    // sync=true coalesces concurrent misses on the same orderId — a flash-sale
+    // refresh-storm on the tracker page can otherwise produce N identical DB
+    // queries; per-JVM Spring Cache locks them to one loader.
+    @Cacheable(value = "orders", key = "#id", sync = true)
     @Transactional(readOnly = true)
     public OrderResponse getOrder(String id) {
         String redisKey = REDIS_ORDER_KEY_PREFIX + id;

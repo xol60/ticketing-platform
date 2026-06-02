@@ -65,7 +65,10 @@ public class PricingService {
     }
 
     @Transactional(readOnly = true)
-    @Cacheable(value = CacheConfig.PRICE_RULES_CACHE, key = "#eventId")
+    // sync=true: stampede protection. Every order-creation saga hits this
+    // endpoint to fetch the surge multiplier for its event; under a flash sale
+    // hundreds of sagas race against the same eventId on a cold cache.
+    @Cacheable(value = CacheConfig.PRICE_RULES_CACHE, key = "#eventId", sync = true)
     public PriceRuleResponse getRule(String eventId) {
         return repository.findByEventId(eventId)
                 .map(mapper::toResponse)
