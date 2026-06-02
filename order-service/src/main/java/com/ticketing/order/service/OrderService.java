@@ -38,6 +38,11 @@ public class OrderService {
     private static final String   REDIS_ORDER_KEY_PREFIX = "order:";
     private static final Duration REDIS_TTL              = Duration.ofMinutes(5);
 
+    /** Cross-pod fast-fail intent lock — held for the few-ms window between
+     *  POST acceptance and the saga's authoritative SETNX on ticket:lock. */
+    private static final String   INTENT_LOCK_PREFIX = "order-intent:";
+    private static final Duration INTENT_LOCK_TTL    = Duration.ofSeconds(5);
+
     private final OrderRepository         orderRepository;
     private final OrderMapper             orderMapper;
     private final OrderEventPublisher     eventPublisher;
@@ -47,6 +52,7 @@ public class OrderService {
     private final ReservationAccessClient reservationAccessClient;
     private final OrderSseRegistry        sseRegistry;
     private final Executor                guardCheckExecutor;
+    private final TicketStatusCache       ticketStatusCache;
 
     public OrderService(OrderRepository orderRepository,
                         OrderMapper orderMapper,
@@ -56,7 +62,8 @@ public class OrderService {
                         EventValidationClient eventValidationClient,
                         ReservationAccessClient reservationAccessClient,
                         OrderSseRegistry sseRegistry,
-                        @Qualifier("guardCheckExecutor") Executor guardCheckExecutor) {
+                        @Qualifier("guardCheckExecutor") Executor guardCheckExecutor,
+                        TicketStatusCache ticketStatusCache) {
         this.orderRepository         = orderRepository;
         this.orderMapper             = orderMapper;
         this.eventPublisher          = eventPublisher;
@@ -66,34 +73,82 @@ public class OrderService {
         this.reservationAccessClient = reservationAccessClient;
         this.sseRegistry             = sseRegistry;
         this.guardCheckExecutor      = guardCheckExecutor;
+        this.ticketStatusCache       = ticketStatusCache;
     }
 
     @Transactional
     public OrderResponse createOrder(String userId, String traceId, CreateOrderRequest request) {
-        // Guards 1 & 2 — run in parallel (saves ~15 ms vs serial execution).
-        // Both clients are fail-open on exception, so the futures never complete exceptionally.
-        CompletableFuture<Boolean> eventOpenFuture = CompletableFuture.supplyAsync(
-                () -> eventValidationClient.isEventOpenForSales(request.getTicketId()),
-                guardCheckExecutor);
-        CompletableFuture<Boolean> queueAccessFuture = CompletableFuture.supplyAsync(
-                () -> reservationAccessClient.isAllowedToPurchase(request.getTicketId(), userId),
-                guardCheckExecutor);
+        String ticketId = request.getTicketId();
 
-        // Block until both finish — total wait = max(guard1, guard2), not sum.
-        boolean eventOpen    = eventOpenFuture.join();
-        boolean queueAllowed = queueAccessFuture.join();
-
-        if (!eventOpen) {
+        // ── Fast-fail Tier 1 — per-pod Caffeine cache (µs) ────────────────────
+        // Populated by TicketStateConsumer subscribing to ticket.reserved /
+        // confirmed / released. Catches the dominant race case: many users
+        // clicking Buy on the same hot ticket within ms of each other. If a
+        // recent ticket.reserved event already propagated to this pod, we
+        // reject immediately without touching DB, Redis, or Kafka.
+        if (ticketStatusCache.isTaken(ticketId)) {
             throw new IllegalStateException(
-                    "Event is not open for sales for ticket: " + request.getTicketId());
-        }
-        if (!queueAllowed) {
-            throw new IllegalStateException(
-                    "A different user currently holds the exclusive purchase window for ticket: "
-                    + request.getTicketId()
-                    + ". Please join the queue via POST /api/reservations and wait for your turn.");
+                    "Ticket " + ticketId + " is already reserved or sold — try a different ticket.");
         }
 
+        // ── Fast-fail Tier 2 — cross-pod Redis intent-lock (~0.5 ms) ──────────
+        // SETNX with a 5 s TTL. Two simultaneous winners of Tier 1 (because
+        // their local caches missed independently) race here on Redis — the
+        // loser gets a fast 409 without creating Order / publishing Kafka.
+        // The 5 s TTL covers the ~ms window until the saga's own SETNX on
+        // ticket:lock takes authoritative ownership; TicketStateConsumer
+        // proactively deletes this key on ticket.reserved to free it sooner.
+        String intentKey = INTENT_LOCK_PREFIX + ticketId;
+        Boolean acquired = redisTemplate.opsForValue()
+                .setIfAbsent(intentKey, UUID.randomUUID().toString(), INTENT_LOCK_TTL);
+        if (!Boolean.TRUE.equals(acquired)) {
+            throw new IllegalStateException(
+                    "Ticket " + ticketId + " has a pending checkout — try again in a moment.");
+        }
+
+        try {
+            // Guards 1 & 2 — run in parallel (saves ~15 ms vs serial execution).
+            // Both clients are fail-open on exception, so the futures never complete exceptionally.
+            CompletableFuture<Boolean> eventOpenFuture = CompletableFuture.supplyAsync(
+                    () -> eventValidationClient.isEventOpenForSales(ticketId),
+                    guardCheckExecutor);
+            CompletableFuture<Boolean> queueAccessFuture = CompletableFuture.supplyAsync(
+                    () -> reservationAccessClient.isAllowedToPurchase(ticketId, userId),
+                    guardCheckExecutor);
+
+            // Block until both finish — total wait = max(guard1, guard2), not sum.
+            boolean eventOpen    = eventOpenFuture.join();
+            boolean queueAllowed = queueAccessFuture.join();
+
+            if (!eventOpen) {
+                // Release intent lock so a corrected request from another user isn't blocked.
+                redisTemplate.delete(intentKey);
+                throw new IllegalStateException(
+                        "Event is not open for sales for ticket: " + ticketId);
+            }
+            if (!queueAllowed) {
+                redisTemplate.delete(intentKey);
+                throw new IllegalStateException(
+                        "A different user currently holds the exclusive purchase window for ticket: "
+                        + ticketId
+                        + ". Please join the queue via POST /api/reservations and wait for your turn.");
+            }
+
+            return createOrderInner(userId, traceId, request);
+        } catch (RuntimeException e) {
+            // Anything else (DB error, publisher failure) — release the lock so
+            // a retry isn't gated for 5 s on stale state.
+            redisTemplate.delete(intentKey);
+            throw e;
+        }
+        // Note: on the SUCCESS path the intent-lock is NOT deleted here. It
+        // will be released by TicketStateConsumer when ticket.reserved arrives
+        // (typically ms after this method returns), or by its 5 s TTL as a
+        // last-resort safety net.
+    }
+
+    /** Original Order creation body, extracted so the fast-fail wrapper above can stay readable. */
+    private OrderResponse createOrderInner(String userId, String traceId, CreateOrderRequest request) {
         String orderId = UUID.randomUUID().toString();
         String sagaId  = UUID.randomUUID().toString();
 
