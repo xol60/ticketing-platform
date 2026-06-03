@@ -125,6 +125,12 @@ create_topic "event.status.changed"       # keyed by eventId
 # from overtaking a delete and resurrecting a cancelled event in search.
 create_topic "event.search.indexed"       # keyed by eventId
 
+# ── Event hotness signal ─────────────────────────────────────────────────────
+# Published by ticket-service's EventHotnessWatchdog on HOT-flag transitions
+# only (NOT every tick — minimal traffic). Carries {eventId, hot, viewsPerMinute}.
+# Consumed by order-service for cache pre-warm signal; future admin observability.
+create_topic "event.hotness.changed"      # keyed by eventId
+
 # ---------------------------------------------------------------------------
 # Upgrade existing topics whose partition count was previously 1.
 # ensure_partitions is a no-op when the topic already has >= the target count.
@@ -141,7 +147,7 @@ for topic in \
     pricing.price.changed pricing.failed price.updated \
     payment.cmd payment.succeeded payment.refunded payment.failed \
     reservation.promoted notification.send \
-    event.status.changed event.search.indexed; do
+    event.status.changed event.search.indexed event.hotness.changed; do
   ensure_partitions "$topic" 3
 done
 

@@ -42,6 +42,20 @@ spring:
 server:
   port: 8082
 
+# ── Hot-event detection (EventHotnessWatchdog) ────────────────────────────────
+# View counts feed into Redis (event-views:{eventId}) on every detail-page hit
+# by TicketService.listAvailableTicketsByEvent. The watchdog scans them every
+# tick-seconds, toggles event-hot:{eventId} when thresholds cross, and
+# publishes EventHotnessChangedEvent on transitions. Hysteresis (enter > exit)
+# prevents flapping.
+hotness:
+  enter-threshold:   50      # views/min to mark HOT
+  exit-threshold:    20      # views/min to mark not-HOT
+  window-seconds:    60      # rolling counter window (also Redis TTL on counter)
+  tick-seconds:      10      # watchdog evaluation cadence
+  flag-ttl-seconds:  120     # safety expiry on event-hot:* flag
+  watchdog-enabled:  true    # set false to disable the @Scheduled tick (tests)
+
 # ── Downstream HTTP clients ───────────────────────────────────────────────────
 # Pricing-service is called from the public "list available tickets" endpoint to
 # fetch the per-event surge multiplier. The result is cached locally for 30s,

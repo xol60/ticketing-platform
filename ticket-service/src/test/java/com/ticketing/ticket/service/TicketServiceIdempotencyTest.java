@@ -69,6 +69,11 @@ class TicketServiceIdempotencyTest {
     @Mock PricingClient         pricingClient;   // Not exercised by reserve-idempotency tests, but
                                                   // required by the constructor since Phase 3b
                                                   // wired the public ticket-list endpoint to it.
+    /** Constructor dep added by the hotness watchdog work; idempotency tests
+     *  don't trip the listAvailableTicketsByEvent path, so default-constructed
+     *  defaults are fine here. */
+    final com.ticketing.ticket.config.HotnessProperties hotnessProperties =
+            new com.ticketing.ticket.config.HotnessProperties();
 
     private TicketService ticketService;
 
@@ -86,7 +91,7 @@ class TicketServiceIdempotencyTest {
         ticketService = new TicketService(
                 ticketRepository, ticketMapper, eventPublisher,
                 redisTemplate, eventRepository, objectMapper, txTemplate,
-                pricingClient);
+                pricingClient, hotnessProperties);
 
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
         // Redis SETNX always succeeds in these tests — we're testing the DB-level idempotency

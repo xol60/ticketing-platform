@@ -73,6 +73,7 @@ public class TicketService {
     private final ObjectMapper          objectMapper;
     private final TransactionTemplate   txTemplate;
     private final PricingClient         pricingClient;
+    private final com.ticketing.ticket.config.HotnessProperties hotnessProperties;
 
     // ── CRUD ─────────────────────────────────────────────────────────────────
 
@@ -305,6 +306,13 @@ public class TicketService {
     @Transactional(readOnly = true)
     public AvailableTicketsPage listAvailableTicketsByEvent(String eventId, int page, int size) {
 
+        // ── 0. View-counter: feed the hotness watchdog ────────────────────────
+        // Detail page views drive the rolling event-views:{eventId} counter.
+        // INCR + EXPIRE is sub-ms. Wrapped in try/catch so a Redis hiccup
+        // never fails the browse request — hotness signalling degrades
+        // gracefully into "no hot detection while Redis is down".
+        recordEventView(eventId);
+
         // ── 1. One paginated DB query (interface projection, index-only scan) ──
         List<TicketRepository.PublicTicketRow> rows = ticketRepository
                 .findPublicByEventIdAndStatus(eventId, TicketStatus.AVAILABLE,
@@ -341,6 +349,27 @@ public class TicketService {
                 .page(page)
                 .tickets(tickets)
                 .build();
+    }
+
+    /**
+     * Fire-and-forget increment of the per-event view counter used by the
+     * hotness watchdog. INCR + EXPIRE on the same key implements a simple
+     * rolling window: the EXPIRE arms a TTL on every hit so the key only
+     * disappears after {@code windowSeconds} of zero activity. Counts
+     * therefore reflect the most-recent-activity bucket.
+     *
+     * <p>Wrapped in try/catch: a Redis failure must NEVER fail the browse
+     * request — the hotness signal degrades into "no detection while Redis
+     * is down" and silently recovers once Redis is back.
+     */
+    private void recordEventView(String eventId) {
+        try {
+            String key = "event-views:" + eventId;
+            redisTemplate.opsForValue().increment(key);
+            redisTemplate.expire(key, Duration.ofSeconds(hotnessProperties.getWindowSeconds()));
+        } catch (Exception e) {
+            log.debug("View-counter INCR failed for eventId={}: {}", eventId, e.getMessage());
+        }
     }
 
     @Transactional

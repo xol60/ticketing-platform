@@ -66,6 +66,15 @@ public final class Topics {
     // are applied to ES in order — no risk of a stale upsert overtaking a delete.
     public static final String EVENT_SEARCH_INDEXED  = "event.search.indexed";
 
+    // Event-hotness signal — published by ticket-service's EventHotnessWatchdog
+    // on transition (HOT_ENTER threshold crossed up → publish hot=true; HOT_EXIT
+    // threshold crossed down → publish hot=false). NOT a per-tick stream — only
+    // transitions, so traffic is minimal. Consumed by order-service for cache
+    // pre-warm signals; future consumers (admin observability) can subscribe
+    // without changes here. Keyed by eventId so per-event transitions are
+    // strictly ordered within a partition.
+    public static final String EVENT_HOTNESS_CHANGED = "event.hotness.changed";
+
     // Notification
     public static final String NOTIFICATION_SEND     = "notification.send";
 
