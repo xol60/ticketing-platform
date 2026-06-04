@@ -177,3 +177,52 @@ parked thread is a visible loss of capacity on that listener's topic.
 | Claim-lease (`nextRetryAt` window)    | Two payment pods double-charging the same payment       |
 | Write-through saga state (PG → Redis) | Lost progress on Redis flush or pod restart             |
 | Idempotency (sagaId / payment state)  | Duplicate processing on Kafka redelivery                |
+| `order-intent:{ticketId}` SETNX       | Many users racing `POST /api/orders` on the same ticket — 19 of 20 fast-fail in <1 ms before DB or Kafka touch |
+| order-service local Caffeine cache    | Same-pod retry where a recent `ticket.reserved` event already propagated — rejected in µs, no Redis call |
+
+---
+
+## Cache stampede protection (read paths)
+
+Hot read paths use `@Cacheable(sync = true)` so concurrent misses on the
+same key coalesce into a single backend lookup per JVM. Without this, a
+TTL expiry on a popular key can cause N concurrent requests to all hit
+the underlying source (DB, ES, downstream HTTP) simultaneously — the
+classic "thundering herd."
+
+```
+With sync=true (measured on /api/search/events/suggest):
+  10 concurrent GET on a fresh key  →  3 misses + 9 hits
+  effective backend calls: 1                    ← coalesced
+
+Without sync (naive @Cacheable):
+  10 concurrent GET on a fresh key  →  10 misses
+  effective backend calls: 10                   ← stampede
+```
+
+Applied across:
+
+| Service | Method | Backend protected |
+|---|---|---|
+| ticket-service | `getTicket`, `getTicketsByEvent` | Postgres |
+| ticket-service | `PricingClient.getCurrentMultiplier` | pricing-service HTTP |
+| pricing-service | `getRule` | Postgres |
+| pricing-service | `TicketValidationClient.getTicketSummary` | ticket-service HTTP |
+| search-service | `EventSearchService.suggest` | Elasticsearch |
+| order-service | `getOrder` | Postgres |
+| payment-service | `getPaymentByOrderId` | Postgres |
+| secondary-market-service | `getListingsByEvent` | Postgres |
+
+Coalescing is **per-JVM**, not cross-JVM. With 3 pods of one service on a
+fresh cache, you might see 3 backend calls instead of 1 — still a
+30× reduction vs the un-protected case at typical pod counts. Cross-JVM
+coordination via Redis SETNX is overkill at the current scale; the
+sync-per-JVM gain dwarfs the cross-pod residual.
+
+**Trade-off Spring imposes**: `sync=true` is incompatible with `unless`.
+Two affected annotations had `unless` removed because the negative-skip
+behaviour was already handled by Spring's `Optional<T>` unwrap (empty
+Optionals never enter the cache regardless of the `unless` clause), or
+the return type made the guard dead-code-defensive. Where `condition`
+filtering is load-bearing (e.g. `EventSearchService.suggest`'s admission
+filter for cache-pollution defence), it's kept alongside `sync=true`.

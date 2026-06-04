@@ -176,7 +176,7 @@ docker-compose up --build --no-deps ticket-service
 
 ## Kafka topics
 
-26 topics in total. Saga-flow topics use **10 partitions** by default, with the
+27 topics in total. Saga-flow topics use **10 partitions** by default, with the
 partition key chosen so messages that need ordering land on the same partition
 (usually `orderId`, sometimes `eventId` or `ticketId`). Two topics keep
 **1 partition** intentionally (`payment.dlq`, `auth.security.alert`) so DLQ
@@ -243,6 +243,7 @@ application-level locking.
 | Reservation | `reservation.promoted`  | reservation             | _(none — fan-out)_           | `ReservationPromotedEvent`                     | 10    | —      | ticketId |
 | Event mgmt  | `event.status.changed`  | ticket                  | _(none — fan-out)_           | `EventStatusChangedEvent`                      | 10    | —      | eventId  |
 | Event mgmt  | `event.search.indexed`  | ticket                  | search                       | `EventSearchIndexedEvent`                      | 10    | 3      | eventId  |
+| Event mgmt  | `event.hotness.changed` | ticket                  | order                        | `EventHotnessChangedEvent`                     | 10    | 3      | eventId  |
 | Notif       | `notification.send`     | any service             | notification                 | `NotificationSendCommand`                      | 10    | 3      | orderId  |
 | Security    | `auth.security.alert`   | auth                    | notification                 | `AuthSecurityAlertEvent`                       | **1** | 3      | userId   |
 
@@ -268,17 +269,54 @@ SSE) — see notes below.
   about them. The search-service uses the related `event.search.indexed`
   topic instead.
 
-## Order placement — saga flows
+## Order placement — fast-fail ingress + saga flows
 
-Three end-to-end flows triggered by `POST /api/orders`, all sharing the first four hops
-and diverging at the **pricing-lock** step.
+`POST /api/orders` has two stages: a **fast-fail ingress** that rejects races
+before any persistent state is touched, and the **saga** that runs after a
+request actually claims a slot. The same three saga flows live below the ingress.
 
 > ▶️ **[Animated saga flows](https://htmlpreview.github.io/?https://github.com/xol60/ticketing-platform/blob/main/docs/animated-flows.html)** — interactive play/pause/step demo.
 > 📄 **[Static reference](https://htmlpreview.github.io/?https://github.com/xol60/ticketing-platform/blob/main/docs/diagrams.html)** — scroll-through HTML version.
 
+### Stage 0 — fast-fail tiers in order-service
+
+Under flash-sale conditions, hundreds of users click Buy on the same ticket
+within milliseconds. Without ingress filters, every one would create an
+Order row, fire an `OrderCreatedEvent`, instantiate saga state, and only
+fail later at the saga's `SETNX` on `ticket:lock:{id}` — DB inserts and
+Kafka traffic for every loser. Three tiers cut that to ~1:
+
+```
+POST /api/orders {ticketId, requestedPrice}
+   │
+   ├─► Tier 1 — local Caffeine "order-ticket-status" (per-pod, µs)
+   │     populated by TicketStateConsumer subscribing to ticket.reserved
+   │     / confirmed / released. cross-pod convergence at Kafka latency.
+   │     hit → 409 immediately (no DB, no Kafka)
+   │
+   ├─► Tier 2 — Redis SETNX "order-intent:{ticketId}" (cross-pod, ~0.5ms)
+   │     held for the few-ms window until the saga's authoritative lock
+   │     takes over. 5s TTL safety; TicketStateConsumer also DELs on
+   │     ticket.reserved to release sooner.
+   │     held by another → 409
+   │
+   ├─► Existing guard checks (event open? user allowed to purchase?)
+   │     run in parallel via guardCheckExecutor
+   │
+   └─► Order INSERT + OrderCreatedEvent → saga starts (next subsection)
+       Tier 3 — the saga's own SETNX on ticket:lock:{ticketId} +
+       JPA @Version is the authoritative gate in ticket-service.
+```
+
+Measured outcome (20 concurrent POSTs on same ticket):
+**1 Order created, 19 rejected at Tier 2** in ~ms each — instead of 20
+Order INSERTs plus 19 saga compensations.
+
+### Stage 1 — saga flows
+
 ```mermaid
 flowchart LR
-    Start([POST /api/orders]) --> Reserve[Reserve ticket]
+    Start([Saga starts]) --> Reserve[Reserve ticket]
     Reserve --> Lock{Pricing lock}
     Lock -->|Case B: exact match| Pay[Charge payment]
     Lock -->|Case C: surge moved| Wait[AWAITING_PRICE_CONFIRMATION<br/>30s window]
@@ -322,6 +360,52 @@ load on hot prefixes ~30-fold; outages here degrade discovery without
 affecting ticket sales (Postgres remains the source of truth).
 
 ▶︎ **[`search-service/README.md`](search-service/README.md)** — architecture, indexing pipeline, load-shaping for `/suggest`, what's explicitly out of scope.
+
+## Hot-event detection
+
+Per-event view-counter + watchdog that proactively flags events surging in
+traffic. Complements the reactive Caffeine cache: LFU is per-ticket and
+adapts to actual access patterns, while this signal is per-event and
+catches the "5,000 distinct tickets, each viewed once" case LFU misses.
+
+```
+GET /api/tickets/events/{id}/tickets
+   ↓
+ticket-service: INCR event-views:{id}  +  EXPIRE = 60s   (rolling window)
+
+EventHotnessWatchdog (every 10s, in ticket-service):
+   SCAN event-views:*  →  MGET all counters
+   count ≥ 50  AND not currently HOT  →  SET event-hot:{id} EX 120
+                                          publish hot=true to Kafka
+   count ≤ 20  AND currently HOT       →  DEL event-hot:{id}
+                                          publish hot=false
+   (else)                              →  refresh event-hot TTL
+
+Kafka: event.hotness.changed (transitions only — minimal traffic)
+   ↓
+order-service: EventHotnessConsumer  →  log transition  (v1: log-only)
+```
+
+**Hysteresis (enter > exit) prevents flapping** when traffic hovers near the
+threshold; **120s safety TTL** on the HOT flag means a dead watchdog
+can't leave events stuck hot forever.
+
+Tunable in `application.yml` without rebuild:
+
+| Knob | Default | Purpose |
+| ---- | ------- | ------- |
+| `hotness.enter-threshold` | 50 views/min | Cross going up → HOT |
+| `hotness.exit-threshold`  | 20 views/min | Cross going down → not-HOT |
+| `hotness.window-seconds`  | 60           | Rolling window (also Redis TTL on counter) |
+| `hotness.tick-seconds`    | 10           | Watchdog evaluation cadence |
+| `hotness.flag-ttl-seconds`| 120          | Safety expiry on the HOT flag |
+
+**v1 consumer behaviour: log-only.** Two future hooks plug in at
+`EventHotnessConsumer` without producer-side changes:
+1. On `hot=true`: pre-fetch the event's tickets into `order-ticket-status`
+   so even cold-pod first-reads land in cache.
+2. On `hot=true`: bump the gateway's per-path rate limit so legitimate
+   buyers aren't throttled by the surge.
 
 ## Request idempotency
 
