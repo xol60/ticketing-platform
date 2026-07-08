@@ -1,0 +1,81 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Cache hit ratio per region. sync=true on @Cacheable means concurrent misses on a hot key coalesce into one loader; with admission filters (search-suggest) and W-TinyLFU eviction (Caffeine default) hit ratio should sit above 90% for hot prefixes.",
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "legend": { "calcs": ["mean", "last"], "displayMode": "table", "placement": "right" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (application, cache) (rate(cache_gets_total{result=\"hit\"}[5m])) / clamp_min(sum by (application, cache) (rate(cache_gets_total[5m])), 0.01)",
+          "legendFormat": "{{application}} / {{cache}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Cache hit ratio per region",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Cache size per region — Caffeine LFU eviction caps each region (search-suggest 50k, others 10k). A region hugging its cap means the working set exceeds capacity; consider raising max or audit key cardinality.",
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": { "legend": { "calcs": ["last"], "displayMode": "table", "placement": "right" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "cache_size",
+          "legendFormat": "{{application}} / {{cache}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Cache size (entries) per region",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Resilience4j circuit-breaker state per downstream service in the api-gateway. State values: CLOSED=0, OPEN=1, HALF_OPEN=2. A non-zero spike = the gateway opened the breaker because the upstream's 5xx/timeout rate crossed the configured 50% threshold over the last 20 calls.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            { "options": { "0": { "color": "green", "text": "CLOSED" } }, "type": "value" },
+            { "options": { "1": { "color": "red", "text": "OPEN" } }, "type": "value" },
+            { "options": { "2": { "color": "orange", "text": "HALF_OPEN" } }, "type": "value" }
+          ]
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 10 },
+      "id": 3,
+      "options": { "legend": { "calcs": ["last"], "displayMode": "table", "placement": "right" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "resilience4j_circuitbreaker_state{state=\"open\"} * 1 + resilience4j_circuitbreaker_state{state=\"half_open\"} * 2",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Circuit breaker state per upstream",
+      "type": "timeseries"
+    }
+  ],
+  "schemaVersion": 38,
+  "tags": ["overture", "resilience"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "timezone": "",
+  "title": "Overture — Cache + circuit breakers",
+  "uid": "overture-cache-cb",
+  "version": 1
+}

@@ -1,0 +1,43 @@
+# Promtail — discovers Docker containers on the host daemon, scrapes their
+# stdout/stderr (the json-file driver), and pushes to Loki.
+#
+# Label strategy: we keep ONE high-cardinality label (`container`) and tag
+# everything else as static fields. This keeps the active stream count low
+# while letting Grafana Explore filter by service quickly.
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: warn
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    batchwait: 1s
+    batchsize: 1048576
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 15s
+        filters:
+          # Only pick up containers tagged for our compose project — skip stray
+          # daemons from the host.
+          - name: label
+            values: ["com.docker.compose.project=ticketing-platform"]
+    relabel_configs:
+      # /<container_name>  →  container=<name>  (strip the leading slash)
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/(.*)"
+        target_label: container
+      # compose service name lives in this label
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        target_label: service
+      # image (without tag) for filtering "all prometheus-exporters" type queries
+      - source_labels: ["__meta_docker_container_log_stream"]
+        target_label: stream
+      - target_label: job
+        replacement: docker

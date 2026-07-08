@@ -1,0 +1,60 @@
+# Prometheus scrape config for the Overture admin-observability layer.
+#
+# Two kinds of scrape jobs:
+#   1. Spring Boot services — scrape Micrometer's /actuator/prometheus on
+#      each service's HTTP port. The `application` micrometer tag is set per
+#      service via `management.metrics.tags.application` (already configured),
+#      which Grafana panels use to slice metrics per service.
+#   2. Stand-alone exporters — cAdvisor (container CPU/RAM), kafka-exporter
+#      (consumer-group lag), postgres-exporter (replication lag).
+#
+# Service-discovery: static configs over Docker internal DNS (ticketing-net).
+# Adequate for a single Compose deployment; replace with file-sd or DNS-SD if
+# this ever runs under an orchestrator that schedules pods dynamically.
+
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: overture-dev
+
+scrape_configs:
+  # ── Spring Boot services (actuator/prometheus) ─────────────────────────────
+  - job_name: spring-services
+    metrics_path: /actuator/prometheus
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - api-gateway:8090
+          - auth-service:8081
+          - ticket-service:8082
+          - order-service:8083
+          - saga-orchestrator:8084
+          - pricing-service:8085
+          - reservation-service:8086
+          - payment-service:8087
+          - secondary-market-service:8088
+          - notification-service:8089
+          - search-service:8091
+
+  # ── cAdvisor — per-container CPU/RAM/Disk/Network ─────────────────────────
+  # The standard "docker engine -> cAdvisor -> Prometheus" pipeline.
+  # Metrics surface as container_cpu_usage_seconds_total etc.
+  - job_name: cadvisor
+    static_configs:
+      - targets: [cadvisor:8080]
+
+  # ── Kafka — consumer-group lag (the crown-jewel signal for this codebase) ─
+  # kafka-exporter exposes kafka_consumergroup_lag, kafka_topic_partition_*
+  # which drives the per-listener/partition lag dashboard.
+  - job_name: kafka-exporter
+    static_configs:
+      - targets: [kafka-exporter:9308]
+
+  # ── Postgres — replication lag (the read-your-writes safety signal) ───────
+  # postgres-exporter runs a configured query against pg_stat_replication
+  # so we can dashboard the master/slave replication-lag window vs the 5 s
+  # sticky-master TTL.
+  - job_name: postgres-exporter
+    static_configs:
+      - targets: [postgres-exporter:9187]

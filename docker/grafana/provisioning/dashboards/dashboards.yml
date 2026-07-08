@@ -1,0 +1,16 @@
+# Tells Grafana to file-watch /var/lib/grafana/dashboards/ and import any
+# JSON dashboards it finds. We mount our dashboards into that path from
+# docker/grafana/dashboards/.
+
+apiVersion: 1
+
+providers:
+  - name: overture
+    orgId: 1
+    folder: Overture
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

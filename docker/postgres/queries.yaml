@@ -1,0 +1,33 @@
+# Custom queries for postgres-exporter.
+#
+# Goal: surface replication lag of postgres-slave behind postgres-master.
+# This is the signal that tells us whether the read-your-writes sticky-master
+# window (5 s in ReplicationConsistencyAspect) is still safe — if the lag ever
+# exceeds 5 s, the sticky timeout could expire BEFORE the slave catches up and
+# even the writing user could briefly see stale data.
+#
+# Mounted into postgres-exporter via:
+#   --extend.query-path=/queries.yaml
+#
+# pg_replication_lag_seconds:
+#   Gauges per active replica. Picks the longest of (write_lag, flush_lag,
+#   replay_lag) which corresponds to the moment a writing client could
+#   observe their write reflected on the slave.
+
+pg_replication_lag_seconds:
+  query: |
+    SELECT
+      client_addr::text AS client_addr,
+      application_name,
+      state,
+      EXTRACT(EPOCH FROM COALESCE(write_lag,  '0 seconds'::interval)) AS write_lag,
+      EXTRACT(EPOCH FROM COALESCE(flush_lag,  '0 seconds'::interval)) AS flush_lag,
+      EXTRACT(EPOCH FROM COALESCE(replay_lag, '0 seconds'::interval)) AS replay_lag
+    FROM pg_stat_replication
+  metrics:
+    - client_addr:      { usage: LABEL, description: "Replica client address" }
+    - application_name: { usage: LABEL, description: "Replica application name" }
+    - state:            { usage: LABEL, description: "Replication state" }
+    - write_lag:        { usage: GAUGE, description: "Seconds since master committed; reported to client" }
+    - flush_lag:        { usage: GAUGE, description: "Seconds for slave to flush WAL to disk" }
+    - replay_lag:       { usage: GAUGE, description: "Seconds for slave to apply WAL (visible to readers)" }

@@ -1,0 +1,78 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Consumer lag PER consumer group + topic + partition. With concurrency-per-listener = 3 and 10 partitions, lag should sit near 0 in steady state; a stuck consumer thread surfaces here as monotonic growth on ~3 partitions of one topic — the 'slow lane, not outage' shape.",
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "legend": { "calcs": ["max", "last"], "displayMode": "table", "placement": "right" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (consumergroup, topic) (kafka_consumergroup_lag)",
+          "legendFormat": "{{consumergroup}} / {{topic}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Kafka consumer lag (sum by group + topic)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Postgres slave replication lag vs the 5s sticky-master window. If replay_lag ever exceeds 5s, the read-your-writes guarantee in ReplicationConsistencyAspect breaks — even the writing user could briefly see stale data when their sticky flag expires before the slave catches up.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 3 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 12 },
+      "id": 2,
+      "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "pg_replication_lag_seconds_replay_lag",
+          "legendFormat": "replay_lag {{application_name}}",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "pg_replication_lag_seconds_flush_lag",
+          "legendFormat": "flush_lag {{application_name}}",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "pg_replication_lag_seconds_write_lag",
+          "legendFormat": "write_lag {{application_name}}",
+          "refId": "C"
+        }
+      ],
+      "title": "Postgres replication lag — slave behind master",
+      "type": "timeseries"
+    }
+  ],
+  "schemaVersion": 38,
+  "tags": ["overture", "infra"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "timezone": "",
+  "title": "Overture — Kafka lag + PG replication",
+  "uid": "overture-lag",
+  "version": 1
+}

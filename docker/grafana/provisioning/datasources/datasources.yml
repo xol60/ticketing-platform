@@ -1,0 +1,21 @@
+# Provisioned datasources for Overture admin observability.
+# Picked up by Grafana on startup from /etc/grafana/provisioning/datasources/
+# so the admin doesn't have to click around to add Prometheus/Loki manually.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    uid: prometheus
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+
+  - name: Loki
+    type: loki
+    access: proxy
+    uid: loki
+    url: http://loki:3100
+    editable: false

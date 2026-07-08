@@ -56,6 +56,8 @@ logging:
   level:
     com.ticketing: INFO
     org.springframework.kafka: WARN
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} traceId=%X{traceId} - %msg%n"
 
 ---
 spring:
