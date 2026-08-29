@@ -101,4 +101,30 @@ public class TicketValidationClient {
     public String getEventId(String ticketId) {
         return getTicketSummary(ticketId).getEventId();
     }
+
+    /**
+     * Resolves the owner (auth-service user id) of an event, for EVENT_OWNER
+     * ownership checks on price-rule writes. Returns {@code null} if the event
+     * has no owner or ticket-service is unreachable — callers treat that as
+     * "cannot confirm ownership" and fail closed for non-admins.
+     */
+    public String getEventOwnerId(String eventId) {
+        try {
+            EventOwnerView view = restClient.get()
+                    .uri("/internal/events/{eventId}/status", eventId)
+                    .retrieve()
+                    .body(EventOwnerView.class);
+            return view != null ? view.ownerId() : null;
+        } catch (HttpClientErrorException.NotFound e) {
+            throw new IllegalArgumentException("Event not found: " + eventId);
+        } catch (Exception e) {
+            log.error("ticket-service unreachable when resolving owner for eventId={}: {}",
+                    eventId, e.getMessage());
+            throw new IllegalStateException("Cannot resolve event owner — ticket-service unavailable");
+        }
+    }
+
+    /** Minimal projection of the event-status payload — only the owner matters here. */
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private record EventOwnerView(String ownerId) { }
 }

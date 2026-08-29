@@ -37,6 +37,15 @@ public class Event {
     @Column(name = "event_date", nullable = false)
     private Instant eventDate;
 
+    /**
+     * auth-service user id of the EVENT_OWNER (or ADMIN) who owns this event.
+     * Set on create from the gateway-injected {@code X-User-Id}. Used to enforce
+     * that an EVENT_OWNER may only manage their own events (ADMIN bypasses).
+     * Cross-DB reference, so no FK — validated at the application tier.
+     */
+    @Column(name = "owner_id", length = 36)
+    private String ownerId;
+
     // ── Searchable metadata (added for Elasticsearch event-search subsystem) ──
     // All nullable so the schema change is non-breaking for existing rows.
     @Column(name = "primary_artist", length = 255)

@@ -27,8 +27,10 @@ public class EventController {
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<EventStatusResponse> create(
             @Valid @RequestBody CreateEventRequest request,
+            @RequestHeader(value = "X-User-Id",  required = false) String userId,
             @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
-        return ApiResponse.ok(eventService.createEvent(request, traceId), traceId);
+        // Caller (gateway-injected X-User-Id) becomes the owner of the new event.
+        return ApiResponse.ok(eventService.createEvent(request, userId, traceId), traceId);
     }
 
     /**
@@ -40,29 +42,37 @@ public class EventController {
     public ApiResponse<EventStatusResponse> update(
             @PathVariable String eventId,
             @Valid @RequestBody UpdateEventRequest request,
-            @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
-        return ApiResponse.ok(eventService.updateEvent(eventId, request, traceId), traceId);
+            @RequestHeader(value = "X-User-Id",   required = false) String userId,
+            @RequestHeader(value = "X-User-Role", required = false) String role,
+            @RequestHeader(value = "X-Trace-Id",  required = false) String traceId) {
+        return ApiResponse.ok(eventService.updateEvent(eventId, request, userId, role, traceId), traceId);
     }
 
     @PatchMapping("/api/tickets/events/{eventId}/open")
     public ApiResponse<EventStatusResponse> open(
             @PathVariable String eventId,
-            @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
-        return ApiResponse.ok(eventService.openEvent(eventId, traceId), traceId);
+            @RequestHeader(value = "X-User-Id",   required = false) String userId,
+            @RequestHeader(value = "X-User-Role", required = false) String role,
+            @RequestHeader(value = "X-Trace-Id",  required = false) String traceId) {
+        return ApiResponse.ok(eventService.openEvent(eventId, userId, role, traceId), traceId);
     }
 
     @PatchMapping("/api/tickets/events/{eventId}/cancel")
     public ApiResponse<EventStatusResponse> cancel(
             @PathVariable String eventId,
-            @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
-        return ApiResponse.ok(eventService.cancelEvent(eventId, traceId), traceId);
+            @RequestHeader(value = "X-User-Id",   required = false) String userId,
+            @RequestHeader(value = "X-User-Role", required = false) String role,
+            @RequestHeader(value = "X-Trace-Id",  required = false) String traceId) {
+        return ApiResponse.ok(eventService.cancelEvent(eventId, userId, role, traceId), traceId);
     }
 
     @PatchMapping("/api/tickets/events/{eventId}/close")
     public ApiResponse<EventStatusResponse> close(
             @PathVariable String eventId,
-            @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
-        return ApiResponse.ok(eventService.closeEvent(eventId, traceId), traceId);
+            @RequestHeader(value = "X-User-Id",   required = false) String userId,
+            @RequestHeader(value = "X-User-Role", required = false) String role,
+            @RequestHeader(value = "X-Trace-Id",  required = false) String traceId) {
+        return ApiResponse.ok(eventService.closeEvent(eventId, userId, role, traceId), traceId);
     }
 
     @GetMapping("/api/tickets/events")

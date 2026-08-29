@@ -21,6 +21,9 @@ public class EventStatusResponse {
     private Instant     eventDate;
     private boolean     openForSales;
 
+    /** auth-service user id of the EVENT_OWNER/ADMIN who owns this event. */
+    private String      ownerId;
+
     // ── Searchable metadata (echoed back for admin UI / search) ──
     private String primaryArtist;
     private String venueName;

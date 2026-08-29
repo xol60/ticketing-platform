@@ -21,8 +21,10 @@ public class PricingController {
 
     @PostMapping("/rules")
     public ResponseEntity<PriceRuleResponse> createRule(
-            @Valid @RequestBody CreatePriceRuleRequest request) {
-        return ResponseEntity.ok(pricingService.createRule(request));
+            @Valid @RequestBody CreatePriceRuleRequest request,
+            @RequestHeader(value = "X-User-Id",   required = false) String userId,
+            @RequestHeader(value = "X-User-Role", required = false) String role) {
+        return ResponseEntity.ok(pricingService.createRule(request, userId, role));
     }
 
     @GetMapping("/rules/{eventId}")
@@ -33,8 +35,10 @@ public class PricingController {
     @PutMapping("/rules/{eventId}")
     public ResponseEntity<PriceRuleResponse> updateRule(
             @PathVariable String eventId,
-            @Valid @RequestBody UpdatePriceRuleRequest request) {
-        return ResponseEntity.ok(pricingService.updateRule(eventId, request));
+            @Valid @RequestBody UpdatePriceRuleRequest request,
+            @RequestHeader(value = "X-User-Id",   required = false) String userId,
+            @RequestHeader(value = "X-User-Role", required = false) String role) {
+        return ResponseEntity.ok(pricingService.updateRule(eventId, request, userId, role));
     }
 
     // ── Effective price ───────────────────────────────────────────────────────

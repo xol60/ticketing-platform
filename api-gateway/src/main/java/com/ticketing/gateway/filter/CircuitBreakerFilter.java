@@ -21,11 +21,15 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Filter order 3 — circuit breaker.
+ * Filter order 4 — circuit breaker.
  *
  * Wraps the downstream chain with a per-service Resilience4j CircuitBreaker.
  * OPEN state → immediate 503, no downstream call.
  * Records success/failure on each completed downstream call.
+ *
+ * <p>Runs AFTER {@link AuthFilter} (order 3): only authenticated, authorized
+ * requests reach the circuit breaker, so gateway 401/403 rejections never enter
+ * this operator (which previously raced the committed response into a 502).
  */
 @Slf4j
 @Component
@@ -37,7 +41,7 @@ public class CircuitBreakerFilter implements GlobalFilter, Ordered {
 
     @Override
     public int getOrder() {
-        return Ordered.HIGHEST_PRECEDENCE + 2;
+        return Ordered.HIGHEST_PRECEDENCE + 3; // after AuthFilter (+2)
     }
 
     @Override

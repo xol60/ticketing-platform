@@ -1,6 +1,7 @@
 package com.ticketing.gateway.filter;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ticketing.gateway.config.GatewayProperties;
 import com.ticketing.gateway.ratelimit.SlidingWindowRateLimiter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,6 +33,7 @@ public class RateLimitFilter implements GlobalFilter, Ordered {
 
     private final SlidingWindowRateLimiter rateLimiter;
     private final ObjectMapper     objectMapper;
+    private final GatewayProperties properties;
 
     @Override
     public int getOrder() {
@@ -40,6 +42,11 @@ public class RateLimitFilter implements GlobalFilter, Ordered {
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+        // Master switch — when disabled, every request bypasses the limiter.
+        if (!properties.getRateLimit().isEnabled()) {
+            return chain.filter(exchange);
+        }
+
         String ip      = resolveIp(exchange);
         String userId  = exchange.getRequest().getHeaders().getFirst("X-User-Id");
         String path    = exchange.getRequest().getPath().value();

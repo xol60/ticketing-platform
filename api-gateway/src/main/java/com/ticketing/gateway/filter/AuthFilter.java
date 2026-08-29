@@ -22,15 +22,23 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Filter order 4 — authentication.
+ * Filter order 3 — authentication.
+ *
+ * <p>Runs BEFORE {@link CircuitBreakerFilter} (order 4) on purpose: an auth
+ * rejection (401/403) must terminate the request here, outside the circuit
+ * breaker's reactive operator. If auth ran inside the CB wrapper, writing the
+ * rejection response would race the operator's terminal-signal handling and
+ * intermittently surface as a torn 502. Authenticating first also avoids
+ * spending circuit-breaker budget on requests that never reach a downstream.
  *
  * Pipeline:
  *   1. Skip if path is public (no auth required)
  *   2. Extract Bearer token from Authorization header
  *   3. Resolve via TokenCacheService (L1 → L2 → cold JWT validation)
  *   4. Reject with 401 if not resolved
- *   5. Strip original Authorization header
- *   6. Inject X-User-Id, X-User-Role, X-Tenant-Id, X-Trace-Id into forwarded request
+ *   5. Enforce config-driven role rules (403 on mismatch)
+ *   6. Strip original Authorization header
+ *   7. Inject X-User-Id, X-User-Role, X-Tenant-Id, X-Trace-Id into forwarded request
  */
 @Slf4j
 @Component
@@ -43,7 +51,7 @@ public class AuthFilter implements GlobalFilter, Ordered {
 
     @Override
     public int getOrder() {
-        return Ordered.HIGHEST_PRECEDENCE + 3;
+        return Ordered.HIGHEST_PRECEDENCE + 2; // before CircuitBreakerFilter (+3)
     }
 
     @Override
@@ -76,19 +84,37 @@ public class AuthFilter implements GlobalFilter, Ordered {
 
         String token = authHeader.substring(7);
 
+        String methodName = method != null ? method.name() : "";
+
+        // NB: wrap the identity in Optional + defaultIfEmpty rather than using
+        // switchIfEmpty after the flatMap. A reject path returns Mono<Void> which
+        // completes empty, so a trailing switchIfEmpty would ALSO fire and write a
+        // second response onto the already-committed one (UnsupportedOperationException
+        // "response already committed" + truncated body). Handling the empty-token
+        // case inside a single flatMap guarantees exactly one response is written.
         return tokenCacheService.resolve(token)
-                .flatMap(identity -> {
-                    // Admin-only paths: reject non-ADMIN users with 403
-                    if (path.startsWith("/api/admin/") && !"ADMIN".equals(identity.getRole())) {
-                        log.warn("Forbidden admin access: userId={} role={} path={}",
-                                identity.getUserId(), identity.getRole(), path);
-                        return rejectWith403(exchange, traceId, "Admin access required");
+                .map(Optional::of)
+                .defaultIfEmpty(Optional.empty())
+                .flatMap(maybeIdentity -> {
+                    if (maybeIdentity.isEmpty()) {
+                        return rejectWith401(exchange, traceId, "Invalid or expired token");
+                    }
+                    TokenIdentity identity = maybeIdentity.get();
+
+                    // Config-driven role gate — first matching rule decides.
+                    for (GatewayProperties.RoleRule rule : properties.getRoleRules()) {
+                        if (rule.matches(path, methodName)) {
+                            if (!rule.allows(identity.getRole())) {
+                                log.warn("Forbidden: userId={} role={} {} {} requires={}",
+                                        identity.getUserId(), identity.getRole(),
+                                        methodName, path, rule.getRoles());
+                                return rejectWith403(exchange, traceId, "Insufficient role");
+                            }
+                            break; // first matching rule is authoritative
+                        }
                     }
                     return forwardWithIdentity(exchange, chain, identity, traceId, token);
-                })
-                .switchIfEmpty(
-                    Mono.defer(() -> rejectWith401(exchange, traceId, "Invalid or expired token"))
-                );
+                });
     }
 
     private Mono<Void> forwardWithIdentity(ServerWebExchange exchange,

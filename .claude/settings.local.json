@@ -254,7 +254,10 @@
       "Bash(bash tests/stress-test.sh)",
       "Bash(timeout 5 docker logs --tail 50 order-service)",
       "Bash(python3 -c \"import json,sys; r=json.load\\(sys.stdin\\)['data']['result']; v=float\\(r[0]['value'][1]\\) if r else 0; print\\(f'  ~{v:.1f} messages/sec đẩy vào Kafka'\\)\")",
-      "Bash(python3 -c \"import json,sys; r=json.load\\(sys.stdin\\)['data']['result']; print\\(f'  total send: {r[0][\\\\\"value\\\\\"][1] if r else \\\\\"không có metric\\\\\"}'\\)\")"
+      "Bash(python3 -c \"import json,sys; r=json.load\\(sys.stdin\\)['data']['result']; print\\(f'  total send: {r[0][\\\\\"value\\\\\"][1] if r else \\\\\"không có metric\\\\\"}'\\)\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('name:',d.get\\('name'\\)\\); print\\('deps:',list\\(d.get\\('dependencies',{}\\).keys\\(\\)\\)\\); print\\('scripts:',d.get\\('scripts'\\)\\)\")",
+      "mcp__visualize__read_me",
+      "mcp__visualize__show_widget"
     ]
   }
 }

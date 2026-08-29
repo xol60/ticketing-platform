@@ -39,6 +39,9 @@ gateway:
     access-token-expiry-seconds: 900
     refresh-token-expiry-seconds: 604800
   rate-limit:
+    # Master switch. Set GATEWAY_RATE_LIMIT_ENABLED=false to bypass the limiter
+    # entirely (bulk seeding / dev). Re-enable (true / unset) before production.
+    enabled: ${GATEWAY_RATE_LIMIT_ENABLED:true}
     requests-per-second: 20
     burst-capacity: 40
     window-seconds: 60

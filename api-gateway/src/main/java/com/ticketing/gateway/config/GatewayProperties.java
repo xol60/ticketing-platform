@@ -1,5 +1,6 @@
 package com.ticketing.gateway.config;
 
+import lombok.AllArgsConstructor;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
@@ -42,6 +43,51 @@ public class GatewayProperties {
             "/api/pricing/rules"        // current surge rule for an event (read-only)
     );
 
+    /**
+     * Role-based access rules, evaluated in order after authentication. The
+     * FIRST rule whose {@code pathPrefix} matches ({@code startsWith}) AND whose
+     * {@code methods} contains the request method (empty = all methods) decides
+     * the required roles: if the caller's role is not in {@code roles}, the
+     * gateway returns 403. Order matters — put more specific prefixes first.
+     *
+     * <p>ADMIN is included in every rule so admins are never blocked. Public GET
+     * browse traffic is already short-circuited by {@link #publicGetPaths} before
+     * these rules run, so the write-verb rules below only ever see mutating
+     * requests.
+     */
+    private List<RoleRule> roleRules = List.of(
+            new RoleRule(List.of(), "/api/admin/", List.of("ADMIN")),
+            new RoleRule(List.of("POST", "PUT", "PATCH", "DELETE"),
+                    "/api/pricing/rules", List.of("EVENT_OWNER", "ADMIN")),
+            new RoleRule(List.of("POST", "PUT", "PATCH", "DELETE"),
+                    "/api/tickets", List.of("EVENT_OWNER", "ADMIN"))
+    );
+
+    /**
+     * A single method+path→roles authorization rule. {@code methods} empty means
+     * the rule applies to every HTTP method.
+     */
+    @Data
+    @AllArgsConstructor
+    public static class RoleRule {
+        private List<String> methods = List.of();
+        private String       pathPrefix;
+        private List<String> roles   = List.of();
+
+        /** True if this rule governs the given request. */
+        public boolean matches(String path, String method) {
+            if (pathPrefix == null || !path.startsWith(pathPrefix)) {
+                return false;
+            }
+            return methods == null || methods.isEmpty() || methods.contains(method);
+        }
+
+        /** True if a caller holding {@code role} is permitted by this rule. */
+        public boolean allows(String role) {
+            return roles != null && roles.contains(role);
+        }
+    }
+
     @Data
     public static class Jwt {
         private String secret = "changeme";
@@ -51,6 +97,13 @@ public class GatewayProperties {
 
     @Data
     public static class RateLimit {
+        /**
+         * Master on/off switch. When false, {@code RateLimitFilter} short-circuits
+         * and every request passes. Bound from {@code GATEWAY_RATE_LIMIT_ENABLED}
+         * so it can be toggled with a restart (no rebuild). Temporarily disabled
+         * for bulk seeding / dev; re-enable before production.
+         */
+        private boolean enabled = true;
         // requests per second per key (IP:userId)
         private int  requestsPerSecond = 20;
         private int  burstCapacity     = 40;

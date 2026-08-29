@@ -2,6 +2,7 @@ package com.ticketing.pricing.service;
 
 import com.ticketing.common.events.*;
 import com.ticketing.common.exception.ErrorCode;
+import com.ticketing.common.exception.TicketingException;
 import com.ticketing.pricing.client.TicketValidationClient;
 import com.ticketing.pricing.config.CacheConfig;
 import com.ticketing.pricing.domain.model.EventPriceRule;
@@ -50,9 +51,10 @@ public class PricingService {
 
     @Transactional
     @CachePut(value = CacheConfig.PRICE_RULES_CACHE, key = "#result.eventId")
-    public PriceRuleResponse createRule(CreatePriceRuleRequest request) {
+    public PriceRuleResponse createRule(CreatePriceRuleRequest request, String userId, String role) {
         // Validate event exists in ticket-service (fail-closed)
         ticketValidationClient.validateEventExists(request.getEventId());
+        assertCanManageEvent(request.getEventId(), userId, role);
 
         if (repository.findByEventId(request.getEventId()).isPresent()) {
             throw new IllegalArgumentException("Price rule already exists for event: " + request.getEventId());
@@ -62,6 +64,24 @@ public class PricingService {
         writeHistory(rule.getEventId(), rule.getSurgeMultiplier(), "MANUAL");
         log.info("Created price rule for eventId={} surgeMultiplier={}", rule.getEventId(), rule.getSurgeMultiplier());
         return mapper.toResponse(rule);
+    }
+
+    /**
+     * Ownership guard for EVENT_OWNER-scoped price-rule writes. ADMIN bypasses;
+     * an EVENT_OWNER may only price events they own (resolved via ticket-service).
+     * Fails closed for non-admins when ownership can't be confirmed. Throws
+     * {@link TicketingException} with {@link ErrorCode#FORBIDDEN} → 403.
+     */
+    private void assertCanManageEvent(String eventId, String userId, String role) {
+        if ("ADMIN".equals(role)) {
+            return;
+        }
+        String ownerId = ticketValidationClient.getEventOwnerId(eventId);
+        if (userId != null && userId.equals(ownerId)) {
+            return;
+        }
+        throw new TicketingException(ErrorCode.FORBIDDEN,
+                "You do not have permission to manage pricing for event " + eventId);
     }
 
     @Transactional(readOnly = true)
@@ -77,7 +97,9 @@ public class PricingService {
 
     @Transactional
     @CachePut(value = CacheConfig.PRICE_RULES_CACHE, key = "#eventId")
-    public PriceRuleResponse updateRule(String eventId, UpdatePriceRuleRequest request) {
+    public PriceRuleResponse updateRule(String eventId, UpdatePriceRuleRequest request,
+                                        String userId, String role) {
+        assertCanManageEvent(eventId, userId, role);
         EventPriceRule rule = repository.findByEventId(eventId)
                 .orElseThrow(() -> new IllegalArgumentException("No price rule found for event: " + eventId));
         mapper.updateEntity(request, rule);

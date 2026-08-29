@@ -308,6 +308,9 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       JWT_SECRET: ${JWT_SECRET:-changeme_use_a_real_secret_in_production_256bits}
+      # TEMP: rate limiter disabled for bulk seeding / dev. Set to "true" (or
+      # remove this line) and `docker compose up -d api-gateway` to re-enable.
+      GATEWAY_RATE_LIMIT_ENABLED: "false"
     # ports: not exposed in base — Nginx reaches gateway via internal DNS
     depends_on:
       redis:
