@@ -20,8 +20,11 @@ services:
   # INFRASTRUCTURE
   # ─────────────────────────────────────────────
 
+  # pgvector/pgvector:pg16 is stock Postgres 16 plus the `vector` extension —
+  # same major version, same data directory layout, so this is a drop-in swap
+  # for the 9 existing databases. agent_db needs it for event_facet embeddings.
   postgres-master:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: postgres-master
     environment:
       POSTGRES_USER: ticketing
@@ -46,7 +49,7 @@ services:
   # init-slave.sh checks for standby.signal (written by pg_basebackup -R)
   # so it correctly skips re-initialisation on container restarts.
   postgres-slave:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: postgres-slave
     environment:
       PGDATA: /var/lib/postgresql/data

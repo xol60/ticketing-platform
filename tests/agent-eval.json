@@ -1,0 +1,872 @@
+{
+  "version": 1,
+  "corpusSnapshot": "2026-08-29",
+  "notes": [
+    "Hand-labelled retrieval eval for the recommendation agent. Run it as a unit",
+    "test on every prompt, model, or ranking-weight change — without it, every",
+    "tuning decision after P2 is blind.",
+    "",
+    "rejectIds matters as much as expectIds. It catches the failure this whole",
+    "design is built to avoid: an event whose wording attracts a query it cannot",
+    "serve. Cases tagged 'adversarial' exist only for that — see opera-venue-trap,",
+    "where four unrelated events sit at Sydney Opera House and would all match the",
+    "word 'opera' on venue name alone.",
+    "",
+    "IDs are real rows in ticket_db as of corpusSnapshot. Duplicate events are in",
+    "the corpus on purpose (the same show seeded several times); where duplicates",
+    "exist, all of them are listed in expectIds, because dedupe is an ingest-time",
+    "job and this file measures retrieval, not presentation.",
+    "",
+    "expectRelaxation: true means the correct behaviour is to find nothing inside",
+    "the stated constraint and widen it in the fixed order (price, then time",
+    "window, then exclude — never city). Scoring such a case as a miss would push",
+    "the ranker to over-return, so score it on whether relaxation fired and what",
+    "it surfaced afterwards.",
+    "",
+    "Today for date-relative queries is corpusSnapshot. Most of the corpus sits in",
+    "2027, so 'this weekend' legitimately returns almost nothing."
+  ],
+
+  "cases": [
+    {
+      "id": "artist-taylor-swift",
+      "group": "proper-noun",
+      "query": "taylor swift",
+      "expectIds": [
+        "f737ad79-b6a7-4a5f-9281-2e3a3b7db5d1",
+        "4caf45ca-e710-4036-8f1e-a922c46db6ed",
+        "bada4798-30da-4c94-a3ff-e662c46f6800",
+        "demo-evt-02-0000-0000-000000000002"
+      ],
+      "rejectIds": [],
+      "why": "Artist names resolve through full-text on primaryArtist^2.5, never through the vector. A distilled facet vector has no reason to encode a proper noun."
+    },
+    {
+      "id": "artist-coldplay",
+      "group": "proper-noun",
+      "query": "coldplay",
+      "expectIds": [
+        "248227fe-23fc-45cd-9a12-57ce053f38e9",
+        "cc0aeeef-8573-4e80-acaa-1bb63a09a0ed",
+        "demo-evt-01-0000-0000-000000000001",
+        "a36175ef-dd9d-4e2d-91b1-f902da4846f7"
+      ],
+      "rejectIds": [],
+      "why": "Includes the Hanoi row that has no venue or category set — a proper-noun hit must not depend on metadata completeness."
+    },
+    {
+      "id": "artist-metallica",
+      "group": "proper-noun",
+      "query": "metallica",
+      "expectIds": [
+        "demo-evt-03-0000-0000-000000000003",
+        "ddb16cd7-bb5a-4f55-aceb-410cb542744f"
+      ],
+      "rejectIds": [],
+      "why": "Two seeded variants of the same tour."
+    },
+    {
+      "id": "artist-blackpink",
+      "group": "proper-noun",
+      "query": "blackpink",
+      "expectIds": [
+        "952593a4-192f-4cbf-a1d0-38e674773c9e",
+        "demo-evt-04-0000-0000-000000000004"
+      ],
+      "rejectIds": []
+    },
+    {
+      "id": "artist-son-tung-unaccented",
+      "group": "proper-noun",
+      "query": "son tung mtp",
+      "expectIds": ["aac728f0-745d-4df3-a1ae-323eada21a37"],
+      "rejectIds": [],
+      "why": "Typed without diacritics, as a Vietnamese user on a plain keyboard would. Must still reach the accented row."
+    },
+    {
+      "id": "artist-my-tam-unaccented",
+      "group": "proper-noun",
+      "query": "my tam concert",
+      "expectIds": [
+        "de161611-1bd1-4265-a3c3-8b8328a7ac6c",
+        "535464a7-a12e-410b-8250-2849ad5ceda6",
+        "5b89bbab-42d3-4c71-a13a-2adac1fc7566"
+      ],
+      "rejectIds": [],
+      "why": "Same diacritic case. 'my' is also a common English word, so this doubles as a check that a short stopword-like token does not blow up the match."
+    },
+    {
+      "id": "artist-daft-punk",
+      "group": "proper-noun",
+      "query": "daft punk",
+      "expectIds": ["demo-evt-05-0000-0000-000000000005"],
+      "rejectIds": []
+    },
+    {
+      "id": "artist-typo",
+      "group": "proper-noun",
+      "query": "coldlpay",
+      "expectIds": [
+        "248227fe-23fc-45cd-9a12-57ce053f38e9",
+        "cc0aeeef-8573-4e80-acaa-1bb63a09a0ed",
+        "demo-evt-01-0000-0000-000000000001",
+        "a36175ef-dd9d-4e2d-91b1-f902da4846f7"
+      ],
+      "rejectIds": [],
+      "why": "fuzziness=AUTO gives two edits at this length. Typo tolerance belongs to the full-text path; the vector path must not be asked to rescue it."
+    },
+
+    {
+      "id": "genre-kpop",
+      "group": "genre",
+      "query": "kpop concert",
+      "expectIds": [
+        "952593a4-192f-4cbf-a1d0-38e674773c9e",
+        "demo-evt-04-0000-0000-000000000004"
+      ],
+      "rejectIds": ["aac728f0-745d-4df3-a1ae-323eada21a37"],
+      "why": "Sơn Tùng is VPOP, not KPOP. Adjacent genres are exactly where a loose vector match goes wrong."
+    },
+    {
+      "id": "genre-edm",
+      "group": "genre",
+      "query": "electronic dance music night",
+      "expectIds": [
+        "122e56a8-3a92-43ee-84d2-eae5b2604b59",
+        "3f389c58-67cd-431e-beff-682cdd946c1a",
+        "demo-evt-05-0000-0000-000000000005"
+      ],
+      "rejectIds": [
+        "demo-evt-03-0000-0000-000000000003",
+        "ddb16cd7-bb5a-4f55-aceb-410cb542744f"
+      ],
+      "why": "Metallica must not surface for an electronic query despite both being loud, high-energy, large-scale."
+    },
+    {
+      "id": "genre-rock",
+      "group": "genre",
+      "query": "rock concert",
+      "expectIds": [
+        "demo-evt-03-0000-0000-000000000003",
+        "ddb16cd7-bb5a-4f55-aceb-410cb542744f",
+        "248227fe-23fc-45cd-9a12-57ce053f38e9",
+        "cc0aeeef-8573-4e80-acaa-1bb63a09a0ed"
+      ],
+      "rejectIds": ["122e56a8-3a92-43ee-84d2-eae5b2604b59"]
+    },
+    {
+      "id": "genre-ballet",
+      "group": "genre",
+      "query": "ballet",
+      "expectIds": [
+        "8d241a8a-c840-4ce6-aa27-b69f20f85a01",
+        "cc4d2e4b-f55f-49e3-a1b3-f03f86774eca",
+        "ef88d2ff-fe30-42b4-a947-d5ebffb69ac0",
+        "61407ab5-1f70-4e58-9194-bb5b74362fb0"
+      ],
+      "rejectIds": [
+        "demo-evt-10-0000-0000-000000000010",
+        "demo-evt-09-0000-0000-000000000009"
+      ],
+      "why": "Ballet and musical share the THEATER category. The genre facet has to do the separating."
+    },
+    {
+      "id": "genre-musical",
+      "group": "genre",
+      "query": "musical theatre show",
+      "expectIds": [
+        "demo-evt-10-0000-0000-000000000010",
+        "demo-evt-09-0000-0000-000000000009",
+        "ca11adc9-5eb5-4fe5-ab19-8497cff5e604",
+        "2d2b1fe0-8112-4f9f-809d-d2705366a17f",
+        "7f66f57a-1b28-4cfa-99fe-d3ad55584c69",
+        "8a2a3e89-7221-4d02-8a87-c3fa53c54cea",
+        "c726fbfe-4209-498f-b693-1227f805d4de",
+        "53290a5f-bd92-4ce4-98b4-e6085187a726",
+        "cdec07a0-2e7a-4af1-89ae-04164936f914",
+        "cf1fc82d-9877-4af6-a922-62f942aad256",
+        "b68f8764-9ece-4424-bbf1-3b2085d382e6",
+        "25c70f11-1797-4d16-83cd-a1e04c19d54d",
+        "dfc14d62-befc-436c-9f07-e285f479e440"
+      ],
+      "rejectIds": [
+        "8d241a8a-c840-4ce6-aa27-b69f20f85a01",
+        "ef88d2ff-fe30-42b4-a947-d5ebffb69ac0"
+      ],
+      "why": "Inverse of genre-ballet. Note the corpus names the ballets '— The Musical', so the title text actively misleads here; genre must win over name."
+    },
+    {
+      "id": "genre-tech-conference",
+      "group": "genre",
+      "query": "tech conference",
+      "expectIds": [
+        "bbb51d7d-8d7d-4b0c-b3a1-5561313bb942",
+        "ad333ce1-b2c5-4eee-8492-65ee7820798a",
+        "8e803cfa-e06c-4e23-8bec-d0fecd95cfde",
+        "7c761ef9-1e58-47f0-a8b7-3048187ff93b",
+        "22364875-5fce-4ca3-a605-ae826ac92249",
+        "1af37f6d-2ce4-48cd-a208-fb9ed5d471ce",
+        "09997f36-3285-44fc-ba89-0d8dcb43e282",
+        "0b1d605e-184f-4078-93f2-7e4d17f2dd82",
+        "0dd00e83-ef8a-46de-be4d-22c806ef9572",
+        "21c1a330-bba2-4dd0-be2f-aef85a3d2698",
+        "90804a65-1e9a-41d7-a6d2-eaa786801e40"
+      ],
+      "rejectIds": [],
+      "why": "TEDx is CONFERENCE but genre IDEAS — acceptable either way, so it is in neither list."
+    },
+    {
+      "id": "genre-basketball",
+      "group": "genre",
+      "query": "basketball game",
+      "expectIds": [
+        "demo-evt-06-0000-0000-000000000006",
+        "76821ee5-6433-4174-b184-ff681d132680",
+        "0afa2bcf-1a9c-45ad-8ef7-2d27070b2661"
+      ],
+      "rejectIds": ["demo-evt-07-0000-0000-000000000007"]
+    },
+    {
+      "id": "genre-tennis",
+      "group": "genre",
+      "query": "tennis",
+      "expectIds": [
+        "b3abbb60-9e58-4b3a-89ca-1ceda5dfcc2f",
+        "7a47bd0e-6301-4e34-b8c3-d7ef8d969136"
+      ],
+      "rejectIds": []
+    },
+
+    {
+      "id": "vibe-calm",
+      "group": "vibe",
+      "query": "something calm and relaxing, nothing intense",
+      "expectIds": [
+        "8d241a8a-c840-4ce6-aa27-b69f20f85a01",
+        "cc4d2e4b-f55f-49e3-a1b3-f03f86774eca",
+        "ef88d2ff-fe30-42b4-a947-d5ebffb69ac0",
+        "61407ab5-1f70-4e58-9194-bb5b74362fb0"
+      ],
+      "rejectIds": [
+        "demo-evt-03-0000-0000-000000000003",
+        "380c7528-b1fa-48de-a6d0-a051739cf334",
+        "04f88015-0cfe-4c56-bee8-9a583b72d307"
+      ],
+      "why": "The core atmosphere test. 'nothing intense' is a negation and must reach exclude, not the vector — embedded, it sits next to 'intense'."
+    },
+    {
+      "id": "vibe-high-energy",
+      "group": "vibe",
+      "query": "high energy night out",
+      "expectIds": [
+        "122e56a8-3a92-43ee-84d2-eae5b2604b59",
+        "3f389c58-67cd-431e-beff-682cdd946c1a",
+        "demo-evt-05-0000-0000-000000000005",
+        "demo-evt-03-0000-0000-000000000003"
+      ],
+      "rejectIds": [
+        "ef88d2ff-fe30-42b4-a947-d5ebffb69ac0",
+        "8d241a8a-c840-4ce6-aa27-b69f20f85a01"
+      ],
+      "why": "Mirror of vibe-calm. If both queries return the same set, the atmosphere dim is carrying no signal at all."
+    },
+    {
+      "id": "vibe-family",
+      "group": "vibe",
+      "query": "something to take the kids to",
+      "expectIds": [
+        "demo-evt-10-0000-0000-000000000010",
+        "cdec07a0-2e7a-4af1-89ae-04164936f914",
+        "cf1fc82d-9877-4af6-a922-62f942aad256",
+        "b68f8764-9ece-4424-bbf1-3b2085d382e6",
+        "25c70f11-1797-4d16-83cd-a1e04c19d54d",
+        "ef88d2ff-fe30-42b4-a947-d5ebffb69ac0",
+        "61407ab5-1f70-4e58-9194-bb5b74362fb0"
+      ],
+      "rejectIds": [
+        "380c7528-b1fa-48de-a6d0-a051739cf334",
+        "demo-evt-05-0000-0000-000000000005"
+      ],
+      "why": "UFC and a late-night electronic set are the two clearest wrong answers for a family query."
+    },
+    {
+      "id": "vibe-spectacle",
+      "group": "vibe",
+      "query": "big stadium spectacle, huge production",
+      "expectIds": [
+        "f737ad79-b6a7-4a5f-9281-2e3a3b7db5d1",
+        "bada4798-30da-4c94-a3ff-e662c46f6800",
+        "demo-evt-02-0000-0000-000000000002",
+        "248227fe-23fc-45cd-9a12-57ce053f38e9",
+        "demo-evt-01-0000-0000-000000000001",
+        "04f88015-0cfe-4c56-bee8-9a583b72d307"
+      ],
+      "rejectIds": [],
+      "why": "Scale should come from the capacity_band attribute, derived from ticket count — not guessed from adjectives in the description."
+    },
+    {
+      "id": "vibe-light-show",
+      "group": "vibe",
+      "query": "concert with an amazing light show",
+      "expectIds": [
+        "248227fe-23fc-45cd-9a12-57ce053f38e9",
+        "cc0aeeef-8573-4e80-acaa-1bb63a09a0ed",
+        "demo-evt-01-0000-0000-000000000001",
+        "demo-evt-05-0000-0000-000000000005",
+        "122e56a8-3a92-43ee-84d2-eae5b2604b59"
+      ],
+      "rejectIds": [],
+      "why": "Coldplay's LED wristbands and Daft Punk's pyramid stage are stated in the descriptions, so this is a genuine distillation test rather than a genre proxy."
+    },
+    {
+      "id": "vibe-learn",
+      "group": "vibe",
+      "query": "somewhere i can learn something and meet people",
+      "expectIds": [
+        "bbb51d7d-8d7d-4b0c-b3a1-5561313bb942",
+        "1af37f6d-2ce4-48cd-a208-fb9ed5d471ce",
+        "0dd00e83-ef8a-46de-be4d-22c806ef9572",
+        "3e9a5d18-2d2e-48cf-afa1-65e0c1bcea8f"
+      ],
+      "rejectIds": [],
+      "why": "No category word in the query. Purely a participation and audience match."
+    },
+    {
+      "id": "vibe-rivalry",
+      "group": "vibe",
+      "query": "a legendary rivalry match with history behind it",
+      "expectIds": [
+        "c59e2946-969d-47f4-825c-7ecbe9c352a0",
+        "11e6e6ac-8e1c-4532-88cd-fd84c25d83f8",
+        "af10a8dd-3679-484e-b4d3-b0b29786dede",
+        "70d0a2be-f878-4ae3-8043-274cd8ad3282",
+        "701b36f8-f005-418e-9468-c5bd9a95e407",
+        "demo-evt-06-0000-0000-000000000006",
+        "76821ee5-6433-4174-b184-ff681d132680",
+        "demo-evt-07-0000-0000-000000000007"
+      ],
+      "rejectIds": [
+        "2312ed39-5939-4746-8f36-1e1f1af76668",
+        "0afa2bcf-1a9c-45ad-8ef7-2d27070b2661"
+      ],
+      "why": "F1 and the All-Star Game are sport but not rivalry fixtures. The descriptions carry the distinction explicitly."
+    },
+    {
+      "id": "vibe-classic-story",
+      "group": "vibe",
+      "query": "a timeless classic story on stage",
+      "expectIds": [
+        "7f66f57a-1b28-4cfa-99fe-d3ad55584c69",
+        "8a2a3e89-7221-4d02-8a87-c3fa53c54cea",
+        "c726fbfe-4209-498f-b693-1227f805d4de",
+        "53290a5f-bd92-4ce4-98b4-e6085187a726",
+        "dfc14d62-befc-436c-9f07-e285f479e440",
+        "8d241a8a-c840-4ce6-aa27-b69f20f85a01",
+        "cc4d2e4b-f55f-49e3-a1b3-f03f86774eca"
+      ],
+      "rejectIds": []
+    },
+    {
+      "id": "vibe-loud-heavy",
+      "group": "vibe",
+      "query": "loud and heavy",
+      "expectIds": [
+        "demo-evt-03-0000-0000-000000000003",
+        "ddb16cd7-bb5a-4f55-aceb-410cb542744f"
+      ],
+      "rejectIds": [
+        "ef88d2ff-fe30-42b4-a947-d5ebffb69ac0",
+        "8d241a8a-c840-4ce6-aa27-b69f20f85a01",
+        "dfc14d62-befc-436c-9f07-e285f479e440"
+      ]
+    },
+    {
+      "id": "vibe-two-nights",
+      "group": "vibe",
+      "query": "a show where both nights have different setlists",
+      "expectIds": [
+        "demo-evt-03-0000-0000-000000000003",
+        "ddb16cd7-bb5a-4f55-aceb-410cb542744f"
+      ],
+      "rejectIds": [],
+      "why": "Highly specific fact stated only in Metallica's description. If this misses, distillation is dropping detail that only lives in the long copy."
+    },
+    {
+      "id": "vibe-sing-along",
+      "group": "vibe",
+      "query": "somewhere everyone sings along",
+      "expectIds": [
+        "248227fe-23fc-45cd-9a12-57ce053f38e9",
+        "demo-evt-01-0000-0000-000000000001",
+        "f737ad79-b6a7-4a5f-9281-2e3a3b7db5d1",
+        "bada4798-30da-4c94-a3ff-e662c46f6800"
+      ],
+      "rejectIds": [
+        "bbb51d7d-8d7d-4b0c-b3a1-5561313bb942",
+        "3e9a5d18-2d2e-48cf-afa1-65e0c1bcea8f"
+      ],
+      "why": "Tests the participation dim, which is text-only and not embedded — expected to rank on format plus atmosphere alone."
+    },
+
+    {
+      "id": "negation-not-crowded",
+      "group": "negation",
+      "query": "a concert but not too crowded",
+      "expectIds": [],
+      "rejectIds": [
+        "f737ad79-b6a7-4a5f-9281-2e3a3b7db5d1",
+        "bada4798-30da-4c94-a3ff-e662c46f6800",
+        "demo-evt-02-0000-0000-000000000002",
+        "248227fe-23fc-45cd-9a12-57ce053f38e9"
+      ],
+      "expectRelaxation": true,
+      "why": "The whole corpus is arena and stadium scale, so the honest answer is that nothing qualifies. Scored on whether exclude=large-scale fired and relaxation reported what it widened — not on what came back."
+    },
+    {
+      "id": "negation-not-electronic",
+      "group": "negation",
+      "query": "live music, nothing electronic",
+      "expectIds": [
+        "demo-evt-03-0000-0000-000000000003",
+        "ddb16cd7-bb5a-4f55-aceb-410cb542744f",
+        "248227fe-23fc-45cd-9a12-57ce053f38e9",
+        "f737ad79-b6a7-4a5f-9281-2e3a3b7db5d1"
+      ],
+      "rejectIds": [
+        "122e56a8-3a92-43ee-84d2-eae5b2604b59",
+        "3f389c58-67cd-431e-beff-682cdd946c1a",
+        "demo-evt-05-0000-0000-000000000005"
+      ],
+      "why": "Canonical negation trap. Embedded, 'nothing electronic' lands next to 'electronic' and returns exactly the rejects."
+    },
+    {
+      "id": "negation-theatre-not-musical",
+      "group": "negation",
+      "query": "theatre but not a musical",
+      "expectIds": [
+        "8d241a8a-c840-4ce6-aa27-b69f20f85a01",
+        "cc4d2e4b-f55f-49e3-a1b3-f03f86774eca",
+        "ef88d2ff-fe30-42b4-a947-d5ebffb69ac0",
+        "61407ab5-1f70-4e58-9194-bb5b74362fb0"
+      ],
+      "rejectIds": [
+        "demo-evt-09-0000-0000-000000000009",
+        "demo-evt-10-0000-0000-000000000010",
+        "7f66f57a-1b28-4cfa-99fe-d3ad55584c69"
+      ],
+      "why": "Doubly hard: the ballets are titled '— The Musical' in this corpus, so the negation has to beat the event name."
+    },
+    {
+      "id": "negation-sports-not-football",
+      "group": "negation",
+      "query": "sports, not football",
+      "expectIds": [
+        "b3abbb60-9e58-4b3a-89ca-1ceda5dfcc2f",
+        "7a47bd0e-6301-4e34-b8c3-d7ef8d969136",
+        "380c7528-b1fa-48de-a6d0-a051739cf334",
+        "2312ed39-5939-4746-8f36-1e1f1af76668",
+        "demo-evt-06-0000-0000-000000000006",
+        "demo-evt-07-0000-0000-000000000007",
+        "0afa2bcf-1a9c-45ad-8ef7-2d27070b2661"
+      ],
+      "rejectIds": [
+        "c59e2946-969d-47f4-825c-7ecbe9c352a0",
+        "70d0a2be-f878-4ae3-8043-274cd8ad3282",
+        "demo-evt-08-0000-0000-000000000008",
+        "04f88015-0cfe-4c56-bee8-9a583b72d307"
+      ]
+    },
+    {
+      "id": "negation-not-sports",
+      "group": "negation",
+      "query": "an evening out, not sports",
+      "expectIds": [
+        "248227fe-23fc-45cd-9a12-57ce053f38e9",
+        "demo-evt-09-0000-0000-000000000009",
+        "8d241a8a-c840-4ce6-aa27-b69f20f85a01"
+      ],
+      "rejectIds": [
+        "c59e2946-969d-47f4-825c-7ecbe9c352a0",
+        "2312ed39-5939-4746-8f36-1e1f1af76668",
+        "b3abbb60-9e58-4b3a-89ca-1ceda5dfcc2f",
+        "380c7528-b1fa-48de-a6d0-a051739cf334"
+      ],
+      "why": "Category-level exclusion. expectIds is a sample, not exhaustive — score recall on rejects."
+    },
+    {
+      "id": "negation-london-not-conference",
+      "group": "negation",
+      "query": "something in london, not a conference",
+      "city": "London",
+      "expectIds": [
+        "demo-evt-03-0000-0000-000000000003",
+        "7f66f57a-1b28-4cfa-99fe-d3ad55584c69",
+        "8d241a8a-c840-4ce6-aa27-b69f20f85a01",
+        "b731758f-8daa-478e-a5dd-e6a46ba3c6fb",
+        "demo-evt-08-0000-0000-000000000008"
+      ],
+      "rejectIds": [
+        "8e803cfa-e06c-4e23-8bec-d0fecd95cfde",
+        "7c761ef9-1e58-47f0-a8b7-3048187ff93b",
+        "22364875-5fce-4ca3-a605-ae826ac92249"
+      ],
+      "why": "Hard city filter and a category exclusion in one turn. Neither belongs in the vector."
+    },
+
+    {
+      "id": "city-tokyo",
+      "group": "city",
+      "query": "anything in tokyo",
+      "city": "Tokyo",
+      "expectIds": [
+        "2a212788-32b8-4b9e-8476-2acf12e829ac",
+        "122e56a8-3a92-43ee-84d2-eae5b2604b59",
+        "aac728f0-745d-4df3-a1ae-323eada21a37",
+        "3e9a5d18-2d2e-48cf-afa1-65e0c1bcea8f",
+        "af10a8dd-3679-484e-b4d3-b0b29786dede",
+        "7bc5347a-5edd-4cd2-a972-f5822991f86f",
+        "ac940ac0-fe7f-4bb2-96a7-826a1b856dd5",
+        "04f88015-0cfe-4c56-bee8-9a583b72d307",
+        "8956abc0-1efb-4896-a20d-0b13971bfd85"
+      ],
+      "rejectIds": [],
+      "why": "No vibe at all. Turn-1 behaviour: maximise diversity of format across the five returned, do not return five Formula 1 rows."
+    },
+    {
+      "id": "city-paris-concerts",
+      "group": "city",
+      "query": "concerts in paris",
+      "city": "Paris",
+      "expectIds": [
+        "248227fe-23fc-45cd-9a12-57ce053f38e9",
+        "cc0aeeef-8573-4e80-acaa-1bb63a09a0ed",
+        "3f389c58-67cd-431e-beff-682cdd946c1a",
+        "demo-evt-05-0000-0000-000000000005"
+      ],
+      "rejectIds": ["7a47bd0e-6301-4e34-b8c3-d7ef8d969136"],
+      "why": "Wimbledon Finals @ Paris is in the city but is not a concert."
+    },
+    {
+      "id": "city-hanoi",
+      "group": "city",
+      "query": "sự kiện ở hà nội",
+      "city": "Hà Nội",
+      "expectIds": [
+        "0dd00e83-ef8a-46de-be4d-22c806ef9572",
+        "21c1a330-bba2-4dd0-be2f-aef85a3d2698",
+        "cdec07a0-2e7a-4af1-89ae-04164936f914",
+        "ef88d2ff-fe30-42b4-a947-d5ebffb69ac0",
+        "70d0a2be-f878-4ae3-8043-274cd8ad3282",
+        "0afa2bcf-1a9c-45ad-8ef7-2d27070b2661",
+        "53290a5f-bd92-4ce4-98b4-e6085187a726"
+      ],
+      "rejectIds": [],
+      "why": "Vietnamese query against English event content. City resolution must handle the accented form; the vibe half is empty so ranking falls back to popularity plus diversity."
+    },
+    {
+      "id": "city-singapore",
+      "group": "city",
+      "query": "what's on in singapore",
+      "city": "Singapore",
+      "expectIds": [
+        "bbb51d7d-8d7d-4b0c-b3a1-5561313bb942",
+        "ad333ce1-b2c5-4eee-8492-65ee7820798a",
+        "b5f0e4b8-109b-4fa9-8e1d-4a984b04b684",
+        "de161611-1bd1-4265-a3c3-8b8328a7ac6c",
+        "535464a7-a12e-410b-8250-2849ad5ceda6"
+      ],
+      "rejectIds": []
+    },
+    {
+      "id": "city-new-york",
+      "group": "city",
+      "query": "new york",
+      "city": "New York",
+      "expectIds": [
+        "demo-evt-09-0000-0000-000000000009",
+        "ca11adc9-5eb5-4fe5-ab19-8497cff5e604",
+        "2d2b1fe0-8112-4f9f-809d-d2705366a17f",
+        "demo-evt-01-0000-0000-000000000001",
+        "demo-evt-07-0000-0000-000000000007"
+      ],
+      "rejectIds": [],
+      "why": "'new york' must be consumed as a city filter and stripped from the vector. Left in, it matches any description that merely mentions the city."
+    },
+    {
+      "id": "city-sydney",
+      "group": "city",
+      "query": "shows in sydney",
+      "city": "Sydney",
+      "expectIds": [
+        "ca1fc895-6f75-4b36-97ed-989e25c0c799",
+        "5f33dfa8-22be-4032-98d8-272ada06b703",
+        "1af37f6d-2ce4-48cd-a208-fb9ed5d471ce",
+        "25c70f11-1797-4d16-83cd-a1e04c19d54d",
+        "dfc14d62-befc-436c-9f07-e285f479e440"
+      ],
+      "rejectIds": []
+    },
+
+    {
+      "id": "combo-relaxing-london",
+      "group": "combined",
+      "query": "a relaxing evening in london",
+      "city": "London",
+      "expectIds": [
+        "8d241a8a-c840-4ce6-aa27-b69f20f85a01",
+        "cc4d2e4b-f55f-49e3-a1b3-f03f86774eca"
+      ],
+      "rejectIds": [
+        "demo-evt-03-0000-0000-000000000003",
+        "ddb16cd7-bb5a-4f55-aceb-410cb542744f",
+        "2fc5cd0a-6441-4b41-8f75-1b00da07dd18"
+      ],
+      "why": "City in SQL, mood in the vector. Metallica is in London and must lose on atmosphere alone."
+    },
+    {
+      "id": "combo-family-hanoi",
+      "group": "combined",
+      "query": "family show in hanoi",
+      "city": "Hà Nội",
+      "expectIds": [
+        "cdec07a0-2e7a-4af1-89ae-04164936f914",
+        "cf1fc82d-9877-4af6-a922-62f942aad256",
+        "b68f8764-9ece-4424-bbf1-3b2085d382e6",
+        "ef88d2ff-fe30-42b4-a947-d5ebffb69ac0",
+        "61407ab5-1f70-4e58-9194-bb5b74362fb0"
+      ],
+      "rejectIds": [
+        "0dd00e83-ef8a-46de-be4d-22c806ef9572",
+        "70d0a2be-f878-4ae3-8043-274cd8ad3282"
+      ],
+      "why": "Unaccented 'hanoi' must resolve to the accented city value stored in the row."
+    },
+    {
+      "id": "combo-big-concert-la",
+      "group": "combined",
+      "query": "big concert in los angeles",
+      "city": "Los Angeles",
+      "expectIds": [
+        "f737ad79-b6a7-4a5f-9281-2e3a3b7db5d1",
+        "4caf45ca-e710-4036-8f1e-a922c46db6ed",
+        "bada4798-30da-4c94-a3ff-e662c46f6800",
+        "demo-evt-02-0000-0000-000000000002"
+      ],
+      "rejectIds": [
+        "demo-evt-06-0000-0000-000000000006",
+        "380c7528-b1fa-48de-a6d0-a051739cf334",
+        "b3abbb60-9e58-4b3a-89ca-1ceda5dfcc2f"
+      ]
+    },
+    {
+      "id": "combo-tech-singapore",
+      "group": "combined",
+      "query": "tech event in singapore",
+      "city": "Singapore",
+      "expectIds": [
+        "bbb51d7d-8d7d-4b0c-b3a1-5561313bb942",
+        "ad333ce1-b2c5-4eee-8492-65ee7820798a"
+      ],
+      "rejectIds": [
+        "b5f0e4b8-109b-4fa9-8e1d-4a984b04b684",
+        "de161611-1bd1-4265-a3c3-8b8328a7ac6c"
+      ]
+    },
+    {
+      "id": "combo-football-london",
+      "group": "combined",
+      "query": "football in london",
+      "city": "London",
+      "expectIds": [
+        "c59e2946-969d-47f4-825c-7ecbe9c352a0",
+        "11e6e6ac-8e1c-4532-88cd-fd84c25d83f8",
+        "demo-evt-08-0000-0000-000000000008",
+        "2fc5cd0a-6441-4b41-8f75-1b00da07dd18",
+        "5796674e-e225-45b6-bb4f-c1ab805a31ac"
+      ],
+      "rejectIds": [],
+      "why": "Both codes share genre=FOOTBALL, so an unqualified query legitimately returns both. See american-football and soccer for the split."
+    },
+    {
+      "id": "combo-musical-london",
+      "group": "combined",
+      "query": "a musical in london",
+      "city": "London",
+      "expectIds": [
+        "7f66f57a-1b28-4cfa-99fe-d3ad55584c69",
+        "8a2a3e89-7221-4d02-8a87-c3fa53c54cea",
+        "c726fbfe-4209-498f-b693-1227f805d4de",
+        "demo-evt-10-0000-0000-000000000010"
+      ],
+      "rejectIds": [
+        "8d241a8a-c840-4ce6-aa27-b69f20f85a01",
+        "cc4d2e4b-f55f-49e3-a1b3-f03f86774eca"
+      ]
+    },
+
+    {
+      "id": "adversarial-opera-venue-trap",
+      "group": "adversarial",
+      "query": "opera",
+      "expectIds": ["dfc14d62-befc-436c-9f07-e285f479e440"],
+      "rejectIds": [
+        "1af37f6d-2ce4-48cd-a208-fb9ed5d471ce",
+        "ca1fc895-6f75-4b36-97ed-989e25c0c799",
+        "5f33dfa8-22be-4032-98d8-272ada06b703",
+        "25c70f11-1797-4d16-83cd-a1e04c19d54d"
+      ],
+      "why": "Four unrelated events sit at Sydney Opera House, so 'opera' matches them on venueName^1.5. A developer conference must never be the top hit for 'opera'. The single most informative case in this file."
+    },
+    {
+      "id": "adversarial-american-football",
+      "group": "adversarial",
+      "query": "american football",
+      "expectIds": [
+        "04f88015-0cfe-4c56-bee8-9a583b72d307",
+        "8956abc0-1efb-4896-a20d-0b13971bfd85",
+        "b5f0e4b8-109b-4fa9-8e1d-4a984b04b684",
+        "2fc5cd0a-6441-4b41-8f75-1b00da07dd18",
+        "5796674e-e225-45b6-bb4f-c1ab805a31ac"
+      ],
+      "rejectIds": [
+        "c59e2946-969d-47f4-825c-7ecbe9c352a0",
+        "70d0a2be-f878-4ae3-8043-274cd8ad3282",
+        "demo-evt-08-0000-0000-000000000008"
+      ],
+      "why": "genre=FOOTBALL covers two different sports in this corpus. The tag filter cannot separate them; only the format facet can."
+    },
+    {
+      "id": "adversarial-soccer",
+      "group": "adversarial",
+      "query": "soccer match",
+      "expectIds": [
+        "c59e2946-969d-47f4-825c-7ecbe9c352a0",
+        "11e6e6ac-8e1c-4532-88cd-fd84c25d83f8",
+        "af10a8dd-3679-484e-b4d3-b0b29786dede",
+        "70d0a2be-f878-4ae3-8043-274cd8ad3282",
+        "701b36f8-f005-418e-9468-c5bd9a95e407",
+        "demo-evt-08-0000-0000-000000000008"
+      ],
+      "rejectIds": [
+        "04f88015-0cfe-4c56-bee8-9a583b72d307",
+        "b5f0e4b8-109b-4fa9-8e1d-4a984b04b684",
+        "2fc5cd0a-6441-4b41-8f75-1b00da07dd18"
+      ],
+      "why": "Inverse of american-football. The word 'soccer' appears in neither description, so this rides entirely on the format facet."
+    },
+    {
+      "id": "adversarial-wembley",
+      "group": "adversarial",
+      "query": "something at wembley stadium",
+      "expectIds": [
+        "demo-evt-03-0000-0000-000000000003",
+        "ddb16cd7-bb5a-4f55-aceb-410cb542744f",
+        "7f66f57a-1b28-4cfa-99fe-d3ad55584c69",
+        "8a2a3e89-7221-4d02-8a87-c3fa53c54cea",
+        "c726fbfe-4209-498f-b693-1227f805d4de",
+        "b731758f-8daa-478e-a5dd-e6a46ba3c6fb",
+        "64c7f26b-5305-4dd9-9bf5-e10885dd8057",
+        "2fc5cd0a-6441-4b41-8f75-1b00da07dd18",
+        "5796674e-e225-45b6-bb4f-c1ab805a31ac",
+        "demo-evt-08-0000-0000-000000000008",
+        "22364875-5fce-4ca3-a605-ae826ac92249"
+      ],
+      "rejectIds": [],
+      "why": "Venue is a proper noun and a hard filter, never a vector term. Six unrelated formats share this venue — returning all of them is correct, and diversity should decide the top five."
+    },
+    {
+      "id": "adversarial-unwind-after-work",
+      "group": "adversarial",
+      "query": "somewhere to unwind after a long week",
+      "expectIds": [
+        "8d241a8a-c840-4ce6-aa27-b69f20f85a01",
+        "cc4d2e4b-f55f-49e3-a1b3-f03f86774eca",
+        "ef88d2ff-fe30-42b4-a947-d5ebffb69ac0"
+      ],
+      "rejectIds": [
+        "demo-evt-03-0000-0000-000000000003",
+        "380c7528-b1fa-48de-a6d0-a051739cf334",
+        "122e56a8-3a92-43ee-84d2-eae5b2604b59"
+      ],
+      "why": "The phrasing from the spec's own example of marketing copy that misleads. 'Unwind' is filler; the real signal is a low-intensity atmosphere, and the answer must not be a stadium metal show."
+    },
+    {
+      "id": "adversarial-reunion",
+      "group": "adversarial",
+      "query": "reunion show",
+      "expectIds": [
+        "demo-evt-05-0000-0000-000000000005",
+        "demo-evt-04-0000-0000-000000000004"
+      ],
+      "rejectIds": [],
+      "why": "'Reunion' appears in both event names. Cheap to get right through full-text, and a canary that the name field is still being searched at all."
+    },
+    {
+      "id": "adversarial-empty-metadata",
+      "group": "adversarial",
+      "query": "coldplay hanoi",
+      "expectIds": ["a36175ef-dd9d-4e2d-91b1-f902da4846f7"],
+      "rejectIds": [],
+      "why": "This row has null venue, category and genre. It must stay reachable by name even though it will carry almost no facets — the ranker must not require a facet score to return anything."
+    },
+
+    {
+      "id": "temporal-this-weekend",
+      "group": "temporal",
+      "query": "what's on this weekend",
+      "expectIds": [],
+      "rejectIds": [],
+      "expectRelaxation": true,
+      "why": "Relative to corpusSnapshot the nearest events are Super Bowl Tokyo on 10–11 Sep. Correct behaviour is to widen the time window and say so, never to answer with a bare question."
+    },
+    {
+      "id": "temporal-next-month",
+      "group": "temporal",
+      "query": "anything happening next month",
+      "expectIds": [
+        "04f88015-0cfe-4c56-bee8-9a583b72d307",
+        "8956abc0-1efb-4896-a20d-0b13971bfd85",
+        "aac728f0-745d-4df3-a1ae-323eada21a37",
+        "380c7528-b1fa-48de-a6d0-a051739cf334"
+      ],
+      "rejectIds": [],
+      "why": "September 2026 relative to corpusSnapshot. Date arithmetic happens in Java against a fixed clock — the model only returns a relative expression."
+    },
+    {
+      "id": "temporal-february",
+      "group": "temporal",
+      "query": "events in february",
+      "expectIds": [
+        "f737ad79-b6a7-4a5f-9281-2e3a3b7db5d1",
+        "4caf45ca-e710-4036-8f1e-a922c46db6ed",
+        "2312ed39-5939-4746-8f36-1e1f1af76668",
+        "c6815937-492f-440f-bb2b-d49152cc1eb0",
+        "8e803cfa-e06c-4e23-8bec-d0fecd95cfde",
+        "7c761ef9-1e58-47f0-a8b7-3048187ff93b",
+        "b5f0e4b8-109b-4fa9-8e1d-4a984b04b684",
+        "cdec07a0-2e7a-4af1-89ae-04164936f914",
+        "cf1fc82d-9877-4af6-a922-62f942aad256",
+        "b68f8764-9ece-4424-bbf1-3b2085d382e6"
+      ],
+      "rejectIds": [],
+      "why": "A bare month name with no year resolves to the next occurrence — February 2027, not a past February."
+    },
+
+    {
+      "id": "turn1-bare-greeting",
+      "group": "turn-1",
+      "query": "hi",
+      "expectIds": [],
+      "rejectIds": [],
+      "why": "No slots at all. Must still return five events, chosen to maximise format diversity rather than score — one concert, one sport, one theatre, one conference, one other. Scored on the spread of category across the five, not on membership."
+    },
+    {
+      "id": "turn1-vague",
+      "group": "turn-1",
+      "query": "i'm bored, what should i do",
+      "expectIds": [],
+      "rejectIds": [],
+      "why": "Same rule as turn1-bare-greeting. The point of turn 1 is to harvest a click, which is cheaper than asking a question."
+    }
+  ]
+}
