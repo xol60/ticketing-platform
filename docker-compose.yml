@@ -578,3 +578,43 @@ services:
       interval: 15s
       timeout:  5s
       retries:  5
+
+  # Event recommendation agent — the second read model off event.search.indexed.
+  # search-service projects that topic into Elasticsearch for keyword search;
+  # this projects it into Postgres + pgvector for semantic facet matching.
+  # Neither consumer knows the other exists.
+  #
+  # Read-only with respect to the order saga: it hands an eventId back to the
+  # user and stops. LLM_API_KEY / EMBEDDING_API_KEY are intentionally allowed to
+  # be empty — the service still boots, migrates, and serves the review UI
+  # without them; only the ingestion pipeline refuses to run.
+  agent-service:
+    build:
+      context: .
+      dockerfile: agent-service/Dockerfile
+    container_name: agent-service
+    environment:
+      SPRING_PROFILES_ACTIVE:   docker
+      DB_URL:                   jdbc:postgresql://postgres-master:5432/agent_db
+      DB_USER:                  ticketing
+      DB_PASSWORD:              ticketing_secret
+      REDIS_HOST:               redis
+      KAFKA_BOOTSTRAP_SERVERS:  kafka:9092
+      LLM_API_KEY:              ${LLM_API_KEY:-}
+      LLM_MODEL:                ${LLM_MODEL:-claude-sonnet-4-6}
+      EMBEDDING_API_KEY:        ${EMBEDDING_API_KEY:-}
+      EMBEDDING_MODEL:          ${EMBEDDING_MODEL:-voyage-3}
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    networks:
+      - ticketing-net
+    healthcheck:
+      test:     ["CMD-SHELL", "wget -qO- http://localhost:8092/actuator/health || exit 1"]
+      interval: 15s
+      timeout:  5s
+      retries:  5

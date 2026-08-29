@@ -15,6 +15,7 @@ COPY payment-service/pom.xml payment-service/pom.xml
 COPY secondary-market-service/pom.xml secondary-market-service/pom.xml
 COPY notification-service/pom.xml notification-service/pom.xml
 COPY search-service/pom.xml search-service/pom.xml
+COPY agent-service/pom.xml agent-service/pom.xml
 
 # Download dependencies (layer-cached separately from source)
 RUN mvn dependency:go-offline -pl common-lib,saga-orchestrator -am -q 2>/dev/null || true

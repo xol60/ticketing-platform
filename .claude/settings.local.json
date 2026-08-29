@@ -264,7 +264,13 @@
       "Bash(echo \"EXIT: $?\")",
       "Bash(mvn -pl common-lib compile)",
       "Bash(mvn -pl common-lib test -Dtest=TaxonomyTest)",
-      "Bash(mvn -pl common-lib test)"
+      "Bash(mvn -pl common-lib test)",
+      "Bash(mvn -pl common-lib,agent-service -am compile)",
+      "Bash(docker cp *)",
+      "Bash(docker rm *)",
+      "Bash(mvn -q compile)",
+      "Bash(mvn -o -q help:evaluate -Dexpression=project.modules -DforceStdout)",
+      "Bash(docker restart *)"
     ]
   }
 }

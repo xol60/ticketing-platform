@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>com.ticketing</groupId>
+    <artifactId>ticketing-platform</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+  </parent>
+  <artifactId>agent-service</artifactId>
+
+  <!--
+    Event recommendation agent. Second read model off event.search.indexed —
+    search-service projects that same topic into Elasticsearch for keyword
+    search; this service projects it into Postgres + pgvector for semantic
+    facet matching. The two consumers are independent: neither knows the other
+    exists, and ticket-service remains the source of truth for both.
+
+    Read-only with respect to the transactional core. This service never
+    reserves a ticket, never creates an order, and never takes a lock. Its
+    terminal action is handing an eventId back to the user, who then goes
+    through the existing checkout flow unchanged.
+
+    No pgvector Java binding on purpose. Embeddings are written and compared
+    entirely inside Postgres via native queries with an explicit
+    CAST(? AS vector) — the JVM never needs to hold a vector, so pulling in a
+    JDBC type mapping would buy nothing. See EventFacet for the detail.
+  -->
+
+  <dependencies>
+    <dependency>
+      <groupId>com.ticketing</groupId>
+      <artifactId>common-lib</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-core</artifactId>
+    </dependency>
+    <!-- flyway-database-postgresql is a Flyway 10+ artifact; Spring Boot 3.2.x
+         ships Flyway 9.x where postgres support is built into flyway-core. -->
+    <dependency>
+      <groupId>org.springframework.kafka</groupId>
+      <artifactId>spring-kafka</artifactId>
+    </dependency>
+    <!-- Conversation state (conv:{sessionId}) from P3, and the embedding cache
+         keyed by hash of normalised text from P2. Same Redis instance already
+         serving saga state and the secondary-market listing cache. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.kafka</groupId>
+      <artifactId>spring-kafka-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+</project>

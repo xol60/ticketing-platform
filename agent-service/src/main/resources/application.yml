@@ -1,0 +1,133 @@
+spring:
+  application:
+    name: agent-service
+
+  datasource:
+    # Single datasource on purpose — no master/slave routing here.
+    # Routing reads to the replica would let a just-approved event stay
+    # invisible for the length of replication lag, which is exactly the moment
+    # a reviewer is checking whether their approval worked. The read volume on
+    # this service is bounded by LLM throughput anyway, so the replica would be
+    # solving a problem that cannot occur.
+    url:      ${DB_URL:jdbc:postgresql://localhost:5436/agent_db}
+    username: ${DB_USER:ticketing}
+    password: ${DB_PASSWORD:ticketing_secret}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        default_schema: public
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2000ms
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+
+server:
+  port: 8092
+
+# ── Agent subsystem ──────────────────────────────────────────────────────────
+agent:
+  # Language model used at the three fixed call sites: ingestion (offline),
+  # extract (hot path), compare (cold). There is no agent loop — the model never
+  # chooses what to call next, so no tool schema lives here.
+  llm:
+    base-url:   ${LLM_BASE_URL:https://api.anthropic.com}
+    api-key:    ${LLM_API_KEY:}
+    model:      ${LLM_MODEL:claude-sonnet-4-6}
+    max-tokens: 2048
+    connect-timeout-ms: 2000
+    read-timeout-ms:    30000
+
+  # Asymmetric embedding model: short queries and long passages are encoded
+  # with different prefixes, which is what makes a three-word vibe phrase
+  # comparable to a distilled facet sentence at all. A symmetric model would
+  # systematically under-score short queries.
+  embedding:
+    base-url:   ${EMBEDDING_BASE_URL:https://api.voyageai.com}
+    api-key:    ${EMBEDDING_API_KEY:}
+    model:      ${EMBEDDING_MODEL:voyage-3}
+    # Must match vector(N) in V1__create_agent_tables.sql. Changing this is a
+    # full re-embed behind a model_version cutover, not a config tweak.
+    dimension:  1024
+    connect-timeout-ms: 2000
+    read-timeout-ms:    15000
+
+  ingestion:
+    # Cosine below which an LLM-emitted tag label does NOT snap to a known tag
+    # and becomes a tag_proposal instead. Set deliberately high: a wrong snap
+    # is invisible (the event just carries a tag nobody questions), while an
+    # unsnapped label is visible in the proposal queue. Prefer the visible
+    # failure.
+    tag-snap-threshold: 0.82
+    # Cosine below which a facet value looks unlike anything previously
+    # approved on that dim — usually the model writing atmosphere content into
+    # the format slot. Routed to review rather than dropped.
+    dim-validation-threshold: 0.60
+    # Auto-approve only when the model was confident AND dim validation passed.
+    # Everything else waits for a human. Raising this stalls the review queue;
+    # lowering it lets unreviewed facets into the vector space.
+    auto-approve-confidence: 0.90
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+logging:
+  level:
+    com.ticketing.agent: DEBUG
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} traceId=%X{traceId} - %msg%n"
+
+---
+spring:
+  config:
+    activate:
+      on-profile: docker
+  datasource:
+    url: jdbc:postgresql://postgres-master:5432/agent_db
+  data:
+    redis:
+      host: redis
+  kafka:
+    bootstrap-servers: kafka:9092
+
+logging:
+  level:
+    com.ticketing.agent: INFO
+
+---
+spring:
+  config:
+    activate:
+      on-profile: local
+  datasource:
+    url: jdbc:postgresql://localhost:5436/agent_db
+  data:
+    redis:
+      host: localhost
+  kafka:
+    bootstrap-servers: localhost:29092

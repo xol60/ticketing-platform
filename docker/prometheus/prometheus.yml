@@ -36,6 +36,7 @@ scrape_configs:
           - secondary-market-service:8088
           - notification-service:8089
           - search-service:8091
+          - agent-service:8092
 
   # ── cAdvisor — per-container CPU/RAM/Disk/Network ─────────────────────────
   # The standard "docker engine -> cAdvisor -> Prometheus" pipeline.
