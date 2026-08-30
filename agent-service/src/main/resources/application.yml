@@ -43,46 +43,66 @@ server:
 
 # ── Agent subsystem ──────────────────────────────────────────────────────────
 agent:
-  # Language model used at the three fixed call sites: ingestion (offline),
-  # extract (hot path), compare (cold). There is no agent loop — the model never
-  # chooses what to call next, so no tool schema lives here.
-  llm:
-    base-url:   ${LLM_BASE_URL:https://api.anthropic.com}
-    api-key:    ${LLM_API_KEY:}
-    model:      ${LLM_MODEL:claude-sonnet-4-6}
-    max-tokens: 2048
-    connect-timeout-ms: 2000
-    read-timeout-ms:    30000
+  # Both models run locally in Ollama. Nothing leaves the host: the project
+  # clones and runs with no API key, and no event data reaches a third party.
+  #
+  # The cost of that is an 8B model that fabricates readily and fluently — a
+  # made-up facet reads exactly like a real one. Everything under `validation`
+  # below exists because of it.
+  ollama:
+    base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
 
-  # Asymmetric embedding model: short queries and long passages are encoded
-  # with different prefixes, which is what makes a three-word vibe phrase
-  # comparable to a distilled facet sentence at all. A symmetric model would
-  # systematically under-score short queries.
-  embedding:
-    base-url:   ${EMBEDDING_BASE_URL:https://api.voyageai.com}
-    api-key:    ${EMBEDDING_API_KEY:}
-    model:      ${EMBEDDING_MODEL:voyage-3}
-    # Must match vector(N) in V1__create_agent_tables.sql. Changing this is a
-    # full re-embed behind a model_version cutover, not a config tweak.
-    dimension:  1024
-    connect-timeout-ms: 2000
-    read-timeout-ms:    15000
+    llm:
+      model: ${OLLAMA_LLM_MODEL:qwen3:8b}
+      # Zero, always. Ingestion is extraction, not writing — the same
+      # description must produce the same facets every run, or re-ingesting an
+      # event refills the review queue with decisions already made.
+      temperature: 0.0
+      num-ctx: 8192
+      # Qwen3 emits <think> blocks unless told not to; they break schema-
+      # constrained decoding and cost tokens on a transcription task.
+      think: false
+      connect-timeout-ms: 2000
+      # Local CPU inference can take a minute per event. Not user-facing at
+      # ingestion time, and a spurious timeout costs a full re-extraction.
+      read-timeout-ms: 180000
+      max-schema-retries: 2
 
-  ingestion:
-    # Cosine below which an LLM-emitted tag label does NOT snap to a known tag
-    # and becomes a tag_proposal instead. Set deliberately high: a wrong snap
-    # is invisible (the event just carries a tag nobody questions), while an
-    # unsnapped label is visible in the proposal queue. Prefer the visible
-    # failure.
+    embedding:
+      model: ${OLLAMA_EMBED_MODEL:bge-m3}
+      # Must match vector(N) in the migrations. bge-m3 is 1024 wide, which is
+      # why the schema was written at 1024.
+      dimension: 1024
+      # bge-m3 needs no instruction prefix. Kept configurable because most
+      # alternatives do — nomic-embed-text requires search_query:/search_
+      # document:, and omitting them degrades every comparison silently.
+      query-prefix: ""
+      document-prefix: ""
+      connect-timeout-ms: 2000
+      read-timeout-ms: 60000
+
+  # Gates every extracted facet passes before it can affect a search result.
+  # Ordered cheapest-and-most-decisive first: the deterministic gates need no
+  # vector and no model, so most fabrication dies before anything is embedded.
+  validation:
+    # Share of the facet's content words that must also appear — after
+    # stemming — in the span it cites. Below 1.0 on purpose: a good facet
+    # rephrases rather than copies.
+    min-span-overlap: 0.34
+    # Spans shorter than this are too generic to be evidence of anything.
+    min-span-chars: 12
+    # Facet value unlike anything approved on that dim before — usually
+    # atmosphere content written into the format slot. Goes to review, not
+    # dropped: the dim may simply be new.
+    dim-threshold: 0.60
+    # Tag label this far from every known tag becomes a proposal instead of
+    # snapping. High on purpose — a wrong snap is invisible, an unsnapped
+    # label sits in a queue where someone sees it.
     tag-snap-threshold: 0.82
-    # Cosine below which a facet value looks unlike anything previously
-    # approved on that dim — usually the model writing atmosphere content into
-    # the format slot. Routed to review rather than dropped.
-    dim-validation-threshold: 0.60
-    # Auto-approve only when the model was confident AND dim validation passed.
-    # Everything else waits for a human. Raising this stalls the review queue;
-    # lowering it lets unreviewed facets into the vector space.
-    auto-approve-confidence: 0.90
+    # Note what is NOT here: any use of the model's self-reported confidence.
+    # An 8B model reports 0.95 for a fabricated facet as readily as a sound
+    # one, so trusting it would launder the exact failure these gates catch.
+    auto-approve-on-all-gates-pass: true
 
 management:
   endpoints:
@@ -114,6 +134,10 @@ spring:
       host: redis
   kafka:
     bootstrap-servers: kafka:9092
+
+agent:
+  ollama:
+    base-url: http://ollama:11434
 
 logging:
   level:

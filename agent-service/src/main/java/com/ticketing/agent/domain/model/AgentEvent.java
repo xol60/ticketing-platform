@@ -89,6 +89,24 @@ public class AgentEvent {
     @Column(nullable = false)
     private boolean searchable;
 
+    /**
+     * Facets that survived validation on the most recent extraction, and those
+     * that did not.
+     *
+     * <p>Denormalised from {@code facet_rejection} so the review UI can show
+     * the ratio per row without an aggregate, and so a pathological event
+     * stands out at a glance. The ratio is the diagnostic that matters: an
+     * event with 1 kept and 9 rejected is not an event with few facets, it is
+     * an event the extractor mostly invented.
+     */
+    @Column(name = "facets_kept", nullable = false)
+    @Builder.Default
+    private int facetsKept = 0;
+
+    @Column(name = "facets_rejected", nullable = false)
+    @Builder.Default
+    private int facetsRejected = 0;
+
     @Column(name = "ingested_at")
     private Instant ingestedAt;
 

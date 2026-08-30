@@ -10,6 +10,9 @@ volumes:
   redis-data:
   kafka-data:
   elasticsearch-data:
+  # Model weights, ~6.5 GB. Named so `docker compose down` keeps them — a
+  # re-pull is a long download, not a rebuild.
+  ollama-models:
   prometheus-data:
   grafana-data:
   loki-data:
@@ -124,6 +127,63 @@ services:
     volumes:
       - ./docker/kafka/create-topics.sh:/create-topics.sh
     entrypoint: ["/bin/bash", "/create-topics.sh"]
+    networks:
+      - ticketing-net
+
+  # ─────────────────────────────────────────────
+  # LOCAL INFERENCE — Ollama serving agent-service
+  # ─────────────────────────────────────────────
+  # Both the extraction model and the embedding model run here. Nothing leaves
+  # the host: the stack comes up with no API key, and no event data reaches a
+  # third party.
+  #
+  # CPU-only by default. On a machine with an NVIDIA GPU, add a `deploy.resources`
+  # reservation — inference goes from ~60s to a few seconds per event, which
+  # matters when re-ingesting the whole catalogue.
+  ollama:
+    image: ollama/ollama:0.6.8
+    container_name: ollama
+    volumes:
+      - ollama-models:/root/.ollama
+    # ports: not exposed in base — agent-service reaches it via internal DNS
+    networks:
+      - ticketing-net
+    healthcheck:
+      # `ollama list` returns non-zero until the server is accepting requests.
+      test:     ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout:  5s
+      retries:  20
+      # Weight loading on first boot is slow; without this the container is
+      # declared unhealthy before it has finished starting.
+      start_period: 60s
+
+  # Pulls the two models once, then exits — same shape as kafka-init.
+  # Idempotent: `ollama pull` on a model already in the volume is a no-op, so
+  # this costs nothing on subsequent boots.
+  #
+  # First run downloads ~6.5 GB and can take several minutes. agent-service
+  # waits on this completing, because an ingest attempt against a missing
+  # model fails in a way that looks like a bug rather than a download.
+  ollama-init:
+    image: ollama/ollama:0.6.8
+    container_name: ollama-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        echo "Pulling ${OLLAMA_LLM_MODEL:-qwen3:8b} (extraction)..."
+        ollama pull "${OLLAMA_LLM_MODEL:-qwen3:8b}"
+        echo "Pulling ${OLLAMA_EMBED_MODEL:-bge-m3} (embeddings, 1024-dim)..."
+        ollama pull "${OLLAMA_EMBED_MODEL:-bge-m3}"
+        echo "Models ready:"
+        ollama list
     networks:
       - ticketing-net
 
@@ -585,9 +645,7 @@ services:
   # Neither consumer knows the other exists.
   #
   # Read-only with respect to the order saga: it hands an eventId back to the
-  # user and stops. LLM_API_KEY / EMBEDDING_API_KEY are intentionally allowed to
-  # be empty — the service still boots, migrates, and serves the review UI
-  # without them; only the ingestion pipeline refuses to run.
+  # user and stops.
   agent-service:
     build:
       context: .
@@ -600,16 +658,19 @@ services:
       DB_PASSWORD:              ticketing_secret
       REDIS_HOST:               redis
       KAFKA_BOOTSTRAP_SERVERS:  kafka:9092
-      LLM_API_KEY:              ${LLM_API_KEY:-}
-      LLM_MODEL:                ${LLM_MODEL:-claude-sonnet-4-6}
-      EMBEDDING_API_KEY:        ${EMBEDDING_API_KEY:-}
-      EMBEDDING_MODEL:          ${EMBEDDING_MODEL:-voyage-3}
+      OLLAMA_BASE_URL:          http://ollama:11434
+      OLLAMA_LLM_MODEL:         ${OLLAMA_LLM_MODEL:-qwen3:8b}
+      OLLAMA_EMBED_MODEL:       ${OLLAMA_EMBED_MODEL:-bge-m3}
     depends_on:
       postgres-master:
         condition: service_healthy
       redis:
         condition: service_healthy
       kafka-init:
+        condition: service_completed_successfully
+      # Waits for the pull, not just the server. Ingesting against a model
+      # that has not finished downloading fails in a way that reads as a bug.
+      ollama-init:
         condition: service_completed_successfully
     networks:
       - ticketing-net

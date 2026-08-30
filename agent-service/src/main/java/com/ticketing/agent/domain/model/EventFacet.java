@@ -49,6 +49,18 @@ public class EventFacet {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String value;
 
+    /**
+     * The substring of {@code agent_event.description_raw} this facet was
+     * derived from — the evidence that it was read rather than invented.
+     *
+     * <p>Verified by literal containment before the row is written, so a
+     * persisted value means the check passed. Null only for human-authored
+     * rows, where the reviewer is the evidence; the database enforces that
+     * with a CHECK constraint rather than trusting callers.
+     */
+    @Column(name = "source_span", columnDefinition = "TEXT")
+    private String sourceSpan;
+
     /** Embedding model that produced the vector. Null while the row has no vector. */
     @Column(name = "model_version")
     private String modelVersion;

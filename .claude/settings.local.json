@@ -270,7 +270,14 @@
       "Bash(docker rm *)",
       "Bash(mvn -q compile)",
       "Bash(mvn -o -q help:evaluate -Dexpression=project.modules -DforceStdout)",
-      "Bash(docker restart *)"
+      "Bash(docker restart *)",
+      "Skill(claude-api)",
+      "Skill(claude-api:*)",
+      "Bash(mvn -pl common-lib,agent-service -am test -Dtest=FacetValidatorTest)",
+      "Bash(mvn -pl common-lib,agent-service -am test -Dtest=FacetValidatorTest -Dsurefire.failIfNoSpecifiedTests=false)",
+      "Bash(mvn -pl common-lib,agent-service -am test -Dsurefire.failIfNoSpecifiedTests=false)",
+      "Bash(docker system *)",
+      "Bash(docker builder *)"
     ]
   }
 }
