@@ -137,7 +137,10 @@ spring:
 
 agent:
   ollama:
-    base-url: http://ollama:11434
+    # Ollama running natively on the host by default — on macOS the Docker VM
+    # has neither the memory for an 8B model nor access to the GPU. Override to
+    # http://ollama:11434 when running with the ollama-container profile.
+    base-url: ${OLLAMA_BASE_URL:http://host.docker.internal:11434}
 
 logging:
   level:
