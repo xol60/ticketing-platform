@@ -153,7 +153,25 @@ class FacetValidatorTest {
 
             assertThat(r.verdict()).isEqualTo(Verdict.REJECT);
             assertThat(r.reason()).isEqualTo(RejectionReason.CONTRADICTS_EVENT);
-            assertThat(r.detail()).contains("capacity_band is large");
+            assertThat(r.detail()).contains("rule that out");
+        }
+
+        @Test
+        @DisplayName("does NOT reject a stadium claim on a low-ticket event")
+        void doesNotRejectLargeClaimOnSmallBand() {
+            // The asymmetry that cost three correct facets on the first real
+            // run. Ticket count is a lower bound: thirty tickets is equally
+            // consistent with a small room and with a stadium whose seats have
+            // not all been created yet, so it cannot disprove "stadium".
+            event.setCapacityBand("small");
+
+            ValidationOutcome r = check("format",
+                    "environmentally responsible stadium tour",
+                    "one of the most environmentally responsible stadium tours in music history");
+
+            assertThat(r.verdict())
+                    .as("a low ticket count must never disprove a large-venue claim")
+                    .isEqualTo(Verdict.ACCEPT);
         }
 
         @Test
@@ -235,6 +253,30 @@ class FacetValidatorTest {
             assertThat(TextNormalizer.stem("singing")).isEqualTo(TextNormalizer.stem("sings"));
             assertThat(TextNormalizer.stem("stopped")).isEqualTo("stop");
             assertThat(TextNormalizer.stem("bodies")).isEqualTo("body");
+        }
+
+        @Test
+        @DisplayName("a base form and its plural reduce to the same stem")
+        void pluralAgreesWithSingular() {
+            // The bug this locks down cost a correctly-supported facet in
+            // production: "keynotes" stemmed to "keynot" while "keynote"
+            // stayed whole, so a facet quoting "five keynotes, 18 innovation
+            // talks" scored 0.33 and was rejected as unsupported.
+            assertThat(TextNormalizer.stem("keynotes")).isEqualTo(TextNormalizer.stem("keynote"));
+            assertThat(TextNormalizer.stem("stages")).isEqualTo(TextNormalizer.stem("stage"));
+            assertThat(TextNormalizer.stem("venues")).isEqualTo(TextNormalizer.stem("venue"));
+
+            // "es" is still stripped where it is a real plural marker.
+            assertThat(TextNormalizer.stem("matches")).isEqualTo(TextNormalizer.stem("match"));
+            assertThat(TextNormalizer.stem("boxes")).isEqualTo(TextNormalizer.stem("box"));
+        }
+
+        @Test
+        @DisplayName("a verb agrees with its past and present participle")
+        void verbFormsAgree() {
+            assertThat(TextNormalizer.stem("danced")).isEqualTo(TextNormalizer.stem("dance"));
+            assertThat(TextNormalizer.stem("dancing")).isEqualTo(TextNormalizer.stem("dance"));
+            assertThat(TextNormalizer.stem("produced")).isEqualTo(TextNormalizer.stem("produce"));
         }
 
         @Test

@@ -109,26 +109,62 @@ public final class TextNormalizer {
 
     /**
      * Strips the inflectional endings that separate a paraphrase from its
-     * source. Longest suffix first, and never below a four-character root —
-     * shortening past that starts merging words that only look alike.
+     * source.
+     *
+     * <h3>The goal is agreement, not correctness</h3>
+     * A stem does not have to be a real word. It has to be the <em>same</em>
+     * for every inflection of one word, because the only thing measured here is
+     * whether two texts are talking about the same thing. "keynot" is not
+     * English and does not need to be — it only needs to be what both
+     * "keynote" and "keynotes" reduce to.
+     *
+     * <p>That property is why {@link #dropSilentE} exists. An earlier version
+     * stripped "es" from anything, so "keynotes" became "keynot" while
+     * "keynote" stayed whole, and the two never matched. The cost was not
+     * theoretical: a facet reading "keynote presentations and talks", quoted
+     * from "five keynotes, 18 innovation talks", scored 0.33 and was rejected
+     * as unsupported. Any suffix rule that leaves the base form untouched
+     * creates the same silent failure.
      */
     static String stem(String token) {
         String t = token;
 
         // Order is significant: "singing" must lose "ing", not "g".
-        if (t.length() > 5 && t.endsWith("ingly")) return t.substring(0, t.length() - 5);
+        if (t.length() > 5 && t.endsWith("ingly")) return dropSilentE(t.substring(0, t.length() - 5));
         if (t.length() > 5 && t.endsWith("ation")) return t.substring(0, t.length() - 5) + "at";
-        if (t.length() > 4 && t.endsWith("ing"))   return trimDoubledConsonant(t.substring(0, t.length() - 3));
-        if (t.length() > 4 && t.endsWith("edly"))  return t.substring(0, t.length() - 4);
+        if (t.length() > 4 && t.endsWith("ing"))   return dropSilentE(trimDoubledConsonant(t.substring(0, t.length() - 3)));
+        if (t.length() > 4 && t.endsWith("edly"))  return dropSilentE(t.substring(0, t.length() - 4));
         if (t.length() > 4 && t.endsWith("ies"))   return t.substring(0, t.length() - 3) + "y";
         if (t.length() > 4 && t.endsWith("ied"))   return t.substring(0, t.length() - 3) + "y";
-        if (t.length() > 4 && t.endsWith("ely"))   return t.substring(0, t.length() - 3);
-        if (t.length() > 4 && t.endsWith("ed"))    return trimDoubledConsonant(t.substring(0, t.length() - 2));
-        if (t.length() > 4 && t.endsWith("ly"))    return t.substring(0, t.length() - 2);
-        if (t.length() > 4 && t.endsWith("es"))    return t.substring(0, t.length() - 2);
-        if (t.length() > 3 && t.endsWith("s") && !t.endsWith("ss")) return t.substring(0, t.length() - 1);
+        if (t.length() > 4 && t.endsWith("ely"))   return dropSilentE(t.substring(0, t.length() - 3));
+        if (t.length() > 4 && t.endsWith("ed"))    return dropSilentE(trimDoubledConsonant(t.substring(0, t.length() - 2)));
+        if (t.length() > 4 && t.endsWith("ly"))    return dropSilentE(t.substring(0, t.length() - 2));
 
-        return t;
+        // "es" is only a plural marker after a sibilant — "matches", "boxes",
+        // "classes". Everywhere else the plural is a bare "s" on a word that
+        // happens to end in "e", and stripping both letters mangles it:
+        // "keynotes" is keynote + s, not keynot + es.
+        if (t.length() > 4 && (t.endsWith("ches") || t.endsWith("shes")
+                || t.endsWith("ses") || t.endsWith("xes") || t.endsWith("zes"))) {
+            return t.substring(0, t.length() - 2);
+        }
+        if (t.length() > 3 && t.endsWith("s") && !t.endsWith("ss")) {
+            return dropSilentE(t.substring(0, t.length() - 1));
+        }
+
+        return dropSilentE(t);
+    }
+
+    /**
+     * Removes a trailing "e" so a base form and its inflections converge.
+     *
+     * <p>English drops the silent "e" before a vowel suffix — "dance" becomes
+     * "danced" and "dancing" — so the base form is the odd one out unless it
+     * is folded the same way. Applied last, and never below a three-character
+     * root, where dropping a letter starts merging unrelated short words.
+     */
+    private static String dropSilentE(String s) {
+        return s.length() > 3 && s.endsWith("e") ? s.substring(0, s.length() - 1) : s;
     }
 
     /**

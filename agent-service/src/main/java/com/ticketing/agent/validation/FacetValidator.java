@@ -55,11 +55,9 @@ public class FacetValidator {
             "handful", "few", "hundred", "club", "basement", "backroom"
     );
 
-    /** The inverse: words asserting a crowd in the thousands. */
-    private static final Set<String> LARGE_SCALE_MARKERS = Set.of(
-            "stadium", "arena", "massive", "huge", "enormous", "thousand",
-            "thousands", "packed", "sold-out", "vast", "sprawling"
-    );
+    // There is deliberately no LARGE_SCALE_MARKERS set. Its only use would be
+    // rejecting "stadium" on a low-ticket event, and ticket count cannot
+    // support that inference — see findScaleConflict.
 
     /**
      * Validates every candidate for one event.
@@ -146,37 +144,45 @@ public class FacetValidator {
     }
 
     /**
-     * Compares a scale claim against the capacity band derived from ticket
-     * count.
+     * Compares a scale claim against the capacity band — in one direction only.
      *
-     * <p>This is the only contradiction check that hard-rejects, and it earns
-     * that because both sides are facts we own: the band is computed, not
-     * described, so a mismatch is not a difference of interpretation.
+     * <h3>Ticket count is a lower bound, not a measurement</h3>
+     * Selling twenty thousand tickets proves the venue holds at least twenty
+     * thousand. Thirty tickets proves nothing about the upper bound: it is
+     * equally consistent with a small room and with a stadium whose seats have
+     * not all been created yet.
      *
-     * <p>Checks in the other direction were considered and left out. Indoor
-     * versus outdoor, seated versus standing, and category-versus-format all
-     * look checkable and are not — a Super Bowl description legitimately
-     * discusses a concert, a stadium legitimately hosts a seated show. Each
-     * would have rejected real facets from events that already have few.
+     * <p>So a large band can disprove "intimate", and a small band can
+     * disprove nothing at all. The first run against real data made the point
+     * expensively — three correct facets about a genuine stadium tour were
+     * rejected because the seed script had created thirty tickets for it. The
+     * gate was comparing against a number that does not measure what it was
+     * being asked to measure.
+     *
+     * <h3>Why not add a venue capacity column instead</h3>
+     * It would make this check symmetric, and it is not worth it. Capacity
+     * would feed exactly this gate and the two scale tags; the {@code scale}
+     * dim is not embedded, so it never takes part in matching. Meanwhile users
+     * do not ask about capacity numerically — "not too crowded" and "somewhere
+     * big enough to relax" are questions about atmosphere and space, which the
+     * embedded dims already answer, and a stadium at a tenth full satisfies
+     * both while a full one satisfies neither. The column would also be a form
+     * field somebody has to fill, and a wrong capacity is worse than none.
+     *
+     * <p>Other directions were considered and left out for the same reason
+     * this one was halved: indoor versus outdoor, seated versus standing, and
+     * category-versus-format all look decidable and are not. A Super Bowl
+     * description legitimately discusses a concert; a stadium legitimately
+     * hosts a seated show.
      *
      * @return a description of the conflict, or null when there is none
      */
     private String findScaleConflict(AgentEvent event, Set<String> valueWords) {
-        String band = event.getCapacityBand();
-        if (band == null) return null;
+        if (!"large".equals(event.getCapacityBand())) return null;
 
-        if ("large".equals(band)) {
-            String hit = firstMatch(valueWords, SMALL_SCALE_MARKERS);
-            if (hit != null) {
-                return "claims '" + hit + "' but capacity_band is large";
-            }
-        } else if ("small".equals(band)) {
-            String hit = firstMatch(valueWords, LARGE_SCALE_MARKERS);
-            if (hit != null) {
-                return "claims '" + hit + "' but capacity_band is small";
-            }
-        }
-        return null;
+        String hit = firstMatch(valueWords, SMALL_SCALE_MARKERS);
+        return hit == null ? null
+                : "claims '" + hit + "' but the event has enough tickets to rule that out";
     }
 
     /** Markers are stored unstemmed, so compare against the stem of each. */

@@ -27,6 +27,37 @@ public interface TicketRepository extends JpaRepository<Ticket, String> {
     long countByEventIdAndStatus(String eventId, TicketStatus status);
 
     /**
+     * Price range and seat count for one event, in a single scan.
+     *
+     * <p>Published on {@code event.search.indexed} so downstream read models
+     * get facts they cannot compute for themselves — only this service can see
+     * the ticket table. search-service uses the prices to filter and sort;
+     * agent-service turns the count into a capacity band and rejects any
+     * extracted facet that contradicts it.
+     *
+     * <p>Counts every ticket regardless of status, because this describes the
+     * venue's size, not what is still on sale. A sold-out stadium is still a
+     * stadium.
+     *
+     * <p>Returns a row of nulls and zero for an event with no tickets yet.
+     */
+    @Query("""
+            SELECT MIN(t.facePrice) AS minPrice,
+                   MAX(t.facePrice) AS maxPrice,
+                   COUNT(t)         AS ticketCount
+              FROM Ticket t
+             WHERE t.eventId = :eventId
+            """)
+    EventTicketSummary summariseTickets(@Param("eventId") String eventId);
+
+    /** Projection for {@link #summariseTickets(String)}. */
+    interface EventTicketSummary {
+        BigDecimal getMinPrice();
+        BigDecimal getMaxPrice();
+        long getTicketCount();
+    }
+
+    /**
      * Used by the stuck-reservation watchdog.
      * Returns every RESERVED ticket whose explicit {@code reservedUntil} deadline
      * has already passed — meaning the saga that locked it has exceeded its maximum

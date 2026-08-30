@@ -45,17 +45,49 @@ public class EventSearchIndexedEvent extends DomainEvent {
     private String category;
     private String genre;
 
+    // ── Ticket-derived facts ─────────────────────────────────────────────────
+    // Aggregates over the event's tickets, computed by ticket-service because
+    // it owns them. Consumers must not try to derive these themselves: only
+    // ticket-service can see the ticket table, and a consumer guessing at
+    // crowd size from prose is the exact failure the agent's validation exists
+    // to prevent.
+    //
+    // All three are null for an event that has no tickets yet, which is a
+    // normal state between creating an event and seeding its seats.
+
+    /** Cheapest and dearest face price. Lets search filter and sort by price. */
+    private java.math.BigDecimal priceMin;
+    private java.math.BigDecimal priceMax;
+
+    /**
+     * Total tickets. agent-service turns this into a capacity band and uses it
+     * to reject facets claiming an intimate room for a twenty-thousand-seat
+     * stadium — a fact beating a claim, rather than two opinions.
+     */
+    private Integer ticketCount;
+
     /**
      * Full-arg constructor — matches the call site in
      * {@code ticket-service / EventService.publishSearchIndexed(...)}.
+     *
+     * <p>Long, and stays a constructor rather than becoming a builder: there is
+     * exactly one call site, and {@link DomainEvent} has no builder to inherit
+     * from. Retrofitting {@code @SuperBuilder} onto the shared base class would
+     * touch every event type in the platform to tidy one signature.
      */
     public EventSearchIndexedEvent(String traceId, String sagaId,
                                     String eventId, String name, String status,
                                     Instant salesOpenAt, Instant salesCloseAt, Instant eventDate,
                                     String primaryArtist, String venueName, String venueCity,
                                     String shortDescription, String fullDescription,
-                                    String category, String genre) {
+                                    String category, String genre,
+                                    java.math.BigDecimal priceMin,
+                                    java.math.BigDecimal priceMax,
+                                    Integer ticketCount) {
         super(traceId, sagaId);
+        this.priceMin    = priceMin;
+        this.priceMax    = priceMax;
+        this.ticketCount = ticketCount;
         this.eventId          = eventId;
         this.name             = name;
         this.status           = status;

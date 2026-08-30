@@ -7,6 +7,7 @@ import com.ticketing.common.events.EventStatus;
 import com.ticketing.common.exception.ErrorCode;
 import com.ticketing.common.exception.TicketingException;
 import com.ticketing.ticket.domain.repository.EventRepository;
+import com.ticketing.ticket.domain.repository.TicketRepository;
 import com.ticketing.ticket.dto.request.CreateEventRequest;
 import com.ticketing.ticket.dto.request.UpdateEventRequest;
 import com.ticketing.ticket.dto.response.EventStatusResponse;
@@ -26,6 +27,7 @@ import java.util.stream.Collectors;
 public class EventService {
 
     private final EventRepository      eventRepository;
+    private final TicketRepository     ticketRepository;
     private final TicketEventPublisher publisher;
 
     @Transactional
@@ -153,13 +155,24 @@ public class EventService {
      * The search-service consumer upserts/deletes the ES document based on status.
      */
     private void publishSearchIndexed(Event event, String traceId) {
+        // Ticket aggregates travel with the event because only this service can
+        // compute them. Downstream read models must never try to infer crowd
+        // size or price from the description — agent-service in particular uses
+        // the count to disprove facets that claim an intimate room for a
+        // stadium, which only works while the number is a fact rather than
+        // another guess.
+        var tickets = ticketRepository.summariseTickets(event.getId());
+
         publisher.publishEventSearchIndexed(new EventSearchIndexedEvent(
                 traceId, null,
                 event.getId(), event.getName(), event.getStatus().name(),
                 event.getSalesOpenAt(), event.getSalesCloseAt(), event.getEventDate(),
                 event.getPrimaryArtist(), event.getVenueName(), event.getVenueCity(),
                 event.getShortDescription(), event.getFullDescription(),
-                event.getCategory(), event.getGenre()
+                event.getCategory(), event.getGenre(),
+                tickets == null ? null : tickets.getMinPrice(),
+                tickets == null ? null : tickets.getMaxPrice(),
+                tickets == null ? 0 : (int) tickets.getTicketCount()
         ));
     }
 
