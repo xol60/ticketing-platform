@@ -23,6 +23,21 @@ import java.util.List;
  *       returns precisely the events the user just ruled out.</li>
  * </ul>
  *
+ * @param intent          what the person is doing this turn. Inferred from the
+ *                        sentence, and the only reliable way to tell a question
+ *                        about the chosen event from a new search — asking
+ *                        "what time does it start" reliably produced a spurious
+ *                        duration facet, which made the turn look like a search
+ *                        and lost the event the person had just picked
+ * @param ordinal         1-based position the person pointed at — "the second
+ *                        one", "the first". Resolved against the previous
+ *                        turn's list in Java, never by the model: asked to
+ *                        recall what was second, a model answers confidently
+ *                        and drifts as the conversation lengthens, and the
+ *                        person silently gets details for the wrong event
+ * @param clearFields     slots the person removed — "forget the budget",
+ *                        "anywhere is fine". Distinct from simply not
+ *                        mentioning a slot, which leaves it standing
  * @param properNoun      an artist, venue or event name the person named. Kept
  *                        whole and never distilled: a name is matched
  *                        literally, and embedding "Taylor Swift" into a vibe
@@ -40,6 +55,9 @@ import java.util.List;
  * @param excludeTags     catalogue slugs the user ruled out
  */
 public record QueryExtraction(
+        Intent intent,
+        Integer ordinal,
+        List<String> clearFields,
         String properNoun,
         String city,
         String dateExpression,
@@ -47,8 +65,28 @@ public record QueryExtraction(
         List<FacetQuery> vibeFacets,
         List<String> excludeTags) {
 
+    /**
+     * Enforces the one invariant the model keeps breaking: pointing at a row
+     * retracts nothing.
+     *
+     * <p>Asked for "the second one", qwen3:8b reliably returns
+     * {@code ordinal: 2} together with {@code clearFields: ["city",
+     * "dateExpression", "priceMax"]} — reading the absence of those slots in a
+     * three-word sentence as a request to drop them. An explicit counter-example
+     * in the prompt did not stop it, and it would silently wipe a conversation's
+     * accumulated filters on every selection.
+     *
+     * <p>Handled here rather than in the prompt because it is decidable: a
+     * selection is not a retraction, whatever the model believes.
+     */
+    public QueryExtraction {
+        if (ordinal != null && ordinal > 0 && !clearFields.isEmpty()) {
+            clearFields = List.of();
+        }
+    }
+
     public static QueryExtraction empty() {
-        return new QueryExtraction(null, null, null, null, List.of(), List.of());
+        return new QueryExtraction(Intent.FIND, null, List.of(), null, null, null, null, List.of(), List.of());
     }
 
     /**
@@ -60,8 +98,27 @@ public record QueryExtraction(
     }
 
     /** True when nothing was said that narrows anything — the turn-1 case. */
+    public enum Intent {
+        /** Looking for something. The full pipeline runs. */
+        FIND,
+        /** Pointing at a row already shown. */
+        SELECT,
+        /** Asking about the event already chosen — a database lookup, not a search. */
+        DETAIL,
+        /** Asking how two or three of the results differ. */
+        COMPARE,
+        /** Ready to buy the event they have chosen. The end of the funnel. */
+        HANDOFF
+    }
+
+    /** True when the person pointed at a row rather than describing anything. */
+    public boolean isOrdinalReference() {
+        return ordinal != null && ordinal > 0;
+    }
+
     public boolean isBare() {
-        return properNoun == null && city == null && dateExpression == null
+        return ordinal == null && clearFields.isEmpty()
+                && properNoun == null && city == null && dateExpression == null
                 && priceMax == null && vibeFacets.isEmpty() && excludeTags.isEmpty();
     }
 }

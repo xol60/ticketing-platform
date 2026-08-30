@@ -78,8 +78,26 @@ public class SearchService {
 
     @Transactional(readOnly = true)
     public SearchResult search(String message, String fallbackCity) {
+        return search(extractor.extract(message), fallbackCity);
+    }
+
+    /**
+     * Searches from an already-extracted query.
+     *
+     * <p>The entry point multi-turn uses. An earlier version had the
+     * conversation rebuild its accumulated state into a sentence and feed it
+     * back through the extractor, so that one retrieval path served both — and
+     * every turn re-parsed structured state out of prose it had just written.
+     * The round trip lost a slot per turn: a city captured on turn one was gone
+     * by turn two, because the reassembled sentence no longer looked like one
+     * with a city in it.
+     *
+     * <p>Structured state now goes straight to the filter. The model reads the
+     * person's words once and never has to read its own output back.
+     */
+    @Transactional(readOnly = true)
+    public SearchResult search(QueryExtraction q, String fallbackCity) {
         Instant now = Instant.now();
-        QueryExtraction q = extractor.extract(message);
 
         Integer cityId = resolveCity(q.city() != null ? q.city() : fallbackCity);
         List<Integer> excludeIds = resolveTags(q.excludeTags());

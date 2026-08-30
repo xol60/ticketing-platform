@@ -2,6 +2,10 @@ package com.ticketing.agent.controller;
 
 import com.ticketing.agent.domain.model.EventFacet;
 import com.ticketing.agent.domain.repository.EventFacetRepository;
+import com.ticketing.agent.conversation.ChatService;
+import com.ticketing.agent.conversation.ConversationState;
+import com.ticketing.agent.dto.ChatRequest;
+import com.ticketing.agent.dto.ChatResponse;
 import com.ticketing.agent.dto.SearchRequest;
 import com.ticketing.agent.dto.SearchResponse;
 import com.ticketing.agent.search.SearchResult;
@@ -30,6 +34,7 @@ import java.util.stream.Collectors;
 public class AgentController {
 
     private final SearchService        searchService;
+    private final ChatService          chatService;
     private final EventFacetRepository facetRepository;
 
     /**
@@ -56,6 +61,54 @@ public class AgentController {
                 .relaxations(result.relaxations())
                 .usedVibe(result.usedVibe())
                 .build());
+    }
+
+    /**
+     * One conversational turn.
+     *
+     * <p>Layered on the same retrieval path as {@link #search}, not a parallel
+     * one. Memory is the only thing added — which keeps the P2 eval numbers
+     * describing what actually runs, and means a regression in ranking shows up
+     * in both endpoints rather than hiding in one.
+     */
+    @PostMapping("/chat")
+    public ApiResponse<ChatResponse> chat(@Valid @RequestBody ChatRequest request) {
+        ChatService.TurnResult turn = chatService.handle(
+                request.getSessionId(), request.getMessage(), request.getCity());
+
+        ConversationState st = turn.state();
+        var builder = ChatResponse.builder()
+                .stage(st.getStage().name())
+                .activeFilters(ChatResponse.ActiveFilters.builder()
+                        .city(st.getCity())
+                        .dateExpression(st.getDateExpression())
+                        .priceMax(st.getPriceMax() == null ? null : st.getPriceMax().toPlainString())
+                        .excludeTags(st.getExcludeTags())
+                        .vibe(st.getVibeFacets())
+                        .turnCount(st.getTurnCount())
+                        .build());
+
+        if (turn.handoff() != null) {
+            var h = turn.handoff();
+            builder.handoff(ChatResponse.HandoffInfo.builder()
+                    .eventId(h.eventId()).deepLink(h.deepLink())
+                    .available(h.available()).reason(h.reason()).build());
+        }
+
+        if (turn.focused() != null) {
+            builder.focused(toHits(new SearchResult(
+                    List.of(new SearchResult.Scored(turn.focused(), 1.0, 0.0)),
+                    1, List.of(), false)).get(0));
+        } else if (turn.search() != null) {
+            var r = turn.search();
+            builder.hits(toHits(r))
+                   .totalMatched(r.totalMatched())
+                   .offerNarrowing(r.totalMatched() > SearchService.NARROW_THRESHOLD)
+                   .relaxations(r.relaxations())
+                   .usedVibe(r.usedVibe());
+        }
+
+        return ApiResponse.ok(builder.build());
     }
 
     private List<SearchResponse.Hit> toHits(SearchResult result) {

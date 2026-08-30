@@ -14,8 +14,9 @@ Microservice ticketing system — Java 21 + Spring Boot 3.2 + Kafka + Redis + Po
 ## System architecture
 
 Four-tier topology. Browser → nginx (edge) → API gateway (auth + circuit-breaker + rate-limit) →
-ten Spring Boot services that communicate **only via Kafka** (no service-to-service HTTP for
-business workflows) → shared Postgres + Redis + Elasticsearch storage.
+eleven Spring Boot services that communicate **only via Kafka** (no service-to-service HTTP for
+business workflows) → shared Postgres + Redis + Elasticsearch storage, plus a local Ollama
+runtime used by the recommendation agent.
 
 ```mermaid
 flowchart LR
@@ -27,9 +28,11 @@ flowchart LR
     Services -.reads.-> PgSlave[(Postgres slave)]
     Services <--> Redis[(Redis)]
     S10 --> ES[(Elasticsearch)]
+    S11 --> PgVec[(agent_db + pgvector)]
+    S11 <--> Ollama[[Ollama - local models]]
     PgMaster -.replication.-> PgSlave
 
-    subgraph Services[" 10 Spring Boot services "]
+    subgraph Services[" 11 Spring Boot services "]
         S1[Auth]
         S2[Order]
         S3[Ticket]
@@ -40,13 +43,20 @@ flowchart LR
         S8[SecMarket]
         S9[Notification]
         S10[Search]
+        S11[Agent]
     end
 ```
 
-The **search-service** is intentionally out of the order saga — it consumes
-`event.search.indexed` from Kafka and projects events into a read-only
-Elasticsearch index. Postgres remains the source of truth; if ES or search-service
-is down the rest of the platform keeps working.
+Two services sit outside the order saga, both as read models off the same
+`event.search.indexed` topic and neither aware of the other:
+
+- **search-service** projects events into a read-only Elasticsearch index for
+  keyword search.
+- **agent-service** projects them into Postgres + pgvector for the conversational
+  recommendation agent.
+
+Postgres remains the source of truth for both. If either is down — or Ollama is
+not running — the rest of the platform keeps selling tickets.
 
 > ▶️ **[Animated saga flows](https://htmlpreview.github.io/?https://github.com/xol60/ticketing-platform/blob/main/docs/animated-flows.html)** — interactive play/pause/step demo of all three scenarios.
 > 📄 **[Static reference](https://htmlpreview.github.io/?https://github.com/xol60/ticketing-platform/blob/main/docs/diagrams.html)** — scroll-through version for readers who prefer text + step lists.
@@ -77,8 +87,9 @@ Each service has its own README with API, internal architecture, and operational
 | [`secondary-market-service/`](secondary-market-service)           | Ticket resale + HTTP idempotency on `POST /api/secondary/listings`     |
 | [`notification-service/`](notification-service)                   | Email / push                                                           |
 | [`search-service/`](search-service)                               | Elasticsearch read-only event search — multi-field + autocomplete + fuzzy |
+| [`agent-service/`](agent-service)                                 | Conversational recommendation agent — local LLM, pgvector, six validation gates |
 | [`ticketing-ui/`](ticketing-ui)                                   | React + TypeScript SPA                                                 |
-| [`tests/`](tests)                                                 | Concurrent-order stress test + SQL/bash demo-data seeder               |
+| [`tests/`](tests)                                                 | Concurrent-order stress test, demo-data seeder, hand-labelled agent retrieval eval |
 | [`docs/`](docs)                                                   | Cross-cutting deep dives (see [Deep dives](#deep-dives) below)         |
 | `docker/`                                                         | Topic-creation script, Postgres master+slave config, Redis & Nginx confs |
 
@@ -169,10 +180,12 @@ docker-compose up --build --no-deps ticket-service
 | Secondary Market     | 8088                           |
 | Notification Service | 8089                           |
 | Search Service       | 8091                           |
+| Agent Service        | 8092                           |
 | Postgres Master      | 5432 (internal) / 5436 (host)  |
 | Redis                | 6379                           |
 | Kafka                | 9092 (internal) / 29092 (host) |
 | Elasticsearch        | 9200 (internal)                |
+| Ollama               | 11434 (host, not containerised on macOS) |
 
 ## Kafka topics
 
@@ -242,7 +255,7 @@ application-level locking.
 | Payment     | `payment.dlq`           | payment                 | notification                 | `PaymentFailedEvent` (after retries exhausted) | **1** | 3      | orderId  |
 | Reservation | `reservation.promoted`  | reservation             | _(none — fan-out)_           | `ReservationPromotedEvent`                     | 10    | —      | ticketId |
 | Event mgmt  | `event.status.changed`  | ticket                  | _(none — fan-out)_           | `EventStatusChangedEvent`                      | 10    | —      | eventId  |
-| Event mgmt  | `event.search.indexed`  | ticket                  | search                       | `EventSearchIndexedEvent`                      | 10    | 3      | eventId  |
+| Event mgmt  | `event.search.indexed`  | ticket                  | search, **agent**            | `EventSearchIndexedEvent`                      | 10    | 3      | eventId  |
 | Event mgmt  | `event.hotness.changed` | ticket                  | order                        | `EventHotnessChangedEvent`                     | 10    | 3      | eventId  |
 | Notif       | `notification.send`     | any service             | notification                 | `NotificationSendCommand`                      | 10    | 3      | orderId  |
 | Security    | `auth.security.alert`   | auth                    | notification                 | `AuthSecurityAlertEvent`                       | **1** | 3      | userId   |
@@ -361,6 +374,184 @@ affecting ticket sales (Postgres remains the source of truth).
 
 ▶︎ **[`search-service/README.md`](search-service/README.md)** — architecture, indexing pipeline, load-shaping for `/suggest`, what's explicitly out of scope.
 
+## Recommendation agent
+
+A conversational funnel over the catalogue: someone describes what they feel
+like doing, the agent narrows it down over a few turns, and hands back an event
+id. Runs on `agent-service` (port 8092) against locally-hosted models — the
+stack needs no API key and no event data leaves the machine.
+
+### What it is not
+
+The terminal action is a deep link to the existing event page. The agent **never
+holds a ticket, creates an order, or takes a lock**, and it has no tool that
+could. Everything transactional stays behind the checkout seam it hands off to.
+
+That boundary is what makes the subsystem cheap: no reservation TTL to expire,
+nothing to release when a conversation is abandoned, and no path by which a bug
+here can strand a ticket. If an event sells out mid-conversation, checkout
+reports it like it would for any other buyer.
+
+There is also **no agent loop**. The action space is closed and small, so an
+orchestrator picking its own next tool would buy nothing but non-determinism.
+Control flow is ordinary Java; the model sits at fixed call sites and does one
+narrow job at each.
+
+### Models
+
+| Role | Model | Why |
+| --- | --- | --- |
+| Extraction | `qwen3:8b` (~5.2 GB) | Best JSON-schema adherence in the 8B class. Ingestion must return exact structure, and 4B variants fabricate spans outright. |
+| Embedding | `bge-m3` (1024-dim) | Width matches `vector(1024)` in the schema, so no migration. Multilingual, and needs no instruction prefix. |
+
+Both served by Ollama. **On macOS Ollama runs natively, not in a container** —
+Docker there is a VM with a fixed memory ceiling the rest of the stack largely
+fills, and a container cannot reach the Apple Silicon GPU at all. The compose
+file carries an `ollama-container` profile for Linux, where Docker shares host
+memory directly:
+
+```bash
+# macOS
+brew install ollama && ollama serve
+ollama pull qwen3:8b && ollama pull bge-m3
+
+# Linux
+docker compose --profile ollama-container up -d
+```
+
+### Two flows
+
+**Ingestion** (offline, once per event) consumes `event.search.indexed` — the
+same topic search-service reads — and turns a description into tags and facets:
+
+```
+event.search.indexed → extract (1 LLM call) → validate → embed → agent_db
+```
+
+**Conversation** (hot path) splits one message into three kinds of signal that
+travel different routes, then merges the result with what earlier turns
+established:
+
+```
+message → extract (1 LLM call) ─┬─ hard slots  → SQL WHERE
+                                ├─ vibe facets → cosine, per dim
+                                └─ negations   → NOT EXISTS
+                                → rank + diversity → 3–5 events
+```
+
+`POST /api/agent/search` runs one stateless turn. `POST /api/agent/chat` adds
+memory keyed by `sessionId` in Redis (45-minute TTL) and a stage machine —
+`BROWSING → FOCUSED → CONFIRMING`. Both are public: the funnel exists to collect
+a signal from someone who has not committed to anything, and a login wall on the
+first message loses exactly those people.
+
+### Hard limits
+
+These are load-bearing. Several were learned by breaking them.
+
+**The model never emits a fact about an event.** Not a time, price, or venue. It
+handles ids and vocabulary; every rendered field is read from the database. A
+model that writes a showtime will eventually write a wrong one.
+
+**Negation never reaches a vector.** `"not too crowded"` embeds *next to*
+`"crowded"`, not far from it — embeddings have no notion of negation. It is
+extracted as an excluded tag and applied as `NOT EXISTS`. Left in the vibe text,
+it returns precisely what the person ruled out.
+
+**Anything SQL can decide exactly stays out of the vector.** City, date, price.
+`"new york"` inside an embedding matches a Boston event whose copy mentions New
+York in passing.
+
+**Proper nouns are matched, not measured.** A name carries no mood, and
+distilling it destroys it — `"Taylor Swift"` embedded into a vibe vector returns
+everything except the Taylor Swift shows. Named artists, venues and shows take a
+separate literal-lookup path.
+
+**Every extracted facet must quote its source.** The model returns the exact
+span it derived each facet from, and Java rejects it if that span does not
+appear verbatim in the description. This is the strongest gate precisely because
+it is dumb: inventing a plausible facet is easy for a small model, inventing a
+character sequence that happens to appear in a specific paragraph is not.
+
+**The model's own confidence is ignored.** It is emitted and discarded. An 8B
+model reports 0.95 for a fabricated facet as readily as for a sound one, so
+admitting it as evidence would launder the exact failure the gates exist to
+catch. Auto-approval is earned by deterministic checks or not at all.
+
+**City is never relaxed.** When a search comes back too thin the constraints
+widen in a fixed order — price, then time window, then exclusions — and each
+step is reported back. City is not in that list: a show in the wrong city is not
+a worse answer, it is a useless one.
+
+**Date arithmetic happens in Java.** The model returns the person's own words
+("this weekend"); a real clock and a real zone resolve them. Asked to compute a
+date, a model answers confidently and wrongly, and the error is invisible.
+
+**Ordinal references are an array lookup.** `"the second one"` indexes the
+previous turn's result list in Java. Asked to recall what was second, a model
+drifts as the conversation lengthens and the person silently gets the wrong
+event.
+
+### Validation pipeline
+
+Six gates. The first four are deterministic — no model, no vector, no threshold
+on the strongest one — and run before anything is embedded, so most fabrication
+dies at zero inference cost.
+
+| # | Gate | Blocks | Outcome |
+| --- | --- | --- | --- |
+| 1 | Shape | dim outside the closed vocabulary | reject |
+| 2 | **Grounding** | cited span absent from the description | reject |
+| 3 | Overlap | span is real but the facet is about something else | reject |
+| 4 | Contradiction | scale claim the ticket count disproves | reject |
+| 5 | Dim (vector) | atmosphere content filed under format | review |
+| 6 | Tag snap (vector) | label outside the 15-tag catalogue | proposal |
+
+Rejections are kept in `facet_rejection` rather than dropped — the distribution
+across reasons is the only honest measure of how much the model is inventing,
+and tells you where to fix the prompt. A database `CHECK` constraint enforces
+the grounding rule independently of whether application code remembered to call
+the validator.
+
+Gate 4 only fires in one direction: a large ticket count can disprove "intimate
+room", but a small one cannot disprove "stadium" — ticket count is a lower bound
+on venue size, not a measurement of it.
+
+### Measured behaviour
+
+On the 92-event demo catalogue, all figures from real runs:
+
+| | |
+| --- | --- |
+| Events with ≥2 usable facets | **73%** (§15.1 threshold is 60%) |
+| Facets kept / rejected | 266 / 174 (40% rejected) |
+| Rejection reasons | 71% span-drift, 29% outright fabrication |
+| Retrieval precision@5 | **48%**, 5 of 18 eval cases perfect |
+| Ingestion throughput | ~14 s per event (Metal GPU, model warm) |
+
+Name, city and venue queries score 100%; mood queries score 0–40%. The ceiling
+is not the matching — it is that most descriptions in this catalogue talk about
+history and awards rather than what attending feels like, so there is no
+atmosphere facet to match against. That is §15.1 surfacing at query time, and no
+amount of prompt or ranking work fixes it.
+
+### Operational notes
+
+- **Ingestion is single-threaded on purpose.** Every message costs an LLM call
+  taking seconds; throughput is bounded by the model, not thread count.
+  `max.poll.interval.ms` is raised to 10 minutes so the broker does not decide
+  the consumer is dead mid-batch.
+- **Failures are split by whether retrying helps.** Postgres or Ollama down →
+  do not ack, let Kafka redeliver. A description the model cannot parse → ack
+  and move on, or one bad event stalls the partition forever.
+- **`searchable` is a curation gate, not a business one.** An OPEN event whose
+  facets nobody accepted stays invisible to the agent. Recommending on the
+  strength of unreviewed facets is worse than not recommending.
+- **Re-ingest replaces machine rows and leaves human rows alone**, so editing a
+  description upstream never discards a reviewer's corrections.
+- **`agent_db` is disposable.** It is a derived read model; replay the topic and
+  it rebuilds, minus the human review decisions.
+
 ## Hot-event detection
 
 Per-event view-counter + watchdog that proactively flags events surging in
@@ -433,6 +624,7 @@ Cross-cutting topics that span more than one service live in their own docs:
 | Saga animated flow (interactive)                            | [animated-flows.html](https://htmlpreview.github.io/?https://github.com/xol60/ticketing-platform/blob/main/docs/animated-flows.html) |
 | Saga static reference                                       | [diagrams.html](https://htmlpreview.github.io/?https://github.com/xol60/ticketing-platform/blob/main/docs/diagrams.html) |
 | Stress test methodology + findings                          | [`tests/README.md`](tests/README.md) |
+| Agent retrieval eval — 57 hand-labelled cases with `rejectIds` | [`tests/agent-eval.json`](tests/agent-eval.json) |
 
 Per-service architecture lives in each service's own README — see [Project structure](#project-structure).
 

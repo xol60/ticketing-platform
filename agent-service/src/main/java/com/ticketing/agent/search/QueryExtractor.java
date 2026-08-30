@@ -39,6 +39,25 @@ public class QueryExtractor {
             You split a person's request for something to do into structured parts.
             You do not answer it, and you do not invent anything they did not say.
 
+            FIRST, WHAT IS THIS PERSON DOING?
+            Set "intent" to exactly one of:
+              FIND    — looking for something. Anything describing what they want.
+                        "a musical in london", "something calm", "taylor swift"
+              SELECT  — pointing at a row already shown.
+                        "the second one", "that first one", "cái thứ 2"
+              DETAIL  — asking about the event they already chose. Questions about
+                        one thing, not a search for another.
+                        "what time does it start", "how much is it", "where is it"
+              COMPARE — asking how the shown results differ.
+                        "what's the difference", "which is cheaper"
+              HANDOFF — ready to buy the one they chose.
+                        "book it", "I'll take that one", "let's get tickets"
+
+            For SELECT, DETAIL and COMPARE, leave vibeFacets EMPTY. A question is
+            not a description. "what time does it start" is DETAIL with no facets
+            — reading "start time" as a duration facet turns a question about the
+            chosen event into a search that loses it.
+
             FOUR KINDS OF INFORMATION, AND THEY GO TO DIFFERENT PLACES
 
             0. A NAME — an artist, band, team, show or venue the person named.
@@ -50,6 +69,11 @@ public class QueryExtractor {
                  "anything at wembley"       -> properNoun: "wembley"
                  "something like coldplay"   -> properNoun: null   (a comparison,
                                                 not a request for Coldplay)
+
+               A CITY IS NOT A NAME for this purpose. "in london" fills "city"
+               and leaves properNoun null — putting it in both makes the search
+               look for a venue called London and find nothing.
+                 "a musical in london"       -> properNoun: null, city: "london"
 
             1. EXACT CONSTRAINTS — city, date, maximum price.
                Put these in their own fields. Never repeat them inside a vibe facet.
@@ -72,6 +96,27 @@ public class QueryExtractor {
             Return the person's own words in "dateExpression" — "this weekend", "next
             month", "in february", "tonight". Never compute a date. Leave it null if
             they did not mention time.
+
+            POINTING AT A PREVIOUS RESULT
+            "the second one", "that first one", "cái thứ 2" -> ordinal: 2, 1, 2.
+            Set ordinal and leave everything else null — the person is selecting,
+            not searching. Do not guess which event they meant; the position is
+            all you need to report.
+
+            REMOVING A CONSTRAINT
+            clearFields is almost always empty. It is ONLY for a person taking
+            something back in words:
+              "forget the budget"    -> ["priceMax"]
+              "anywhere is fine"     -> ["city"]
+              "any date works"       -> ["dateExpression"]
+
+            Not mentioning a slot is not removing it. These all give []:
+              "the second one"       -> []   (a selection, nothing was retracted)
+              "a musical in london"  -> []   (naming a city is not clearing a date)
+              "something cheaper"    -> []   (that is a new price, not a removal)
+
+            If you cannot quote the words that took something back, the answer
+            is [].
 
             DROP FILLER
             "looking for", "can you help me find", "I want", "something" carry no
@@ -139,6 +184,21 @@ public class QueryExtractor {
         excludes.set("items", tagEnum);
 
         ObjectNode props = mapper.createObjectNode();
+        ObjectNode intentEnum = mapper.createObjectNode();
+        intentEnum.put("type", "string");
+        intentEnum.putArray("enum")
+                .add("FIND").add("SELECT").add("DETAIL").add("COMPARE").add("HANDOFF");
+        props.set("intent", intentEnum);
+
+        ObjectNode clearEnum = mapper.createObjectNode();
+        clearEnum.put("type", "string");
+        clearEnum.putArray("enum").add("city").add("dateExpression").add("priceMax").add("excludeTags");
+        ObjectNode clears = mapper.createObjectNode();
+        clears.put("type", "array");
+        clears.set("items", clearEnum);
+        props.set("clearFields", clears);
+        props.set("ordinal", nullableNumber(
+                "1-based position the person pointed at in the previous results, or null."));
         props.set("properNoun", nullableStr(
                 "Artist, band, team, show or venue named by the person, or null."));
         props.set("city", nullableStr("City exactly as the person wrote it, or null."));
@@ -150,7 +210,15 @@ public class QueryExtractor {
         ObjectNode schema = mapper.createObjectNode();
         schema.put("type", "object");
         schema.set("properties", props);
-        schema.putArray("required").add("vibeFacets").add("excludeTags");
+        // Every field is required, including the nullable ones. Constrained
+        // decoding treats an optional field as one it may simply omit, and
+        // `ordinal` was being dropped on every single turn — "the second one"
+        // arrived with no ordinal at all, so a selection was indistinguishable
+        // from a search. Requiring the field forces an explicit null instead.
+        schema.putArray("required")
+                .add("vibeFacets").add("excludeTags").add("clearFields")
+                .add("intent").add("ordinal").add("properNoun").add("city")
+                .add("dateExpression").add("priceMax");
         return schema;
     }
 
@@ -204,8 +272,25 @@ public class QueryExtractor {
         JsonNode city  = root.path("city");
         JsonNode date  = root.path("dateExpression");
         JsonNode noun  = root.path("properNoun");
+        JsonNode ord   = root.path("ordinal");
+
+        QueryExtraction.Intent intent;
+        try {
+            intent = QueryExtraction.Intent.valueOf(root.path("intent").asText("FIND"));
+        } catch (IllegalArgumentException e) {
+            intent = QueryExtraction.Intent.FIND;
+        }
+
+        List<String> clears = new ArrayList<>();
+        root.path("clearFields").forEach(n -> {
+            String f = n.asText("").trim();
+            if (!f.isEmpty()) clears.add(f);
+        });
 
         return new QueryExtraction(
+                intent,
+                ord.isNull() || ord.isMissingNode() || !ord.isNumber() ? null : ord.asInt(),
+                clears,
                 noun.isNull()  || noun.isMissingNode()  ? null : blankToNull(noun.asText()),
                 city.isNull()  || city.isMissingNode()  ? null : blankToNull(city.asText()),
                 date.isNull()  || date.isMissingNode()  ? null : blankToNull(date.asText()),

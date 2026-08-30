@@ -81,6 +81,12 @@ agent:
       connect-timeout-ms: 2000
       read-timeout-ms: 60000
 
+  # Where the funnel hands off. The agent's terminal action is a link to the
+  # existing event page — it never creates an order, so nothing here needs to
+  # know about checkout beyond the URL shape.
+  handoff:
+    base-url: ${AGENT_HANDOFF_BASE_URL:http://localhost:5173}
+
   # Gates every extracted facet passes before it can affect a search result.
   # Ordered cheapest-and-most-decisive first: the deterministic gates need no
   # vector and no model, so most fabrication dies before anything is embedded.
