@@ -23,7 +23,14 @@ public class GatewayProperties {
             "/api/auth/login",
             "/api/auth/register",
             "/api/auth/refresh",
-            "/actuator/health"
+            "/actuator/health",
+            // The agent turn is a POST with a body, so publicGetPaths cannot
+            // cover it. Public for the same reason /api/auth/register is: the
+            // funnel exists to collect a signal from someone who has not
+            // committed to anything, and a login wall on the first message
+            // loses exactly those people. The endpoint is read-only and
+            // returns event ids; identity is required later, at checkout.
+            "/api/agent/"
     );
 
     /**
@@ -110,7 +117,8 @@ public class GatewayProperties {
         private long windowSeconds     = 60;
         // per-path overrides: path prefix → requests/sec
         private Map<String, Integer> pathOverrides = Map.of(
-                "/api/auth", 5
+                "/api/auth", 5,
+                "/api/agent", 2
         );
     }
 

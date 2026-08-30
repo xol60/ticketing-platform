@@ -1,67 +1,87 @@
 package com.ticketing.agent.vector;
 
-import com.ticketing.agent.config.AgentProperties;
 import com.ticketing.agent.domain.repository.EventFacetRepository;
+import com.ticketing.common.agent.Taxonomy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
+
 /**
- * The fifth gate: does this facet look like the dim it was filed under?
+ * The fifth gate: is this facet filed under the right dim?
  *
- * <h3>What it catches that the deterministic gates cannot</h3>
- * The four gates before this one establish that a facet was genuinely read
- * from the source and does not contradict the record. None of them look at
- * whether it was <em>filed</em> correctly. A facet quoting a real sentence,
- * restating it accurately, and consistent with the ticket count can still be
- * atmosphere content sitting in the format slot — and that is a mistake the
- * local model makes constantly. Measurement on qwen3:8b showed every facet for
- * one event landing under a single dim until the prompt was changed.
+ * <h3>A comparison, not a threshold</h3>
+ * The first version asked whether a facet was similar <em>enough</em> to the
+ * average approved facet on its own dim, and that question has no good answer.
+ * Dims are legitimately diverse: approved {@code format} facets included
+ * "stadium tour", "keynote presentations" and "football match", so a correctly
+ * filed fourth one scored low against their mean and was held back. 67 of 77
+ * format facets failed a test they should have passed, purely for being
+ * different from each other.
  *
- * <h3>Why it reviews rather than rejects</h3>
- * The comparison is against facets already approved on the same dim, so it is
- * only as meaningful as the history behind it. On a dim with three approved
- * rows the centroid is noise, and a genuinely novel-but-correct facet looks
- * exactly like a misfiled one. Rejecting on that would quietly delete good
- * facets from a corpus that has few — so a low score means unapproved and
- * visible, not gone.
+ * <p>What the gate is actually for is narrower — catching atmosphere content
+ * written into the format slot. That is a comparative question: does this look
+ * more like its own dim than like any other? An argmax answers it, needs no
+ * threshold to tune, and stops punishing a dim for its own variety.
  *
- * <p>Runs last among the gates because it is the only one that costs an
- * embedding call, and by this point the candidate has already survived
- * everything cheap.
+ * <h3>Abstaining while the evidence is thin</h3>
+ * The comparison only means something once every embedded dim has approved
+ * facets to speak for it. Before that, a genuine atmosphere facet would be
+ * compared against format alone and lose by default — a dim with nothing
+ * approved cannot win an argmax. So until all embedded dims clear
+ * {@link #BOOTSTRAP_FLOOR}, the gate abstains and admits on the four
+ * deterministic gates alone, which is a real bar: grounded in the source, on
+ * topic, not contradicted by the record.
+ *
+ * <h3>Review, never reject</h3>
+ * A facet that loses the argmax is stored unapproved, not discarded. The
+ * evidence is only as good as its history, and a novel-but-correct facet looks
+ * much like a misfiled one.
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class DimGate {
 
+    /**
+     * Approved facets each embedded dim needs before the comparison is
+     * trustworthy.
+     *
+     * <p>Deliberately small. Under the old threshold test the floor was doing
+     * two jobs — bootstrapping and gating — and it did the second badly. Here
+     * it only has to ensure every dim has a voice in the argmax.
+     */
+    static final long BOOTSTRAP_FLOOR = 5;
+
     private final EventFacetRepository facetRepository;
-    private final AgentProperties      properties;
 
     /**
      * @param vectorLiteral the facet's embedding, already computed for storage
-     * @return true when the facet may be auto-approved on this dim; false when
-     *         it should wait for a human
+     * @return true when the facet may be auto-approved on this dim
      */
     public boolean looksLikeDim(String dim, String vectorLiteral) {
-        Double similarity = facetRepository.meanSimilarityWithinDim(dim, vectorLiteral);
-
-        // Null means no approved facet exists on this dim yet. Validation
-        // cannot run, and "cannot decide" is not "passed" — the facet goes to
-        // review, which is also how the first few facets on any dim become the
-        // baseline everything after them is measured against.
-        if (similarity == null) {
-            log.debug("Dim '{}' has no approved facets yet — routing to review", dim);
-            return false;
+        if (!allEmbeddedDimsHaveEvidence()) {
+            log.debug("Not every embedded dim has {} approved facets yet — "
+                    + "admitting '{}' on the deterministic gates alone", BOOTSTRAP_FLOOR, dim);
+            return true;
         }
 
-        double threshold = properties.getValidation().getDimThreshold();
-        boolean pass = similarity >= threshold;
+        List<Object[]> perDim = facetRepository.bestSimilarityPerDim(vectorLiteral);
+        if (perDim.isEmpty()) return true;
+
+        String bestDim = (String) perDim.get(0)[0];
+        boolean pass = bestDim.equals(dim);
 
         if (!pass) {
-            log.debug("Facet on dim '{}' scored {} against approved facets, below {}",
-                    dim, similarity, threshold);
+            log.debug("Facet filed under '{}' looks more like '{}' (sim {}) — routing to review",
+                    dim, bestDim, perDim.get(0)[1]);
         }
         return pass;
+    }
+
+    private boolean allEmbeddedDimsHaveEvidence() {
+        return Taxonomy.EMBEDDED_DIMS.stream()
+                .allMatch(d -> facetRepository.countByDimAndApprovedAtIsNotNull(d) >= BOOTSTRAP_FLOOR);
     }
 }

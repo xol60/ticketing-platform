@@ -6,11 +6,89 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 
 public interface EventFacetRepository extends JpaRepository<EventFacet, Long> {
 
     List<EventFacet> findByEventId(String eventId);
+
+    /**
+     * Best match for this vector on <em>every</em> dim that has approved,
+     * embedded facets — the input to a discriminative dim check.
+     *
+     * <p>Replaces asking "is this similar enough to its own dim", which was the
+     * wrong question. That test used a mean against the dim's whole approved
+     * set, so a correctly-filed format facet about football scored low simply
+     * because the other approved format facets were concerts and conferences.
+     * Legitimate diversity inside a dim read as misfiling, and 67 of 77 format
+     * facets were held back.
+     *
+     * <p>The question that actually matters is comparative: does this look more
+     * like its own dim than like any other? That needs no threshold — only an
+     * argmax — and a diverse dim no longer penalises its own members.
+     *
+     * @return rows of {@code [dim, best similarity]}, strongest first
+     */
+    @Query(value = """
+            SELECT f.dim, MAX(1 - (f.embedding <=> CAST(:vectorLiteral AS vector))) AS sim
+              FROM event_facet f
+             WHERE f.embedding IS NOT NULL
+               AND f.approved_at IS NOT NULL
+             GROUP BY f.dim
+             ORDER BY sim DESC
+            """, nativeQuery = true)
+    List<Object[]> bestSimilarityPerDim(@Param("vectorLiteral") String vectorLiteral);
+
+
+    /**
+     * Best match per event on one dim — the core of facet scoring.
+     *
+     * <p>{@code MAX} rather than {@code AVG} on purpose. An event with six
+     * facets on a dim should not be penalised for the five that are irrelevant
+     * to this query; they simply are not the one that matched. An event with
+     * one facet should not be flattered either — it just has a single chance to
+     * score. Averaging punishes richly described events for their richness.
+     *
+     * <p>Restricted to the same dim, because comparing an atmosphere query
+     * against a format facet produces the uniform ~0.3 cosine that makes an
+     * entire dataset look equally relevant.
+     *
+     * <p>Brute force, no ANN index. After the city and date filter the
+     * candidate set is well under a thousand rows, where a sequential scan with
+     * pgvector distance is sub-millisecond — and a pre-filtered HNSW traversal
+     * would degrade to post-filtering and get slower, not faster.
+     *
+     * @return rows of {@code [event_id, similarity]}
+     */
+    @Query(value = """
+            SELECT f.event_id, MAX(1 - (f.embedding <=> CAST(:vectorLiteral AS vector))) AS sim
+              FROM event_facet f
+             WHERE f.dim = :dim
+               AND f.embedding IS NOT NULL
+               AND f.approved_at IS NOT NULL
+               AND f.event_id IN (:eventIds)
+             GROUP BY f.event_id
+            """, nativeQuery = true)
+    List<Object[]> bestMatchPerEvent(@Param("dim") String dim,
+                                     @Param("vectorLiteral") String vectorLiteral,
+                                     @Param("eventIds") Collection<String> eventIds);
+
+    /** Approved facets for rendering a result row and the compare projection. */
+    List<EventFacet> findByEventIdInAndApprovedAtIsNotNull(Collection<String> eventIds);
+
+
+    /**
+     * How many facets on this dim a human — or the bootstrap — has approved.
+     *
+     * <p>Read by the dim gate to decide whether it has a baseline to compare
+     * against at all. Below the bootstrap floor there is nothing meaningful to
+     * measure a new facet against, and treating "cannot decide" as "fails"
+     * deadlocks the whole dim: nothing is approved, so nothing can ever be
+     * approved.
+     */
+    long countByDimAndApprovedAtIsNotNull(String dim);
+
 
     /**
      * Clears machine-generated facets before a re-ingest writes fresh ones.

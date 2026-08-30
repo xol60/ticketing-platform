@@ -218,7 +218,20 @@ public class IngestionService {
             // Only the three query-facing dims get a vector; the rest stay text
             // for rendering and the compare projection. Embedding all eight
             // would nearly triple the cost for dims nothing compares against.
-            if (!Taxonomy.isEmbedded(candidate.dim())) continue;
+            //
+            // A non-embedded facet is approved here rather than skipped. There
+            // is nothing left to check on it — the four deterministic gates
+            // already passed, and the dim gate is a vector test that cannot
+            // apply. Falling through the `continue` without approving left
+            // five of the eight dims permanently unapproved, which emptied the
+            // differentiator column on every result row.
+            if (!Taxonomy.isEmbedded(candidate.dim())) {
+                if (properties.getValidation().isAutoApproveOnAllGatesPass()) {
+                    facet.setApprovedAt(Instant.now());
+                    tx.executeWithoutResult(s -> facetRepository.save(facet));
+                }
+                continue;
+            }
 
             // Outside any transaction — this is a network call taking hundreds
             // of milliseconds, and holding a connection across it is how a

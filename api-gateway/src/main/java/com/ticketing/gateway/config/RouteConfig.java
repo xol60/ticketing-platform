@@ -169,6 +169,24 @@ public class RouteConfig {
                         )
                         .uri("http://search-service:8091"))
 
+                // ── Recommendation agent ──────────────────────────────────────────
+                // Read-only: it returns event ids and never touches an order.
+                // Retries because a turn is a pure read, and because a failed
+                // search is worth one more attempt before the user gives up on
+                // the whole funnel.
+                .route("agent-service", r -> r
+                        .path("/api/agent/**")
+                        .filters(f -> f
+                                .addRequestHeader("X-Gateway-Source", "api-gateway")
+                                .retry(config -> config
+                                        .setRetries(1)
+                                        .setStatuses(
+                                            org.springframework.http.HttpStatus.BAD_GATEWAY,
+                                            org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE
+                                        ))
+                        )
+                        .uri("http://agent-service:8092"))
+
                 .build();
     }
 }

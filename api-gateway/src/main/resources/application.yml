@@ -49,6 +49,12 @@ gateway:
       # Tight bucket on auth endpoints (login/refresh) — protects against
       # credential stuffing.
       /api/auth: 5
+      # Tightest bucket on the platform. Every agent turn costs an LLM call
+      # and one or more embedding calls on a single-threaded local model —
+      # this is the most expensive endpoint here by an order of magnitude, and
+      # unlike search it cannot be absorbed by a cache. Two per second is
+      # already faster than a person types a full request.
+      /api/agent: 2
       # Generous bucket on search endpoints. Autocomplete-as-you-type is
       # naturally bursty (one typist ≈ 3-4 req/s after debounce). With the
       # default 20 r/s per (IP, userId) bucket, all anonymous users sharing
@@ -74,6 +80,7 @@ gateway:
     l1-max-size: 5000
     l2-ttl-seconds: 300
   public-paths:
+    - /api/agent/            # agent turn is a POST, so publicGetPaths cannot cover it
     - /api/auth/login
     - /api/auth/register
     - /api/auth/refresh

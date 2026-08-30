@@ -1,0 +1,256 @@
+package com.ticketing.agent.search;
+
+import com.ticketing.agent.domain.model.AgentEvent;
+import com.ticketing.agent.domain.repository.AgentEventRepository;
+import com.ticketing.agent.domain.repository.CityAliasRepository;
+import com.ticketing.agent.domain.repository.EventFacetRepository;
+import com.ticketing.agent.domain.repository.TagRepository;
+import com.ticketing.agent.vector.EmbeddingService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.text.Normalizer;
+import java.time.Instant;
+import java.util.*;
+
+/**
+ * One search turn, end to end.
+ *
+ * <h3>The invariant</h3>
+ * Every valid input leaves with events in hand, or with a message saying
+ * exactly what was widened to find them. No branch ends in a bare question.
+ * Asking "what kind of thing are you after?" before showing anything is a form
+ * wearing a chat interface, and avoiding forms is why the user came here.
+ *
+ * <h3>Questions come after results, never instead of them</h3>
+ * When the filter matches more than {@link #NARROW_THRESHOLD}, the caller
+ * offers to narrow — with the real count attached, and after the shortlist.
+ * The user has seen actual rows by then, knows what they are choosing between,
+ * and can ignore the offer and still walk away with something.
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class SearchService {
+
+    /** Above this many matches, offering to narrow is worth the interruption. */
+    public static final int NARROW_THRESHOLD = 20;
+
+    static final int SHORTLIST_SIZE = 5;
+
+    /**
+     * Below this many candidates, the search relaxes rather than answering.
+     *
+     * <p>Relaxing only on <em>zero</em> results turned out to be the wrong
+     * trigger. Asked for "something calm and relaxing", the default fortnight
+     * window left exactly two candidates — both American football — and the
+     * ranker dutifully returned the better of two bad answers with no
+     * indication anything had gone wrong. Two irrelevant results are closer to
+     * a failure than to a success, and the user has no way to tell them apart.
+     *
+     * <p>Set to the shortlist size: below it the ranker cannot even fill the
+     * list, so diversity has nothing to work with and the choice collapses.
+     */
+    static final int MIN_USEFUL_CANDIDATES = SHORTLIST_SIZE;
+
+    /**
+     * Escalating time horizons, in days added to the original window.
+     *
+     * <p>Progressive rather than a single wider default, because the right
+     * window is a property of catalogue density, not a number anyone can pick
+     * in advance. A dense city needs a fortnight; this corpus has 2 searchable
+     * events inside a fortnight and 44 within a year. Stepping outward finds
+     * the density instead of assuming it.
+     */
+    private static final int[] TIME_WIDENING_DAYS = {30, 90, 365};
+
+    private final QueryExtractor       extractor;
+    private final DateResolver         dateResolver;
+    private final AgentEventRepository eventRepository;
+    private final EventFacetRepository facetRepository;
+    private final CityAliasRepository  aliasRepository;
+    private final TagRepository        tagRepository;
+    private final EmbeddingService     embeddings;
+    private final Ranker               ranker;
+
+    @Transactional(readOnly = true)
+    public SearchResult search(String message, String fallbackCity) {
+        Instant now = Instant.now();
+        QueryExtraction q = extractor.extract(message);
+
+        Integer cityId = resolveCity(q.city() != null ? q.city() : fallbackCity);
+        List<Integer> excludeIds = resolveTags(q.excludeTags());
+
+        // The browse fortnight belongs to one question only: "what's on". Any
+        // expressed intent — a name, a city, a budget, or a described mood —
+        // means the person is looking for something particular, and a fortnight
+        // then hides most of the catalogue rather than focusing it.
+        //
+        // The numbers here are stark: 9 searchable events inside a fortnight
+        // against 67 overall. A vibe query under the browse window was scoring
+        // the same ten near-term events every time, which is why "something
+        // calm" returned American football — not because the matching was
+        // wrong, but because nothing calm was in range to match.
+        boolean narrowed = !q.isBare();
+        DateResolver.Window window = dateResolver.resolve(q.dateExpression(), now, narrowed);
+
+        // A named artist, venue or show is a lookup, not a mood search. It
+        // skips the vector path entirely — see AgentEventRepository.findByName
+        // for why a name must be matched rather than measured.
+        if (q.isLookup()) {
+            List<AgentEvent> byName = eventRepository.findByName(
+                    q.properNoun(), cityId, window.from(), window.to());
+            if (!byName.isEmpty()) {
+                return new SearchResult(
+                        ranker.rank(byName, Map.of(), now, SHORTLIST_SIZE),
+                        byName.size(), List.of(), false);
+            }
+            // Nothing by that name. Fall through to the ordinary path rather
+            // than returning empty: the person may have named something the
+            // catalogue does not carry, and adjacent events beat nothing.
+            log.debug("No event matched the name '{}' — falling back to a normal search",
+                    q.properNoun());
+        }
+
+        List<String> relaxations = new ArrayList<>();
+        BigDecimal priceMax = q.priceMax();
+
+        List<AgentEvent> candidates = find(cityId, window, priceMax, excludeIds);
+
+        // Relaxation, in a fixed order, every step announced. City is never
+        // relaxed at any point: a show in the wrong city is not a worse answer,
+        // it is a useless one, and returning it silently destroys trust in
+        // every result that follows.
+        //
+        // The trigger is "too few to choose between", not "none at all" — see
+        // MIN_USEFUL_CANDIDATES.
+
+        if (candidates.size() < MIN_USEFUL_CANDIDATES && priceMax != null) {
+            relaxations.add("bỏ giới hạn giá " + priceMax);
+            priceMax = null;
+            candidates = find(cityId, window, null, excludeIds);
+        }
+
+        for (int extraDays : TIME_WIDENING_DAYS) {
+            if (candidates.size() >= MIN_USEFUL_CANDIDATES) break;
+            DateResolver.Window wider = dateResolver.widen(window, extraDays);
+            List<AgentEvent> widened = find(cityId, wider, priceMax, excludeIds);
+            // Only keep a step that actually helped. Announcing a widening
+            // that changed nothing tells the user their request was altered
+            // for no reason, which is worse than saying nothing.
+            if (widened.size() > candidates.size()) {
+                window = wider;
+                candidates = widened;
+                relaxations.removeIf(r -> r.startsWith("mở rộng khoảng thời gian"));
+                relaxations.add("mở rộng khoảng thời gian thêm " + extraDays + " ngày");
+            }
+        }
+
+        if (candidates.size() < MIN_USEFUL_CANDIDATES && !excludeIds.isEmpty()) {
+            relaxations.add("bỏ điều kiện loại trừ " + q.excludeTags());
+            excludeIds = List.of();
+            candidates = find(cityId, window, priceMax, excludeIds);
+        }
+
+        if (candidates.isEmpty()) {
+            return SearchResult.empty(relaxations);
+        }
+
+        long total = candidates.size();
+
+        // Turn 1: nothing was said, so ranking by score would return the five
+        // biggest events — the home page the user already left. Spread instead.
+        if (q.isBare()) {
+            return new SearchResult(
+                    ranker.rankForFirstTurn(candidates, now, SHORTLIST_SIZE),
+                    total, relaxations, false);
+        }
+
+        Map<String, Double> semantic = scoreSemantically(q.vibeFacets(), candidates);
+        return new SearchResult(
+                ranker.rank(candidates, semantic, now, SHORTLIST_SIZE),
+                total, relaxations, !semantic.isEmpty());
+    }
+
+    private List<AgentEvent> find(Integer cityId, DateResolver.Window w,
+                                  BigDecimal priceMax, List<Integer> excludeIds) {
+        return eventRepository.findCandidates(
+                cityId, w.from(), w.to(), priceMax,
+                excludeIds.isEmpty() ? List.of(-1) : excludeIds, excludeIds.size());
+    }
+
+    /**
+     * Mean of the best match on each queried dim.
+     *
+     * <p>Divided by the number of <em>query</em> facets, not event facets. The
+     * denominator is then constant across the whole result set, so no event is
+     * rewarded or punished for how richly it happens to be described — only for
+     * how well it answers what was asked.
+     */
+    private Map<String, Double> scoreSemantically(List<FacetQuery> vibe, List<AgentEvent> candidates) {
+        if (vibe.isEmpty() || candidates.isEmpty()) return Map.of();
+
+        List<String> ids = candidates.stream().map(AgentEvent::getId).toList();
+        Map<String, Double> summed = new HashMap<>();
+
+        for (FacetQuery f : vibe) {
+            String vector;
+            try {
+                vector = embeddings.embedQuery(f.value());
+            } catch (Exception e) {
+                // One dim failing to embed should cost that dim, not the search.
+                log.warn("Could not embed query facet on dim {}: {}", f.dim(), e.getMessage());
+                continue;
+            }
+            for (Object[] row : facetRepository.bestMatchPerEvent(f.dim(), vector, ids)) {
+                String eventId = (String) row[0];
+                double sim = ((Number) row[1]).doubleValue();
+                summed.merge(eventId, sim, Double::sum);
+            }
+        }
+
+        Map<String, Double> out = new HashMap<>(summed.size());
+        summed.forEach((id, sum) -> out.put(id, sum / vibe.size()));
+        return out;
+    }
+
+    /**
+     * Resolves a typed city name through the alias table.
+     *
+     * <p>Folded the same way aliases were generated at ingest — lowercase,
+     * accents stripped, punctuation gone — so "hanoi", "ha noi" and "Hà Nội"
+     * all arrive at the same row. Returns null when it does not resolve, which
+     * means an unconstrained search rather than an error: a misspelled city is
+     * not worth failing a turn over.
+     */
+    private Integer resolveCity(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+
+        String folded = Normalizer.normalize(raw.toLowerCase().trim(), Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "")
+                .replace('đ', 'd')
+                .replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+
+        return aliasRepository.findById(folded)
+                .map(a -> a.getCityId())
+                .orElseGet(() -> aliasRepository.findById(folded.replace(" ", ""))
+                        .map(a -> a.getCityId())
+                        .orElseGet(() -> {
+                            log.debug("City '{}' did not resolve — searching unconstrained", raw);
+                            return null;
+                        }));
+    }
+
+    private List<Integer> resolveTags(List<String> slugs) {
+        return slugs.stream()
+                .map(tagRepository::findBySlug)
+                .flatMap(Optional::stream)
+                .map(t -> t.getId())
+                .toList();
+    }
+}

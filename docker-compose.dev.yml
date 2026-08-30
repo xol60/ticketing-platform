@@ -175,3 +175,27 @@ services:
         -XX:+UseContainerSupport
         -XX:MaxRAMPercentage=75.0
         -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
+
+  # search-service and agent-service were missing here — both are reachable
+  # only through the gateway in the base compose, which makes them awkward to
+  # exercise directly during development.
+  search-service:
+    ports:
+      - "8091:8091"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      LOGGING_LEVEL_COM_TICKETING: DEBUG
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "*"
+
+  agent-service:
+    ports:
+      - "8092:8092"
+      - "5092:5005"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      LOGGING_LEVEL_COM_TICKETING: DEBUG
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "*"
+      JAVA_OPTS: >-
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
+        -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
