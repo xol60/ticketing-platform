@@ -32,6 +32,9 @@ export function Navbar() {
             <NavLink to="/" end className={({ isActive }: { isActive: boolean }) => isActive ? activeNavLink : navLink}>
               Events
             </NavLink>
+            <NavLink to="/discover" className={({ isActive }: { isActive: boolean }) => isActive ? activeNavLink : navLink}>
+              Discover
+            </NavLink>
             <NavLink to="/secondary" className={({ isActive }: { isActive: boolean }) => isActive ? activeNavLink : navLink}>
               Resale Market
             </NavLink>

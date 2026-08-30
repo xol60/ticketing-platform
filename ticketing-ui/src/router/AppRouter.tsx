@@ -9,6 +9,7 @@ import { ProfilePage }  from '../pages/auth/ProfilePage';
 
 // Events
 import { EventListPage }   from '../pages/events/EventListPage';
+import { AgentChatPage } from '../pages/agent/AgentChatPage';
 import { EventDetailPage } from '../pages/events/EventDetailPage';
 
 // Orders / Tickets
@@ -36,6 +37,10 @@ export function AppRouter() {
       <Route element={<Layout />}>
         {/* Public */}
         <Route path="/"                element={<EventListPage />} />
+        {/* Public: the funnel exists to collect a signal from someone who has
+            not committed to anything yet, so a login wall here loses exactly
+            the people it serves. Identity is only needed at checkout. */}
+        <Route path="/discover"        element={<AgentChatPage />} />
         <Route path="/events/:eventId" element={<EventDetailPage />} />
         <Route path="/secondary"       element={<SecondaryMarketPage />} />
 

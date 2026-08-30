@@ -1,6 +1,20 @@
 # Overture — Event Ticketing Platform
 
-Microservice ticketing system — Java 21 + Spring Boot 3.2 + Kafka + Redis + Postgres.
+Microservice ticketing system — Java 21 + Spring Boot 3.2 + Kafka + Redis + Postgres,
+with a **conversational recommendation agent running entirely on local models**.
+
+Two things here are worth more attention than the service count:
+
+- **A saga that survives partial failure.** Reserve → price lock → payment → confirm,
+  with compensation, idempotency at every hop, and no service-to-service HTTP in any
+  business workflow.
+- **An agent built on the assumption that its model lies.** Inference runs on
+  `qwen3:8b` in Ollama — no API key, no data leaving the machine — and an 8B model
+  fabricates readily and *fluently*. Every fact it produces has to quote the sentence
+  it came from, and is thrown away if that sentence is not there.
+
+▶︎ **[Recommendation agent](#recommendation-agent)** — flow, models, hard limits, and
+what the measurements actually say.
 
 ## Prerequisites
 
@@ -362,24 +376,36 @@ Kafka rebalance. A stuck consumer thread costs ~33 % of *one listener's*
 throughput, not the whole service — the design contains stalls in a slow
 lane rather than letting them cascade into outages.
 
-## Search subsystem
-
-Dedicated `search-service` exposes two public REST endpoints
-(`/api/search/events` and `/api/search/events/suggest`) backed by an
-Elasticsearch derived index synced over the `event.search.indexed` Kafka
-topic. Multi-field BM25 with boosting, edge-ngram autocomplete, and
-typo-tolerant matching. A Caffeine cache with admission filter cuts ES
-load on hot prefixes ~30-fold; outages here degrade discovery without
-affecting ticket sales (Postgres remains the source of truth).
-
-▶︎ **[`search-service/README.md`](search-service/README.md)** — architecture, indexing pipeline, load-shaping for `/suggest`, what's explicitly out of scope.
-
 ## Recommendation agent
 
 A conversational funnel over the catalogue: someone describes what they feel
 like doing, the agent narrows it down over a few turns, and hands back an event
 id. Runs on `agent-service` (port 8092) against locally-hosted models — the
 stack needs no API key and no event data leaves the machine.
+
+### The problem this is actually solving
+
+Running inference locally is the point, and it is also the constraint. `qwen3:8b`
+does not produce obvious nonsense — it produces **fluent, correctly-structured,
+plausible facts about things the source never said**. An invented facet reads
+exactly like a real one, sits in the right dimension, and snaps to a sensible
+tag. Nothing about its shape gives it away.
+
+So the design assumes the model lies, and makes that assumption cheap to act on:
+
+> Every facet must quote the exact words it was derived from, and Java discards
+> it if that quote does not appear verbatim in the source.
+
+This is the strongest guard in the system precisely because it is dumb.
+Fabricating a plausible sentence is easy for a small model; fabricating a
+character sequence that happens to occur in one specific paragraph is not. It
+costs a string comparison, needs no threshold, and runs before anything is
+embedded.
+
+On the demo catalogue it rejects **40% of what the model produces** — 29% of
+those for citing text that does not exist. Those rejections are kept, not
+dropped: their distribution across reasons is the only honest measure of how
+much the model is inventing, and it is what tells you where the prompt is wrong.
 
 ### What it is not
 
@@ -552,6 +578,23 @@ amount of prompt or ranking work fixes it.
 - **`agent_db` is disposable.** It is a derived read model; replay the topic and
   it rebuilds, minus the human review decisions.
 
+## Search subsystem
+
+Dedicated `search-service` exposes two public REST endpoints
+(`/api/search/events` and `/api/search/events/suggest`) backed by an
+Elasticsearch derived index synced over the `event.search.indexed` Kafka
+topic. Multi-field BM25 with boosting, edge-ngram autocomplete, and
+typo-tolerant matching. A Caffeine cache with admission filter cuts ES
+load on hot prefixes ~30-fold; outages here degrade discovery without
+affecting ticket sales (Postgres remains the source of truth).
+
+▶︎ **[`search-service/README.md`](search-service/README.md)** — architecture, indexing pipeline, load-shaping for `/suggest`, what's explicitly out of scope.
+
+Sibling to the [recommendation agent](#recommendation-agent) above: same Kafka
+topic, two independent read models. Keyword search answers "find me *this*";
+the agent answers "find me *something like this*". Neither knows the other
+exists.
+
 ## Hot-event detection
 
 Per-event view-counter + watchdog that proactively flags events surging in
@@ -656,6 +699,41 @@ Compensation runs in reverse order on any step failure.
 
 All writes go to `postgres-master`. Reads follow: L1 cache → L2 Redis → postgres-slave.
 Each service has its own database (bounded context isolation — no cross-service SQL).
+
+### Agent — local model, guarded rather than trusted
+
+Inference runs on `qwen3:8b` in Ollama rather than a hosted frontier model. The
+trade is deliberate: the project clones and runs with no API key, no event data
+leaves the machine, and total cost is electricity — against a model that
+fabricates far more readily.
+
+That trade only works because the fabrication is *catchable*. Every extracted
+fact carries the span it came from and is discarded when the span is absent, so
+the guard costs a string comparison rather than a second model. Confidence
+scores are ignored entirely: an 8B model reports 0.95 for an invented facet as
+readily as a sound one, so admitting that number as evidence would launder the
+exact failure the guards exist to catch.
+
+The measured cost is a 40% rejection rate. The measured benefit is that what
+survives is grounded in text a reviewer can point at.
+
+### Agent — request/response, not WebSocket
+
+The agent is a chat interface, which usually argues for a socket. Here it does
+not, for a reason that is structural rather than about load: **the model's output
+is not what the user reads.** It emits a JSON patch of slots and facets; the
+answer on screen is rendered from Postgres afterwards. There is no token stream
+to show, and first byte and last byte land at the same moment.
+
+Concurrency does not argue for it either — measured, three simultaneous turns
+serialise ~4.5 s apart, because Ollama runs one generation at a time per model.
+Holding sockets open would not make that faster; it would invite more concurrent
+work than the backend can serve, and bypass the gateway's per-request rate limit
+on the most expensive endpoint on the platform.
+
+Server-push does exist in this codebase, where it is genuinely warranted —
+order-service and pricing-service both use SSE, because there the server has news
+the client did not ask for. The agent never does: it only ever answers.
 
 ### Circuit breaker + rate limiter — gateway only
 

@@ -235,3 +235,98 @@ export interface ApiResponse<T> {
   message?: string;
   timestamp?: string;
 }
+
+// ── Recommendation agent ─────────────────────────────────────────────────────
+
+/**
+ * One suggested event.
+ *
+ * Every field here comes from the database, not from the model. The agent
+ * handles ids and vocabulary; it never writes a time, price or venue, because a
+ * model that writes a showtime will eventually write a wrong one.
+ */
+export interface AgentHit {
+  eventId: string;
+  name: string;
+  primaryArtist?: string;
+  venueName?: string;
+  venueCity?: string;
+  category?: string;
+  startAt?: string;
+  priceMin?: number;
+  priceMax?: number;
+  /**
+   * The distilled facts that differ most across this result set — shown instead
+   * of a per-result explanation.
+   *
+   * An explanation would have to invent a reason the ranker cannot supply, which
+   * is a surface for the model to make things up on. Showing the fields that
+   * actually vary lets the reader see the difference rather than be told about it.
+   */
+  differentiators?: string[];
+  score: number;
+}
+
+export interface AgentSearchResponse {
+  hits: AgentHit[];
+  /** Events matching the filter, not the shortlist size. Drives the narrowing offer. */
+  totalMatched: number;
+  offerNarrowing: boolean;
+  /**
+   * What was widened to find these, in order. Empty on a normal search.
+   * Surfaced because a result set that silently ignored a stated budget is
+   * worse than an empty one.
+   */
+  relaxations: string[];
+  /** False when ranking fell back to popularity and proximity with no mood signal. */
+  usedVibe: boolean;
+}
+
+/** BROWSING → FOCUSED → CONFIRMING. */
+export type AgentStage = 'BROWSING' | 'FOCUSED' | 'CONFIRMING';
+
+/**
+ * What the conversation currently believes.
+ *
+ * Rendered rather than hidden: slots accumulate silently across turns, and a
+ * search narrowed by a constraint from four turns ago is indistinguishable from
+ * a broken one unless the constraint is visible.
+ */
+export interface AgentActiveFilters {
+  city?: string;
+  dateExpression?: string;
+  priceMax?: string;
+  excludeTags?: string[];
+  vibe?: string[];
+  turnCount: number;
+}
+
+/**
+ * The end of the funnel: an event id and a link.
+ *
+ * The agent holds no ticket and creates no order — `deepLink` points at the
+ * ordinary event page, where the existing checkout takes over. `available` is a
+ * courtesy check against a projection that can be seconds stale; checkout
+ * re-validates for real.
+ */
+export interface AgentHandoff {
+  eventId: string;
+  deepLink: string;
+  available: boolean;
+  reason?: string;
+}
+
+export interface AgentChatResponse {
+  stage: AgentStage;
+  /** Present while browsing. */
+  hits?: AgentHit[];
+  /** Present once one event has been picked. Mutually exclusive with `hits`. */
+  focused?: AgentHit;
+  totalMatched: number;
+  offerNarrowing: boolean;
+  relaxations: string[];
+  usedVibe: boolean;
+  activeFilters: AgentActiveFilters;
+  /** Only on the turn the person asks to buy. */
+  handoff?: AgentHandoff;
+}
