@@ -1,0 +1,12 @@
+-- Removes the column dim replaced.
+--
+-- V3 introduced tag.dim and the entity stopped mapping kind, but the column was
+-- left behind still NOT NULL. Nothing read it and nothing wrote it, so it sat
+-- harmless for as long as the tag list did not grow — every existing row
+-- already had a value from V1. The first genuinely new tag failed to insert:
+-- Hibernate omits an unmapped column, Postgres applies the NOT NULL, and the
+-- whole application context refused to start.
+--
+-- The lesson is that dropping the Java field is only half of retiring a column.
+-- The other half is this file.
+ALTER TABLE tag DROP COLUMN kind;

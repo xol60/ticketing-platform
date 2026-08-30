@@ -82,6 +82,6 @@ public class DimGate {
 
     private boolean allEmbeddedDimsHaveEvidence() {
         return Taxonomy.EMBEDDED_DIMS.stream()
-                .allMatch(d -> facetRepository.countByDimAndApprovedAtIsNotNull(d) >= BOOTSTRAP_FLOOR);
+                .allMatch(d -> facetRepository.countUsableEvidence(d) >= BOOTSTRAP_FLOOR);
     }
 }

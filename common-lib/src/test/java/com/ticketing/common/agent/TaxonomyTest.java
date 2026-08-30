@@ -32,11 +32,63 @@ class TaxonomyTest {
         assertThat(slugs).allMatch(s -> s.matches("[a-z]+(-[a-z]+)*"),
                 "slugs are kebab-case — they are used verbatim as DB keys and prompt tokens");
 
-        // 10 category + 5 attribute, per the taxonomy design
-        assertThat(Taxonomy.TAGS.stream()
-                .filter(t -> t.kind() == Taxonomy.Tag.Kind.CATEGORY)).hasSize(10);
-        assertThat(Taxonomy.TAGS.stream()
-                .filter(t -> t.kind() == Taxonomy.Tag.Kind.ATTRIBUTE)).hasSize(5);
+        // 13 carry a dim and can be matched against a facet; 2 are
+        // exclusion-only. Forcing headliner or late-night into a dimension
+        // would put them in competition with facets they do not describe.
+        assertThat(Taxonomy.TAGS.stream().filter(Taxonomy.Tag::isMatchable)).hasSize(13);
+        assertThat(Taxonomy.TAGS.stream().filter(t -> !t.isMatchable())).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("every matchable tag names a real dim and carries examples")
+    void matchableTagsAreWellFormed() {
+        Taxonomy.TAGS.stream().filter(Taxonomy.Tag::isMatchable).forEach(t -> {
+            assertThat(Taxonomy.isKnownDim(t.dim()))
+                    .as("tag '%s' claims dim '%s'", t.slug(), t.dim()).isTrue();
+            assertThat(t.examples())
+                    .as("tag '%s' needs examples — the slug alone is too short to embed",
+                        t.slug())
+                    .isNotBlank();
+        });
+    }
+
+    @Test
+    @DisplayName("embedding text is long enough to carry meaning")
+    void embeddingTextIsSubstantial() {
+        // Measured: embedding the slug "intimate" loses to "live-music" for the
+        // query "a small room, close to the performer"; embedding name plus
+        // definition plus examples wins it outright.
+        Taxonomy.TAGS.stream().filter(Taxonomy.Tag::isMatchable).forEach(t ->
+                assertThat(t.embeddingText()).hasSizeGreaterThan(120));
+    }
+
+    @Test
+    @DisplayName("a matchable dim carries at least two tags")
+    void matchableDimsOfferAChoice() {
+        // Tag matching is an argmax over the tags on a facet's dim. With one
+        // tag the argmax has no alternative to reject, so every facet on that
+        // dim is assigned it — not because it fits but because nothing else
+        // was offered. Measured: family-kids was alone on audience, took all
+        // seventeen audience facets, and twelve were wrong, among them
+        // "developers, engineers, and technology enthusiasts".
+        //
+        // Two is the floor for the comparison to mean anything, not a target.
+        Taxonomy.EMBEDDED_DIMS.stream()
+                .filter(d -> !Taxonomy.matchableOn(d).isEmpty())
+                .forEach(d -> assertThat(Taxonomy.matchableOn(d))
+                        .as("dim '%s' offers only one answer, so matching it is a "
+                          + "default rather than a decision", d)
+                        .hasSizeGreaterThanOrEqualTo(2));
+    }
+
+    @Test
+    @DisplayName("matchableOn returns only tags on that dim")
+    void matchableOnFiltersByDim() {
+        assertThat(Taxonomy.matchableOn(Taxonomy.DIM_SCALE))
+                .extracting(Taxonomy.Tag::slug)
+                .containsExactlyInAnyOrder(Taxonomy.TAG_LARGE_SCALE, Taxonomy.TAG_INTIMATE);
+        assertThat(Taxonomy.matchableOn(Taxonomy.DIM_PARTICIPATION)).isEmpty();
+        assertThat(Taxonomy.matchableOn(null)).isEmpty();
     }
 
     @Test
@@ -46,11 +98,26 @@ class TaxonomyTest {
         assertThat(Taxonomy.DIMS.stream().map(Taxonomy.Dim::name).toList())
                 .doesNotHaveDuplicates();
 
-        // Only the dims users actually phrase preferences in carry vectors.
-        // Widening this set is a deliberate call backed by dim_frequency
-        // telemetry, not something that should drift in unnoticed.
+        // The three dims users phrase preferences in, plus every dim a tag
+        // claims. See EMBEDDED_DIMS for why the second half is not optional.
         assertThat(Taxonomy.EMBEDDED_DIMS).containsExactlyInAnyOrder(
-                Taxonomy.DIM_FORMAT, Taxonomy.DIM_ATMOSPHERE, Taxonomy.DIM_PHYSICAL);
+                Taxonomy.DIM_FORMAT, Taxonomy.DIM_ATMOSPHERE, Taxonomy.DIM_PHYSICAL,
+                Taxonomy.DIM_SCALE, Taxonomy.DIM_AUDIENCE);
+    }
+
+    @Test
+    @DisplayName("every dim carrying a tag is embedded — otherwise the tag is unreachable")
+    void everyTaggedDimIsEmbedded() {
+        // The bug this locks down cost three tags entirely. A tag is matched by
+        // comparing it against facets on its own dim; when that dim has no
+        // vectors, the tag is not weakly matched, it simply never runs.
+        // intimate, large-scale and family-kids each matched their test query
+        // correctly and were assigned to zero events across 92.
+        Taxonomy.TAGS.stream().filter(Taxonomy.Tag::isMatchable).forEach(t ->
+                assertThat(Taxonomy.isEmbedded(t.dim()))
+                        .as("tag '%s' lives on dim '%s', which must be embedded "
+                          + "or the tag can never be suggested", t.slug(), t.dim())
+                        .isTrue());
     }
 
     @Test
@@ -77,6 +144,8 @@ class TaxonomyTest {
 
         assertThat(Taxonomy.isEmbedded(Taxonomy.DIM_FORMAT)).isTrue();
         assertThat(Taxonomy.isEmbedded(Taxonomy.DIM_SETTING)).isFalse();
+        assertThat(Taxonomy.isEmbedded(Taxonomy.DIM_SCALE))
+                .as("scale carries intimate and large-scale").isTrue();
         assertThat(Taxonomy.isEmbedded(null)).isFalse();
     }
 

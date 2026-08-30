@@ -79,15 +79,36 @@ public interface EventFacetRepository extends JpaRepository<EventFacet, Long> {
 
 
     /**
-     * How many facets on this dim a human — or the bootstrap — has approved.
+     * How many facets on this dim the gate can actually compare against —
+     * approved <em>and</em> carrying a vector.
      *
-     * <p>Read by the dim gate to decide whether it has a baseline to compare
-     * against at all. Below the bootstrap floor there is nothing meaningful to
-     * measure a new facet against, and treating "cannot decide" as "fails"
-     * deadlocks the whole dim: nothing is approved, so nothing can ever be
-     * approved.
+     * <p>Read by the dim gate to decide whether it has a baseline at all.
+     * Below the bootstrap floor there is nothing meaningful to measure a new
+     * facet against, and treating "cannot decide" as "fails" deadlocks the
+     * whole dim: nothing is approved, so nothing can ever be approved.
+     *
+     * <p>The {@code embedding IS NOT NULL} clause is the whole point and was
+     * once missing. The guard counted approved rows while the gate itself reads
+     * approved rows <em>with vectors</em>, so a dim holding forty-one approved
+     * but unembedded facets cleared the floor while contributing nothing to the
+     * comparison — the argmax could not name that dim, and every facet on it
+     * failed. The guard has to count the same rows the gate reads, or it is not
+     * guarding anything.
      */
-    long countByDimAndApprovedAtIsNotNull(String dim);
+    @Query(value = """
+            SELECT count(*) FROM event_facet
+             WHERE dim = :dim AND approved_at IS NOT NULL AND embedding IS NOT NULL
+            """, nativeQuery = true)
+    long countUsableEvidence(@Param("dim") String dim);
+
+
+    /** Approved facets on an embedded dim still missing their vector. */
+    @Query(value = """
+            SELECT * FROM event_facet
+             WHERE embedding IS NULL AND dim IN (:dims)
+             ORDER BY id
+            """, nativeQuery = true)
+    List<EventFacet> findUnembeddedOn(@Param("dims") Collection<String> dims);
 
 
     /**

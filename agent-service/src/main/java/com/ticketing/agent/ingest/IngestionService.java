@@ -8,7 +8,7 @@ import com.ticketing.agent.validation.FacetValidator;
 import com.ticketing.agent.validation.ValidationOutcome;
 import com.ticketing.agent.vector.DimGate;
 import com.ticketing.agent.vector.EmbeddingService;
-import com.ticketing.agent.vector.TagSnapper;
+import com.ticketing.agent.vector.TagMatcher;
 import com.ticketing.agent.config.AgentProperties;
 import com.ticketing.common.agent.Taxonomy;
 import com.ticketing.common.events.EventSearchIndexedEvent;
@@ -59,7 +59,9 @@ public class IngestionService {
     private final FacetValidator     validator;
     private final EmbeddingService   embeddings;
     private final DimGate            dimGate;
-    private final TagSnapper         tagSnapper;
+    private final TagMatcher           tagMatcher;
+    private final TagSuggester         tagSuggester;
+    private final TagProposalRepository tagProposalRepository;
     private final AgentProperties    properties;
 
     /**
@@ -187,6 +189,7 @@ public class IngestionService {
     private void persistFacets(AgentEvent event, List<ValidationOutcome> outcomes) {
         tx.executeWithoutResult(status -> {
             facetRepository.deleteLlmFacets(event.getId());
+            eventTagRepository.deleteLlmTags(event.getId());
             outcomes.stream().filter(ValidationOutcome::rejected)
                     .forEach(o -> rejectionRepository.save(FacetRejection.builder()
                             .eventId(event.getId())
@@ -215,9 +218,11 @@ public class IngestionService {
                     .build()));
             kept++;
 
-            // Only the three query-facing dims get a vector; the rest stay text
-            // for rendering and the compare projection. Embedding all eight
-            // would nearly triple the cost for dims nothing compares against.
+            // Only the dims in EMBEDDED_DIMS get a vector; the rest stay text
+            // for rendering and the compare projection. That set is the dims
+            // users phrase preferences in, plus every dim a tag lives on — a
+            // tag can only be matched against facets on its own dim, so a tag
+            // on an unembedded dim is unreachable rather than merely weak.
             //
             // A non-embedded facet is approved here rather than skipped. There
             // is nothing left to check on it — the four deterministic gates
@@ -233,13 +238,24 @@ public class IngestionService {
                 continue;
             }
 
-            // Outside any transaction — this is a network call taking hundreds
-            // of milliseconds, and holding a connection across it is how a
-            // pool gets exhausted by a batch job.
-            String vector = embeddings.embedDocument(candidate.value());
+            // Embedded from value AND span together, not value alone. A value
+            // is often one or two words — "arena" — with too little signal to
+            // place; a span is raw source text thick with specifics that pull
+            // the vector toward the particular. Measured on real facets, each
+            // alone mis-matched at least one case and the pair matched all of
+            // them. One embedding now serves both the dim gate and tag
+            // matching, so this costs nothing extra.
+            //
+            // Outside any transaction — a network call taking hundreds of
+            // milliseconds, and holding a connection across it is how a pool
+            // gets exhausted by a batch job.
+            String vector = embeddings.embedDocument(
+                    TagMatcher.representationOf(candidate.value(), candidate.span()));
 
             boolean approve = properties.getValidation().isAutoApproveOnAllGatesPass()
                     && dimGate.looksLikeDim(candidate.dim(), vector);
+
+            var tagCandidate = tagMatcher.bestFor(candidate.dim(), vector);
 
             tx.executeWithoutResult(s -> {
                 facetRepository.writeEmbedding(facet.getId(), vector, embeddings.modelVersion());
@@ -247,6 +263,11 @@ public class IngestionService {
                     facet.setApprovedAt(Instant.now());
                     facetRepository.save(facet);
                 }
+                // Recorded unapproved with its score. No threshold is applied:
+                // the score distribution on real data has not been measured
+                // yet, and picking a cut-off before seeing it would be a guess
+                // baked into every row.
+                tagCandidate.ifPresent(c -> tagSuggester.suggest(event.getId(), c));
             });
         }
 
@@ -261,20 +282,31 @@ public class IngestionService {
         tx.executeWithoutResult(s -> eventRepository.save(event));
     }
 
-    private void persistTags(AgentEvent event, List<String> labels) {
-        tx.executeWithoutResult(s -> eventTagRepository.deleteLlmTags(event.getId()));
+    /**
+     * Writes one tag suggestion, keeping the strongest when several facets on
+     * the same dim point at the same tag.
+     *
+     * <p>An event with three {@code format} facets can suggest
+     * {@code live-music} three times. The row is one per (event, tag), so the
+     * later ones would either fail on the primary key or overwrite a better
+     * score with a worse one.
+     */
 
+    /**
+     * Records the labels the model volunteered, without assigning any of them.
+     *
+     * <p>Tags now come from facets, which carry evidence. The model's own tag
+     * list has none — it is an assertion with nothing behind it — so it is kept
+     * only as a signal for growing the vocabulary: a label that keeps appearing
+     * and matches nothing in the catalogue is a gap worth a person's attention.
+     */
+    private void persistTags(AgentEvent event, List<String> labels) {
         for (String label : labels) {
-            // Snapping embeds the label, so it happens outside a transaction
-            // for the same reason facet embedding does.
-            var slug = tagSnapper.snap(label, event.getId());
-            slug.flatMap(tagRepository::findBySlug)
-                .ifPresent(tag -> tx.executeWithoutResult(s ->
-                        eventTagRepository.save(EventTag.builder()
-                                .eventId(event.getId())
-                                .tagId(tag.getId())
-                                .source("llm")
-                                .build())));
+            if (label == null || label.isBlank()) continue;
+            if (Taxonomy.isKnownTag(label.trim().toLowerCase())) continue;
+            tx.executeWithoutResult(s ->
+                    tagProposalRepository.record(label.trim().toLowerCase(),
+                            event.getId(), null, null));
         }
     }
 }

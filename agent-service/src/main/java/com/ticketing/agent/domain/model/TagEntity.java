@@ -39,9 +39,32 @@ public class TagEntity {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String description;
 
-    /** CATEGORY or ATTRIBUTE. Category answers "what is it", attribute answers "what is it like". */
+    /**
+     * Which of the eight dimensions this tag answers, or null.
+     *
+     * <p>A facet is only compared against tags on its own dim. Null means the
+     * tag is reachable by exclusion only — {@code headliner} and
+     * {@code late-night} describe an artist's fame and a start time, neither of
+     * which is a dimension of the experience.
+     */
+    private String dim;
+
+    /** Concrete phrasings, embedded alongside name and description. */
+    @Column(columnDefinition = "TEXT")
+    private String examples;
+
+    /**
+     * {@code taxonomy} for the tags defined in Java, {@code human} for tags a
+     * reviewer added.
+     *
+     * <p>TagSynchronizer rewrites every taxonomy row on each startup. Without
+     * this column a reviewer-added tag would be silently reverted on the next
+     * restart, so the vocabulary could only ever shrink back to its starting
+     * set.
+     */
     @Column(nullable = false)
-    private String kind;
+    @Builder.Default
+    private String source = "taxonomy";
 
     /**
      * {@code description} while the vector comes from the tag's own prose,

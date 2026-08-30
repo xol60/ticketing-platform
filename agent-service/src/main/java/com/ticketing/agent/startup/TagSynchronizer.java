@@ -35,6 +35,7 @@ import java.util.List;
  */
 @Slf4j
 @Component
+@org.springframework.core.annotation.Order(100)   // before TagEmbeddingBackfill
 @RequiredArgsConstructor
 public class TagSynchronizer implements ApplicationRunner {
 
@@ -53,28 +54,36 @@ public class TagSynchronizer implements ApplicationRunner {
                         .slug(def.slug())
                         .name(def.name())
                         .description(def.description())
-                        .kind(def.kind().name())
+                        .dim(def.dim())
+                        .examples(def.examples())
+                        .source("taxonomy")
                         .build());
                 created++;
                 continue;
             }
 
-            boolean descriptionChanged = !def.description().equals(row.getDescription());
-            boolean metadataChanged = !def.name().equals(row.getName())
-                    || !def.kind().name().equals(row.getKind());
+            // A reviewer-added tag has no Java counterpart and must survive
+            // every restart untouched.
+            if ("human".equals(row.getSource())) continue;
 
-            if (descriptionChanged || metadataChanged) {
+            boolean textChanged = !def.description().equals(row.getDescription())
+                    || !java.util.Objects.equals(def.examples(), row.getExamples());
+            boolean metadataChanged = !def.name().equals(row.getName())
+                    || !java.util.Objects.equals(def.dim(), row.getDim());
+
+            if (textChanged || metadataChanged) {
                 row.setName(def.name());
-                row.setKind(def.kind().name());
+                row.setDim(def.dim());
+                row.setExamples(def.examples());
                 row.setDescription(def.description());
 
-                if (descriptionChanged && "description".equals(row.getVectorSource())) {
+                if (textChanged && "description".equals(row.getVectorSource())) {
                     // The stored vector was embedded from text that no longer
                     // exists. Leaving it would mean snapping labels against a
                     // definition nobody wrote — clear the marker so the
                     // backfill re-embeds it.
                     row.setVectorSource(null);
-                    log.info("Tag '{}' description changed — bootstrap vector invalidated", def.slug());
+                    log.info("Tag '{}' text changed — vector invalidated, will re-embed", def.slug());
                 }
                 tagRepository.save(row);
                 updated++;

@@ -46,6 +46,20 @@ public class EventTag {
     @Column(name = "approved_at")
     private Instant approvedAt;
 
+    /**
+     * When a reviewer ruled this pair wrong.
+     *
+     * <p>Mutually exclusive with {@link #approvedAt} — a pair has at most one
+     * verdict, enforced by a check constraint rather than by convention.
+     *
+     * <p>This is why a rejection is a column and not a deletion. The matcher is
+     * deterministic, so re-ingesting an event whose rejected rows were deleted
+     * regenerates them unchanged; the only way for "no" to mean anything past
+     * the next ingest is to write it down.
+     */
+    @Column(name = "rejected_at")
+    private Instant rejectedAt;
+
     @Data
     @NoArgsConstructor
     @AllArgsConstructor

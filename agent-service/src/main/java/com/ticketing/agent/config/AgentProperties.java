@@ -149,6 +149,27 @@ public class AgentProperties {
         private double tagSnapThreshold = 0.82;
 
         /**
+         * Cosine at which a facet's nearest tag on its own dim is accepted
+         * rather than left for review.
+         *
+         * <p>Measured, not chosen. All 124 suggestions the matcher produced
+         * over the 92-event corpus were reviewed by hand and the score curve
+         * plotted against the verdicts. It has one knee: 0.495 keeps 88% of
+         * what it accepts and accepts 94% of what is correct. Below it
+         * precision falls away with no recall gained; the next real gain
+         * (0.540, 93%) costs a quarter of recall.
+         *
+         * <p>The distribution is unimodal — right and wrong answers overlap
+         * rather than forming two clusters — so this is a chosen operating
+         * point on a trade-off, not a boundary between classes. The errors it
+         * still admits are the ones cosine cannot see: "highly anticipated
+         * match" reads as large-scale because both sentences are about
+         * importance, and no threshold separates them.
+         */
+        @DecimalMin("0.0") @DecimalMax("1.0")
+        private double tagMatchThreshold = 0.495;
+
+        /**
          * Whether a facet clearing every deterministic gate may skip human
          * review.
          *
