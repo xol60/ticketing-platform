@@ -448,22 +448,40 @@ docker compose --profile ollama-container up -d
 ### Two flows
 
 **Ingestion** (offline, once per event) consumes `event.search.indexed` — the
-same topic search-service reads — and turns a description into tags and facets:
+same topic search-service reads — and turns a description into facets:
 
 ```
-event.search.indexed → extract (1 LLM call) → validate → embed → agent_db
+event.search.indexed → extract (1 LLM call) → 4 deterministic gates
+                     → embed (value + span) → dim gate
+                     → nearest 3 tags on the facet's own dim → agent_db
 ```
+
+**The model is not asked for tags.** It emits facets; a tag is earned by
+embedding a facet and matching it against tag definitions on the same dim, so
+the tag inherits that facet's verified span as evidence. A label the model
+simply asserts has none, and no gate can give it any. The ingestion prompt does
+not even list the catalogue — that cost 2,223 characters on every event, grew
+with the vocabulary, and produced zero usable rows in 92 events.
 
 **Conversation** (hot path) splits one message into three kinds of signal that
 travel different routes, then merges the result with what earlier turns
 established:
 
 ```
-message → extract (1 LLM call) ─┬─ hard slots  → SQL WHERE
-                                ├─ vibe facets → cosine, per dim
-                                └─ negations   → NOT EXISTS
-                                → rank + diversity → 3–5 events
+message → extract (1 LLM call) → deterministic gates
+   │
+   ├─ hard slots (city/date/price) ──────────► SQL WHERE
+   ├─ negations ─────────────────────────────► NOT EXISTS
+   └─ vibe facets ─► embed (bge-m3) ─┬─ dim has tags → tag coverage 1.0 / 0.0
+                                     └─ otherwise    → cosine, same dim only
+                                                    → rank → diversity → ≤5
 ```
+
+Tag coverage replaced per-facet cosine on the dims that carry a vocabulary.
+Membership in a tag is a reviewed fact with a real zero; cosine has neither —
+two unrelated phrases on the same dim score **0.452**, which reads as "somewhat
+relevant" and is not. Cosine remains the only option on dims with no tags, and
+those are the ones the agent is worst at.
 
 `POST /api/agent/search` runs one stateless turn. `POST /api/agent/chat` adds
 memory keyed by `sessionId` in Redis (45-minute TTL) and a stage machine —
@@ -513,6 +531,48 @@ a worse answer, it is a useless one.
 ("this weekend"); a real clock and a real zone resolve them. Asked to compute a
 date, a model answers confidently and wrongly, and the error is invisible.
 
+**A slot stated this turn cannot be retracted this turn.** The model returns
+`city: "tokyo"` together with `clearFields: ["city"]`, and applying the value
+before the retraction let the retraction win — three conversation turns returned
+byte-identical results while the logs said the city had been read correctly.
+Decidable in Java, so it is decided there.
+
+**An exclusion needs a negation in the sentence, and at most two of them.**
+`excludeTags` is the only model output that acts as a hard filter: a facet must
+quote its source and a tag assignment must survive review, but an exclusion
+deletes events on the model's word alone. Measured across 57 queries, the
+distribution was bimodal with nothing between — three requests excluded exactly
+one tag and all three were right; seven excluded five to ten of the ten tags and
+all seven were wrong. `"live music, nothing electronic"` excluded all ten
+*including* `live-music` and cut the candidate set from 64 events to 6. A list
+longer than two is discarded whole rather than trimmed: once the model has
+enumerated the vocabulary, no subset of it is a reading of the sentence.
+
+**Ranking has an explicit tiebreak.** Equal scores are structural here — the
+same show runs in several cities with identical facets — and the sort is stable,
+so tied rows inherited whatever order Postgres happened to return. With the
+diversity cap on top, that turned an arbitrary order into a different result
+*set*: 22 of 57 queries returned different answers on two runs of the same build
+against the same data. Extraction was identical in all 57, so the variation was
+entirely in ranking. Sorting by `(matched, score, id)` makes it reproducible.
+
+**A shortlist shows a show once.** The category-and-time diversity bucket cannot
+enforce that and works against it — two dates of one show at different times of
+day land in different buckets, so the cap meant to stop repetition separates the
+repeats and admits both. A request for something to take the children to came
+back as one correct answer followed by the same technology conference three
+times. Searches by name are exempt: someone typing an artist's name wants their
+dates.
+
+**Rows say whether they answer the request.** The shortlist always reaches for
+five, so a request only one event satisfies still returns four more behind it —
+**11% of all slots** on the evaluation set are filler. Each hit carries
+`matched`, and rows are ordered matched-first so a client can cut where it turns
+over. When the request could only be scored by cosine every row reports
+`matched: true`, because cosine has no zero to divide on and inventing a
+boundary there would hide rows on a number that does not mean what it looks
+like.
+
 **Ordinal references are an array lookup.** `"the second one"` indexes the
 previous turn's result list in Java. Asked to recall what was second, a model
 drifts as the conversation lengthens and the person silently gets the wrong
@@ -520,7 +580,7 @@ event.
 
 ### Validation pipeline
 
-Six gates. The first four are deterministic — no model, no vector, no threshold
+Five gates. The first four are deterministic — no model, no vector, no threshold
 on the strongest one — and run before anything is embedded, so most fabrication
 dies at zero inference cost.
 
@@ -531,7 +591,6 @@ dies at zero inference cost.
 | 3 | Overlap | span is real but the facet is about something else | reject |
 | 4 | Contradiction | scale claim the ticket count disproves | reject |
 | 5 | Dim (vector) | atmosphere content filed under format | review |
-| 6 | Tag snap (vector) | label outside the 15-tag catalogue | proposal |
 
 Rejections are kept in `facet_rejection` rather than dropped — the distribution
 across reasons is the only honest measure of how much the model is inventing,
@@ -543,23 +602,132 @@ Gate 4 only fires in one direction: a large ticket count can disprove "intimate
 room", but a small one cannot disprove "stadium" — ticket count is a lower bound
 on venue size, not a measurement of it.
 
+### The tag vocabulary
+
+Ten tags: eight carry a dim and are matched against facets, two carry none and
+are reachable only by exclusion (`headliner`, `late-night` describe an artist's
+fame and a start time, neither of which is a dimension of the experience).
+
+**Java seeds, the database decides.** `Taxonomy.TAGS` fills an empty database
+and is then outranked by it: a reviewer who finds no tag fits a facet creates
+one, and it takes effect on the next boot without a code change. `TagCatalog`
+reads the live vocabulary for the query prompt and the `excludeTags` enum, so a
+reviewer-created tag is excludable the moment it exists.
+
+That boundary was learned the hard way. All fifteen original tags were written
+in a single commit **fifteen hours before the first event was ingested**, so
+every one was a guess about what a ticketing catalogue might hold. Eight guesses
+matched the corpus; six did not, and an empty tag is not inert — across 92
+events those six entered 173 candidate shortlists, took first place ten times
+with every one of those wrong (a Formula 1 race tagged `workshop` on a
+0.495-to-0.495 tie), and were approved zero times. One of them captured
+*"somewhere I can learn something"* at 0.594 and, carried by nothing, returned no
+events and erased the request's only signal. They were retired in `V9`. Both
+tags that came through review instead — `professional`, `broadcast` — are
+carried by events, because that flow starts from a facet nothing covers and so
+cannot produce an empty tag.
+
+A tag is embedded from **name + description + examples**, 244–329 characters,
+never from its slug. Measured against *"a small room, close to the performer,
+only a hundred people"*: the slug `intimate` scored 0.556 and lost to
+`live-music`; the full definition scored 0.819 and won.
+
+A dim needs at least two tags or matching it is a default rather than a
+decision. `family-kids` was alone on `audience`, took all seventeen audience
+facets, and twelve were wrong — including *"developers, engineers, and
+technology enthusiasts"*. `TagSynchronizer` warns at startup when a dim has one.
+
 ### Measured behaviour
 
-On the 92-event demo catalogue, all figures from real runs:
+92-event demo catalogue, 57-query evaluation set. All figures from real runs.
+
+**Ingestion**
 
 | | |
 | --- | --- |
 | Events with ≥2 usable facets | **73%** (§15.1 threshold is 60%) |
-| Facets kept / rejected | 266 / 174 (40% rejected) |
+| Facets kept / rejected | 264 / 174 (40% rejected) |
 | Rejection reasons | 71% span-drift, 29% outright fabrication |
-| Retrieval precision@5 | **48%**, 5 of 18 eval cases perfect |
+| Facets per event | 3.4 average, 1–8 range |
 | Ingestion throughput | ~14 s per event (Metal GPU, model warm) |
 
-Name, city and venue queries score 100%; mood queries score 0–40%. The ceiling
-is not the matching — it is that most descriptions in this catalogue talk about
-history and awards rather than what attending feels like, so there is no
-atmosphere facet to match against. That is §15.1 surfacing at query time, and no
-amount of prompt or ranking work fixes it.
+**Tag assignment**, after reviewing all 368 candidate pairs by hand:
+
+| | |
+| --- | --- |
+| Approved / rejected | 92 / 276, across 61 events |
+| Chosen at rank 1 / 2 / 3 | 42 / 6 / 2 |
+| Facets where no tag fitted | 16 |
+| Auto-accept at 0.495 vs the hand review | 81% precision, 83% recall |
+
+The threshold is measured, not chosen: the score curve against the hand verdicts
+has one knee. Eight of the fifty chosen tags sat at rank two or three — one of
+them an exact 0.495-to-0.495 tie — which is why the shortlist is stored rather
+than only the winner.
+
+**Retrieval**, precision@5 scored by distinct show:
+
+| Group | Cases | p@5 | Path taken |
+| --- | --- | --- | --- |
+| City | 6 | **97%** | SQL |
+| Temporal | 2 | 70% | SQL |
+| Proper noun | 8 | 67% | literal name lookup |
+| Negation | 5 | 44% | tag + exclusion gates |
+| Combined | 6 | 40% | mixed |
+| Genre | 8 | 20% | vector → tag |
+| Vibe | 11 | 13% | cosine only |
+| Adversarial | 7 | 9% | mixed |
+| **Overall** | **53** | **37%** | 10 of 53 perfect |
+
+Two runs of the same build return identical results on all 57 queries.
+
+Scoring by distinct show, not by event id, is deliberate: 45 of 53 cases list
+several dates of one show among their expected ids, so an id-level score
+measures how many duplicates a shortlist emits rather than how well it ranks.
+
+### Where it fails, and why
+
+**The ordering in that table is the finding.** The more of a request SQL can
+decide, the better the answer. Every group above 40% is carried by a structured
+field; every group below is carried by a vector.
+
+**Vibe (13%) is a data limit, not a matching one.** Those requests land on
+`atmosphere` and `physical`, which carry no tags, so they fall to cosine. The
+catalogue holds **four distinct `atmosphere` values across 92 events** —
+descriptions talk about history and awards, not about what attending feels like.
+Asked for *"live music in hanoi"*, where no Hanoi event is live music, cosine
+returns a stage musical at 0.575 and a basketball game at 0.539, because
+`"stage **musical**"` is lexically near `"live **music**"`. There is no threshold
+that separates those from a real match, which is why the agent reports them
+rather than hiding them.
+
+**Genre (20%) is a vocabulary limit.** `"rock concert"` resolves to `live-music`,
+which 19 events carry, and every one of them scores identically — tag membership
+is binary, so it cannot rank within itself. Neither side holds the discriminating
+word: the extraction distils `"rock concert"` into `"live music performance"`,
+and Metallica's stored facet is *"two shows with different setlists and
+supporting acts"*. Feeding the raw phrase back in does not help; Metallica still
+ranks sixth, below Bruno Mars, whose facet contains the word *pop*.
+
+**Embeddings cannot read negation, antonyms, or magnitude.** Measured on the
+running model: `"not crowded"` scores **0.771** against `"crowded"`; `"calm"`
+scores 0.489 against `"high-energy"` while two unrelated phrases score 0.452;
+`"1.8 million fans"` matches `intimate` over `large-scale`. A `seated`/`standing`
+pair was written, embedded and withdrawn — `standing` beat `seated` on every
+facet in the corpus including *"grandstand setting"* (0.535 to 0.488), whose own
+definition names grandstands, with margins of 0.002 to 0.05. A dim whose answers
+are opposites of each other cannot be decided by cosine.
+
+**Reasoning mode does not fix it.** `qwen3:8b` with `think: true` was measured
+against `think: false` on the same build: median latency **6.1 s → 38.8 s**
+(×6.4, worst case 105 s), for five extractions improved and three made worse.
+It keeps `"basketball game"` intact where the default distils it to `"sports"`,
+and it drops spurious facets — but `"rock"`, `"kpop"` and `"soccer"` are still
+lost, and it invents facets of its own (`"kpop concert"` gained an atmosphere and
+a scale nobody asked for). End to end it is a wash — **34% → 31%** precision@5
+on the 18 evaluation cases both configurations completed, 2 perfect against 3.
+The default stays off: 6.4× the latency for no measurable gain, and a 105 s
+worst case exceeds every timeout in the request path.
 
 ### Operational notes
 
@@ -575,6 +743,13 @@ amount of prompt or ranking work fixes it.
   strength of unreviewed facets is worse than not recommending.
 - **Re-ingest replaces machine rows and leaves human rows alone**, so editing a
   description upstream never discards a reviewer's corrections.
+- **Four layers hold a timeout for one path, and they disagree.** nginx allows
+  120 s, the gateway's HTTP client 30 s, its circuit breaker treats 180 s as
+  slow, and agent-service gives Ollama 180 s. The 30 s is the only one that
+  binds, and nobody chose it with a language model in mind — it is invisible
+  until a turn runs long, and then every request returns 502 while the service
+  is still working and still writing conversation state. Per-route metadata
+  would fix it; the Spring Cloud version here does not expose it.
 - **`agent_db` is disposable.** It is a derived read model; replay the topic and
   it rebuilds, minus the human review decisions.
 
@@ -746,4 +921,5 @@ Per-path overrides via `gateway.rate-limit.path-overrides`:
 | --------------- | ----------- | --- |
 | `/api/auth`     | 5           | Tighter on login / refresh — credential-stuffing surface |
 | `/api/search`   | 60          | Autocomplete-as-you-type is naturally bursty; anonymous users from one NAT IP share the bucket. Higher limit safe because the search-service Caffeine cache already protects ES. |
+| `/api/agent`    | 2           | Tightest on the platform. One turn costs an LLM call plus one or more embeddings on a single-threaded local model, and unlike search it cannot be absorbed by a cache. Two per second is already faster than a person types. |
 | (default)       | 20          | Everything else |
