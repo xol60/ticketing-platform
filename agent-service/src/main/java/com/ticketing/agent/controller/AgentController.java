@@ -56,6 +56,7 @@ public class AgentController {
 
         return ApiResponse.ok(SearchResponse.builder()
                 .hits(toHits(result))
+                .matchedCount(result.matchedCount())
                 .totalMatched(result.totalMatched())
                 .offerNarrowing(result.totalMatched() > SearchService.NARROW_THRESHOLD)
                 .relaxations(result.relaxations())
@@ -102,6 +103,7 @@ public class AgentController {
         } else if (turn.search() != null) {
             var r = turn.search();
             builder.hits(toHits(r))
+                    .matchedCount(r.matchedCount())
                    .totalMatched(r.totalMatched())
                    .offerNarrowing(r.totalMatched() > SearchService.NARROW_THRESHOLD)
                    .relaxations(r.relaxations())
@@ -140,6 +142,7 @@ public class AgentController {
                                     .map(EventFacet::getValue)
                                     .limit(3).toList())
                     .score(s.score())
+                    .matched(s.matched())
                     .build();
         }).toList();
     }

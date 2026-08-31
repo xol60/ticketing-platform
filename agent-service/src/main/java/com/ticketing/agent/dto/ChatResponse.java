@@ -31,6 +31,13 @@ public class ChatResponse {
     private boolean usedVibe;
 
     /**
+     * How many of {@code hits} answer the request, as opposed to filling the
+     * shortlist. See {@link SearchResponse.Hit#isMatched()} — rows come ordered
+     * matched-first, so this is also where the list can be cut.
+     */
+    private long matchedCount;
+
+    /**
      * What the conversation currently believes, echoed back.
      *
      * <p>Not decoration. Slots accumulate silently across turns, and a search

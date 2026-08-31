@@ -263,4 +263,31 @@ class ChatServiceTest {
                 .isEqualTo(Stage.BROWSING);
         assertThat(out.focused()).isNull();
     }
+
+    @Test
+    @DisplayName("a slot stated this turn survives a clearFields naming it")
+    void statedSlotBeatsClearFields() {
+        // "actually in tokyo" came back as city=tokyo AND clearFields=["city"].
+        // merge() wrote the value and then the retraction erased it, so three
+        // conversation turns returned byte-identical results and the logs said
+        // the extraction had worked.
+        var q = new QueryExtraction(
+                QueryExtraction.Intent.FIND, null, List.of("city", "priceMax"),
+                null, "tokyo", null, null, List.of(), List.of());
+
+        assertThat(q.city()).isEqualTo("tokyo");
+        assertThat(q.clearFields())
+                .as("the turn stated a city, so it cannot also be retracting one")
+                .containsExactly("priceMax");
+    }
+
+    @Test
+    @DisplayName("clearFields still clears a slot the turn did not state")
+    void unstatedSlotIsStillCleared() {
+        var q = new QueryExtraction(
+                QueryExtraction.Intent.FIND, null, List.of("city"),
+                null, null, null, null, List.of(), List.of());
+
+        assertThat(q.clearFields()).containsExactly("city");
+    }
 }

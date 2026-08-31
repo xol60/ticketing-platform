@@ -129,7 +129,7 @@ public class SearchService {
                     q.properNoun(), cityId, window.from(), window.to());
             if (!byName.isEmpty()) {
                 return new SearchResult(
-                        ranker.rank(byName, Map.of(), now, SHORTLIST_SIZE),
+                        ranker.rankNameMatches(byName, now, SHORTLIST_SIZE),
                         byName.size(), List.of(), false);
             }
             // Nothing by that name. Fall through to the ordinary path rather
@@ -193,10 +193,11 @@ public class SearchService {
                     total, relaxations, false);
         }
 
-        Map<String, Double> semantic = scoreSemantically(q.vibeFacets(), candidates);
+        Semantics semantic = scoreSemantically(q.vibeFacets(), candidates);
         return new SearchResult(
-                ranker.rank(candidates, semantic, now, SHORTLIST_SIZE),
-                total, relaxations, !semantic.isEmpty());
+                ranker.rank(candidates, semantic.scores(), semantic.tagCarriers(),
+                        semantic.splittable(), now, SHORTLIST_SIZE),
+                total, relaxations, !semantic.scores().isEmpty());
     }
 
     private List<AgentEvent> find(Integer cityId, DateResolver.Window w,
@@ -238,11 +239,13 @@ public class SearchService {
      * richly it happens to be described, only for how well it answers what was
      * asked.
      */
-    private Map<String, Double> scoreSemantically(List<FacetQuery> vibe, List<AgentEvent> candidates) {
-        if (vibe.isEmpty() || candidates.isEmpty()) return Map.of();
+    private Semantics scoreSemantically(List<FacetQuery> vibe, List<AgentEvent> candidates) {
+        if (vibe.isEmpty() || candidates.isEmpty()) return Semantics.none();
 
         List<String> ids = candidates.stream().map(AgentEvent::getId).toList();
         Map<String, Double> summed = new HashMap<>();
+        Map<String, Integer> coverage = new HashMap<>();
+        int resolvedFacets = 0;
         double threshold = properties.getValidation().getTagMatchThreshold();
 
         for (FacetQuery f : vibe) {
@@ -277,7 +280,11 @@ public class SearchService {
                 } else {
                     log.debug("Query facet {}:'{}' resolved to tag {} ({}), carried by {} candidates",
                             f.dim(), f.value(), tag.get().slug(), tag.get().score(), carriers.size());
-                    carriers.forEach(row -> summed.merge((String) row[0], 1.0, Double::sum));
+                    resolvedFacets++;
+                    for (Object[] row : carriers) {
+                        summed.merge((String) row[0], 1.0, Double::sum);
+                        coverage.merge((String) row[0], 1, Integer::sum);
+                    }
                     continue;
                 }
             }
@@ -296,7 +303,36 @@ public class SearchService {
 
         Map<String, Double> out = new HashMap<>(summed.size());
         summed.forEach((id, sum) -> out.put(id, sum / vibe.size()));
-        return out;
+
+        // An answer covers everything the request could be resolved into, not
+        // merely something. "basketball game" resolves to sports AND
+        // large-scale, and treating one of the two as enough labelled AWS
+        // re:Invent and a Taylor Swift date as answers to it — both are
+        // large-scale and neither is a basketball game.
+        //
+        // Partial cover still ranks: the score is k/N, so a facet matched is a
+        // facet rewarded. Only the label is strict, because the label is what
+        // tells a reader "this is what you asked for".
+        final int required = resolvedFacets;
+        Set<String> answers = coverage.entrySet().stream()
+                .filter(e -> e.getValue() >= required)
+                .map(Map.Entry::getKey)
+                .collect(java.util.stream.Collectors.toSet());
+        return new Semantics(out, answers, required > 0);
+    }
+
+    /**
+     * Scores, plus who genuinely answered the request.
+     *
+     * @param scores       0..1 per event, the semantic term of the rank
+     * @param tagCarriers  events covering every tag the request resolved to
+     * @param splittable   whether {@code tagCarriers} is a meaningful division.
+     *                     False when no facet resolved to a tag any candidate
+     *                     carries, in which case the request could only be
+     *                     scored by cosine — and cosine has no zero to split on
+     */
+    private record Semantics(Map<String, Double> scores, Set<String> tagCarriers, boolean splittable) {
+        static Semantics none() { return new Semantics(Map.of(), Set.of(), false); }
     }
 
     /**

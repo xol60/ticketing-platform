@@ -35,6 +35,22 @@ public class Ranker {
     private static final int MAX_PER_BUCKET = 2;
 
     /**
+     * How many dates of the same show a shortlist may spend a slot on.
+     *
+     * <p>One, everywhere except a search by name. Five slots are the whole
+     * answer, and a second date of a show the person has already been shown
+     * adds nothing they could not ask for.
+     *
+     * <p>The category-and-time bucket above cannot enforce this and in fact
+     * works against it: two dates of one show at different times of day land in
+     * <em>different</em> buckets, so the cap that was meant to stop repetition
+     * separates the repeats and waves both through. Asked for something to take
+     * the children to in London, the shortlist came back as one correct answer
+     * followed by the same technology conference three times.
+     */
+    private static final int MAX_PER_SHOW = 1;
+
+    /**
      * Floor on the proximity horizon, for a search window shorter than this.
      *
      * <p>The horizon itself is the width of the window being searched, not a
@@ -47,8 +63,40 @@ public class Ranker {
      */
     private static final long MIN_HORIZON_DAYS = 14;
 
+    /**
+     * Ranking for a search by name, where several dates of one act are the
+     * answer rather than padding.
+     *
+     * <p>Someone typing "taylor swift" wants her dates. The show cap that keeps
+     * a vibe search from spending four of five slots on one conference would
+     * here delete exactly what was asked for.
+     */
+    public List<SearchResult.Scored> rankNameMatches(List<AgentEvent> candidates,
+                                                     Instant now, int limit) {
+        long horizon = horizonDays(candidates, now);
+        List<SearchResult.Scored> scored = new ArrayList<>(candidates.size());
+        for (AgentEvent e : candidates) {
+            scored.add(new SearchResult.Scored(e,
+                    W_TIME * timeProximity(e.getStartAt(), now, horizon)
+                  + W_POP  * popularity(e), 0.0));
+        }
+        scored.sort(Comparator.comparingDouble(SearchResult.Scored::score).reversed()
+                .thenComparing(s -> s.event().getId()));
+        return applyDiversity(scored, limit, false);
+    }
+
+    /**
+     * @param tagCarriers events carrying a tag the request resolved to
+     * @param splittable  whether {@code tagCarriers} divides the list meaningfully.
+     *                    When false every row is reported as matched: the request
+     *                    could only be scored by cosine, which has no zero to
+     *                    split on, and inventing a boundary there would hide
+     *                    rows on a number that does not mean what it looks like.
+     */
     public List<SearchResult.Scored> rank(List<AgentEvent> candidates,
                                           Map<String, Double> semanticScores,
+                                          Set<String> tagCarriers,
+                                          boolean splittable,
                                           Instant now,
                                           int limit) {
         long horizon = horizonDays(candidates, now);
@@ -59,7 +107,8 @@ public class Ranker {
             double score = W_SEMANTIC * semantic
                          + W_TIME     * timeProximity(e.getStartAt(), now, horizon)
                          + W_POP      * popularity(e);
-            scored.add(new SearchResult.Scored(e, score, semantic));
+            boolean matched = !splittable || tagCarriers.contains(e.getId());
+            scored.add(new SearchResult.Scored(e, score, semantic, matched));
         }
 
         // The id tiebreak is not cosmetic. Ties are structural in this
@@ -77,9 +126,14 @@ public class Ranker {
         // it is a measurement one: the same person asking the same question
         // twice got different answers, and no A/B comparison of ranking changes
         // meant anything while it stood.
-        scored.sort(Comparator.comparingDouble(SearchResult.Scored::score).reversed()
+        // Answering the request outranks scoring well. An event carrying the
+        // tag the person asked for belongs above one that merely happens to be
+        // sooner, and grouping them means a caller can cut the list where the
+        // flag turns over instead of guessing at a score.
+        scored.sort(Comparator.comparing(SearchResult.Scored::matched).reversed()
+                .thenComparing(Comparator.comparingDouble(SearchResult.Scored::score).reversed())
                 .thenComparing(s -> s.event().getId()));
-        return applyDiversity(scored, limit);
+        return applyDiversity(scored, limit, true);
     }
 
     /**
@@ -90,15 +144,30 @@ public class Ranker {
      * the same kind of thing — the skipped rows come back in score order. A
      * short answer is worse than a repetitive one.
      */
-    private List<SearchResult.Scored> applyDiversity(List<SearchResult.Scored> scored, int limit) {
-        Map<String, Integer> seen = new HashMap<>();
+    private List<SearchResult.Scored> applyDiversity(List<SearchResult.Scored> scored,
+                                                     int limit, boolean capShows) {
+        Map<String, Integer> seen  = new HashMap<>();
+        Map<String, Integer> shows = new HashMap<>();
         List<SearchResult.Scored> picked  = new ArrayList<>(limit);
         List<SearchResult.Scored> skipped = new ArrayList<>();
 
         for (SearchResult.Scored s : scored) {
             if (picked.size() >= limit) break;
-            String bucket = bucketOf(s.event());
-            if (seen.merge(bucket, 1, Integer::sum) <= MAX_PER_BUCKET) {
+
+            // The category bucket applies to filler only. It exists to add
+            // variety where nothing distinguishes the rows — five different
+            // football matches when the request said nothing about football.
+            // A row that answers the request is not filler, and capping those
+            // for variety drops answers to make room for events that answer
+            // nothing: a request for a tech conference surfaced two of the four
+            // conferences that matched, then Super Bowl and a musical.
+            boolean roomInBucket = s.matched()
+                    || seen.merge(bucketOf(s.event()), 1, Integer::sum) <= MAX_PER_BUCKET;
+            // The show cap still applies to answers. Two dates of one
+            // conference are one answer shown twice.
+            boolean roomForShow  = !capShows
+                    || shows.merge(showOf(s.event()), 1, Integer::sum) <= MAX_PER_SHOW;
+            if (roomInBucket && roomForShow) {
                 picked.add(s);
             } else {
                 skipped.add(s);
@@ -133,15 +202,20 @@ public class Ranker {
 
         // Round-robin across categories: best of each, then second-best, so a
         // category with many events cannot crowd out one with few.
+        // The round-robin alone repeats shows: a category's list is sorted by
+        // popularity, so several dates of the same act sit next to each other
+        // and successive rounds pick them one after another.
         List<SearchResult.Scored> out = new ArrayList<>(limit);
+        Set<String> shown = new HashSet<>();
         for (int round = 0; out.size() < limit; round++) {
             boolean added = false;
             for (List<AgentEvent> list : byCategory.values()) {
                 if (round < list.size() && out.size() < limit) {
                     AgentEvent e = list.get(round);
+                    added = true;                       // the round did have a row to offer
+                    if (!shown.add(showOf(e))) continue;
                     out.add(new SearchResult.Scored(
                             e, timeProximity(e.getStartAt(), now, MIN_HORIZON_DAYS), 0.0));
-                    added = true;
                 }
             }
             if (!added) break;
@@ -150,6 +224,20 @@ public class Ranker {
     }
 
     /** Category plus morning/afternoon/evening — the two axes a person notices first. */
+    /**
+     * Identity of the show, as opposed to the performance.
+     *
+     * <p>The artist rather than the event name, because the name carries the
+     * city — "CES Keynote 2027 @ London" and "@ Tokyo" are one conference and
+     * would read as two shows. Somebody browsing without having named a city is
+     * better served by five different things than by one thing in three places.
+     */
+    private static String showOf(AgentEvent e) {
+        String artist = e.getPrimaryArtist();
+        return artist != null && !artist.isBlank() ? artist
+                : (e.getName() == null ? e.getId() : e.getName());
+    }
+
     private static String bucketOf(AgentEvent e) {
         int hour = e.getStartAt().atZone(DateResolver.ZONE).getHour();
         String partOfDay = hour < 12 ? "morning" : hour < 17 ? "afternoon" : "evening";

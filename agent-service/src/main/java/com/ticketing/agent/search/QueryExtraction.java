@@ -83,6 +83,29 @@ public record QueryExtraction(
         if (ordinal != null && ordinal > 0 && !clearFields.isEmpty()) {
             clearFields = List.of();
         }
+
+        // A slot the same turn states cannot also be a slot that turn retracts.
+        //
+        // The model does both at once. "actually in tokyo" comes back as
+        // city="tokyo" together with clearFields=["city"], and because merge
+        // applies the value first and the retraction second, the retraction
+        // won: the city was extracted correctly, written to the conversation,
+        // and erased in the same call. Three turns of a conversation returned
+        // byte-identical results — Toronto races for a request about Tokyo —
+        // with nothing in the logs to say a filter had ever been set.
+        //
+        // Decidable here, like the ordinal rule above, so it does not depend on
+        // the order two lines happen to sit in inside merge().
+        if (!clearFields.isEmpty()) {
+            List<String> stated = new java.util.ArrayList<>(4);
+            if (city != null)            stated.add("city");
+            if (dateExpression != null)  stated.add("dateExpression");
+            if (priceMax != null)        stated.add("priceMax");
+            if (!excludeTags.isEmpty())  stated.add("excludeTags");
+            if (!stated.isEmpty()) {
+                clearFields = clearFields.stream().filter(f -> !stated.contains(f)).toList();
+            }
+        }
     }
 
     public static QueryExtraction empty() {

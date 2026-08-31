@@ -25,8 +25,31 @@ public record SearchResult(
         List<String> relaxations,
         boolean usedVibe) {
 
-    /** One event with the score that put it here, kept for telemetry and debugging. */
-    public record Scored(AgentEvent event, double score, double semantic) {}
+    /**
+     * One event with the score that put it here.
+     *
+     * @param matched whether this event actually answers what was asked, as
+     *                opposed to merely surviving the filter and ranking above
+     *                the rest. False marks a row the shortlist reached for to
+     *                fill a slot.
+     *                <p>Only meaningful when the request resolved to a tag —
+     *                membership is then a reviewed fact with a real zero.
+     *                Cosine has no zero (two unrelated phrases on one dim score
+     *                0.452), so where the request could only be scored by
+     *                cosine every row is reported as matched rather than split
+     *                on a boundary that does not exist.
+     */
+    public record Scored(AgentEvent event, double score, double semantic, boolean matched) {
+
+        public Scored(AgentEvent event, double score, double semantic) {
+            this(event, score, semantic, true);
+        }
+    }
+
+    /** Rows that answer the request, as opposed to rows filling the shortlist. */
+    public long matchedCount() {
+        return events().stream().filter(Scored::matched).count();
+    }
 
     public static SearchResult empty(List<String> relaxations) {
         return new SearchResult(List.of(), 0, relaxations, false);

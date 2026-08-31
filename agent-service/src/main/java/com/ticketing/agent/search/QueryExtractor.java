@@ -150,7 +150,7 @@ public class QueryExtractor {
                     Taxonomy.promptBlock() + "\n" + tagCatalog.promptBlock()
                             + "\nREQUEST:\n" + message,
                     schema());
-            return parse(raw);
+            return groundExclusions(parse(raw), message);
         } catch (Exception e) {
             // Never surfaced to the user. Searching with no vibe returns a
             // worse answer; failing returns none.
@@ -255,6 +255,66 @@ public class QueryExtractor {
         return n;
     }
 
+    /**
+     * Negation markers. An exclusion is a claim that the person ruled something
+     * out, and a sentence that rules nothing out cannot support one.
+     */
+    private static final java.util.regex.Pattern NEGATION = java.util.regex.Pattern.compile(
+            "\\b(not|no|nothing|none|without|except|avoid|apart from|other than|"
+          + "kh\u00f4ng|ch\u1eb3ng|\u0111\u1eebng|tr\u1eeb|ngo\u1ea1i tr\u1eeb)\\b",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /** Above this many exclusions the list is an enumeration, not a reading. */
+    private static final int MAX_EXCLUSIONS = 2;
+
+    /**
+     * Holds {@code excludeTags} to what the sentence actually rules out.
+     *
+     * <h3>Why this is needed at all</h3>
+     * {@code excludeTags} is required by the JSON schema, so the grammar makes
+     * the model produce an array whether or not the request rules anything out
+     * — the same failure {@code clearFields} had. And unlike every other model
+     * output in this service, an exclusion is a <em>hard filter</em>: a facet
+     * must quote its source, a tag assignment must survive review, an exclusion
+     * deletes events on the model's word alone.
+     *
+     * <h3>What was measured</h3>
+     * Across the 57-query evaluation set, ten requests produced exclusions and
+     * the distribution was bimodal with nothing in between:
+     * <ul>
+     *   <li>Three excluded exactly one tag, and all three were right —
+     *       "not too crowded" ruled out large-scale, "not sports" ruled out
+     *       sports.</li>
+     *   <li>Seven excluded five to ten of the ten tags in the vocabulary, and
+     *       all seven were wrong. "live music, nothing electronic" excluded all
+     *       ten <em>including live-music</em>, and "theatre but not a musical"
+     *       excluded performing-arts. Each destroyed its own request, cutting
+     *       the candidate set from 64 events to 6.</li>
+     *   <li>Three of the seven — "tech conference", "basketball game",
+     *       "soccer match" — contained no negation at all. The model was
+     *       listing what the event is not.</li>
+     * </ul>
+     *
+     * <h3>Two gates, both decidable</h3>
+     * A sentence with no negation marker supports no exclusion. And a list
+     * longer than {@link #MAX_EXCLUSIONS} is discarded whole rather than
+     * trimmed: once the model has enumerated the vocabulary, no subset of that
+     * enumeration is a reading of the sentence, so keeping two of ten would
+     * just be choosing arbitrarily which correct answers to delete.
+     */
+    private QueryExtraction groundExclusions(QueryExtraction q, String message) {
+        if (q.excludeTags().isEmpty()) return q;
+
+        String reason = null;
+        if (!NEGATION.matcher(message).find())            reason = "the request rules nothing out";
+        else if (q.excludeTags().size() > MAX_EXCLUSIONS) reason = "the list enumerates the vocabulary";
+        if (reason == null) return q;
+
+        log.debug("Dropping excludeTags {} — {}: \"{}\"", q.excludeTags(), reason, message);
+        return new QueryExtraction(q.intent(), q.ordinal(), q.clearFields(), q.properNoun(),
+                q.city(), q.dateExpression(), q.priceMax(), q.vibeFacets(), List.of());
+    }
+
     private QueryExtraction parse(String raw) throws com.fasterxml.jackson.core.JsonProcessingException {
         JsonNode root = mapper.readTree(raw);
 
@@ -297,10 +357,14 @@ public class QueryExtractor {
         // looks correct on every filter it was given, and nobody can see that
         // it was given the wrong ones.
         if (log.isDebugEnabled()) {
-            log.debug("Extracted intent={} noun={} city={} date={} priceMax={} facets={} exclude={}",
+            // clearFields belongs here as much as the values do. Without it the
+            // line showed "city=tokyo" on a turn whose city was then wiped by a
+            // clearFields the log never mentioned, which made a real bug look
+            // like the extraction had worked.
+            log.debug("Extracted intent={} noun={} city={} date={} priceMax={} facets={} exclude={} clear={}",
                     intent, noun.asText(null), city.asText(null), date.asText(null),
                     price.isNumber() ? price.asDouble() : null,
-                    facets.stream().map(f -> f.dim() + ":" + f.value()).toList(), excludes);
+                    facets.stream().map(f -> f.dim() + ":" + f.value()).toList(), excludes, clears);
         }
 
         return new QueryExtraction(

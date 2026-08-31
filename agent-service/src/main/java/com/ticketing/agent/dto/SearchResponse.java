@@ -41,6 +41,16 @@ public class SearchResponse {
     /** False when ranking fell back to popularity and proximity with no vibe signal. */
     private boolean usedVibe;
 
+    /**
+     * How many of {@link #hits} actually answer the request.
+     *
+     * <p>Distinct from {@code totalMatched}, which counts everything that
+     * cleared the hard filter. This counts the rows worth calling answers:
+     * "one thing to take the children to, and four other things on in London"
+     * is a different sentence from "five things to take the children to".
+     */
+    private long matchedCount;
+
     @Data
     @Builder
     public static class Hit {
@@ -67,5 +77,20 @@ public class SearchResponse {
 
         /** Ranking score, for telemetry. Not meaningful to a person. */
         private double score;
+
+        /**
+         * Whether this row answers the request, or is filling a slot.
+         *
+         * <p>The shortlist always tries to reach five, so a request that only
+         * one event in the catalogue satisfies still comes back with four more
+         * behind it. Rendering all five alike states five answers where there
+         * is one. Rows are ordered matched-first, so a client can cut where
+         * this turns over — or show the rest under a heading.
+         *
+         * <p>True for every row when the request could not be resolved to a
+         * tag, because cosine has no zero to divide on.
+         */
+        @lombok.Builder.Default
+        private boolean matched = true;
     }
 }
