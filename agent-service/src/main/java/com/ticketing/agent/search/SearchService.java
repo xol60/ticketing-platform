@@ -70,6 +70,18 @@ public class SearchService {
      */
     private static final int[] TIME_WIDENING_DAYS = {30, 90, 365};
 
+    /**
+     * How much cosine may move a carrier within its own coverage group.
+     *
+     * <p>Strictly below 1.0: covering one more of the request's facets must
+     * always outrank being a better example of a facet already covered. The
+     * input is rescaled to 0..1 within the group, so the tiebreak spans at most
+     * this much — comfortably more than the 0.40 that recency and popularity
+     * can span between them, and comfortably less than the 1.0 that separates
+     * coverage tiers.
+     */
+    private static final double WITHIN_GROUP_WEIGHT = 0.9;
+
     private final QueryExtractor       extractor;
     private final DateResolver         dateResolver;
     private final AgentEventRepository eventRepository;
@@ -246,7 +258,7 @@ public class SearchService {
         Map<String, Double> summed = new HashMap<>();
         Map<String, Integer> coverage = new HashMap<>();
         int resolvedFacets = 0;
-        double threshold = properties.getValidation().getTagMatchThreshold();
+        double threshold = properties.getValidation().getQueryTagMatchThreshold();
 
         for (FacetQuery f : vibe) {
             String vector;
@@ -281,9 +293,38 @@ public class SearchService {
                     log.debug("Query facet {}:'{}' resolved to tag {} ({}), carried by {} candidates",
                             f.dim(), f.value(), tag.get().slug(), tag.get().score(), carriers.size());
                     resolvedFacets++;
-                    for (Object[] row : carriers) {
-                        summed.merge((String) row[0], 1.0, Double::sum);
-                        coverage.merge((String) row[0], 1, Integer::sum);
+                    List<String> carrierIds = carriers.stream()
+                            .map(row -> (String) row[0]).toList();
+
+                    // Cosine orders the carriers among themselves. Membership
+                    // says "this is a ballet or a musical or an opera" and then
+                    // has nothing left to say — every carrier scores 1.0, and
+                    // for a nine-show group the choice of five falls entirely
+                    // to recency and popularity.
+                    //
+                    // Within the group cosine separates cleanly, because the
+                    // facets there are already about the right kind of thing.
+                    // Asked for "ballet", the performing-arts carriers score
+                    // Nutcracker 0.615 and Swan Lake 0.556 against 0.399 for
+                    // the musicals; asked for "tennis", Wimbledon scores 0.571
+                    // against 0.461 for the next sport.
+                    //
+                    // This was dismissed once on a single test — "rock concert",
+                    // which is the one genre of eleven whose facets do not
+                    // contain the genre word, so no ranking of them could have
+                    // worked. The other ten keep it.
+                    Map<String, Double> within = new HashMap<>();
+                    for (Object[] row : facetRepository.bestMatchPerEvent(
+                            f.dim(), vector, carrierIds)) {
+                        within.put((String) row[0], ((Number) row[1]).doubleValue());
+                    }
+                    normaliseWithinGroup(within);
+
+                    for (String id : carrierIds) {
+                        summed.merge(id,
+                                1.0 + WITHIN_GROUP_WEIGHT * within.getOrDefault(id, 0.0),
+                                Double::sum);
+                        coverage.merge(id, 1, Integer::sum);
                     }
                     continue;
                 }
@@ -319,6 +360,39 @@ public class SearchService {
                 .map(Map.Entry::getKey)
                 .collect(java.util.stream.Collectors.toSet());
         return new Semantics(out, answers, required > 0);
+    }
+
+    /**
+     * Rescales a group's cosines to span 0..1, best to worst.
+     *
+     * <p>Absolute cosine cannot be used here. Within one coverage group the
+     * values are compressed — asked for "tennis", the sports carriers run from
+     * 0.571 down to 0.304, and the part that matters, the gap between the
+     * tennis event and the next sport, is 0.11. Multiplied by the tiebreak
+     * weight and the semantic weight that becomes 0.017 in the final score,
+     * against a span of 0.40 for recency and popularity together: the correct
+     * answer was ranked last of five while the tiebreak moved it by a fiftieth
+     * of what the clock moved it.
+     *
+     * <p>Raising the weight cannot fix that — it would have to exceed 6 to
+     * outrun the clock, and anything at or above 1.0 lets a better example of
+     * one facet outrank covering two, which is the ordering the whole design
+     * rests on.
+     *
+     * <p>So the group is rescaled instead. What survives is the ranking, which
+     * is the only part of a cosine that means anything: 0.452 for two unrelated
+     * phrases is a floor, not a measurement, and the distance above it is not
+     * a quantity worth preserving. A group where every carrier scores alike
+     * collapses to zero and leaves the ordering to the clock, which is correct
+     * — nothing distinguished them.
+     */
+    private static void normaliseWithinGroup(Map<String, Double> within) {
+        if (within.size() < 2) { within.replaceAll((k, v) -> 0.0); return; }
+        double lo = within.values().stream().mapToDouble(Double::doubleValue).min().orElse(0);
+        double hi = within.values().stream().mapToDouble(Double::doubleValue).max().orElse(0);
+        double span = hi - lo;
+        if (span < 1e-9) { within.replaceAll((k, v) -> 0.0); return; }
+        within.replaceAll((k, v) -> (v - lo) / span);
     }
 
     /**

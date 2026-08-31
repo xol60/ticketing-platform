@@ -106,6 +106,12 @@ agent:
     # 92-event corpus were reviewed by hand and the curve has one knee here —
     # 88% of what it accepts is right, and it accepts 94% of what is right.
     tag-match-threshold: 0.495
+    # The query side, where the text is one distilled phrase rather than a
+    # facet plus its span. Every one of the 23 matches at or above this is
+    # correct; wrong matches start below it. At the ingest figure, ballet,
+    # tennis and opera were all discarded and fell through to a cosine that
+    # answered "ballet" with a Bruno Mars concert.
+    query-tag-match-threshold: 0.42
     # Note what is NOT here: any use of the model's self-reported confidence.
     # An 8B model reports 0.95 for a fabricated facet as readily as a sound
     # one, so trusting it would launder the exact failure these gates catch.

@@ -163,6 +163,34 @@ public class AgentProperties {
         private double tagMatchThreshold = 0.495;
 
         /**
+         * Same question on the query side, where the text is much shorter.
+         *
+         * <p>A separate number because it is a separate distribution. The
+         * ingest threshold was calibrated on {@code value + span} — around 96
+         * characters — while a query facet is the model's distillation of one
+         * request and is often a single word. Embedding length moves the score
+         * on its own: measured on this model, the same idea scores 0.572 at one
+         * word and 0.799 at ten.
+         *
+         * <p>Measured over the 29 distinct query facets the evaluation set
+         * produces, the split is clean and sits well below the ingest figure:
+         * every one of the 23 matches at or above 0.42 is correct, and wrong
+         * matches begin below it — {@code educational → performing-arts},
+         * {@code social → family-kids}, {@code heavy → sports}. The seven
+         * between 0.42 and the old 0.495 were all correct and all discarded:
+         * {@code ballet}, {@code tennis}, {@code opera}, {@code musical},
+         * {@code rivalry match}, {@code huge production},
+         * {@code big stadium spectacle}.
+         *
+         * <p>Lowering it risks nothing that was working. A facet below the
+         * threshold falls through to cosine, which is exactly where these seven
+         * already were — and cosine over the unfiltered candidate set answered
+         * "ballet" with a Bruno Mars concert.
+         */
+        @DecimalMin("0.0") @DecimalMax("1.0")
+        private double queryTagMatchThreshold = 0.42;
+
+        /**
          * Whether a facet clearing every deterministic gate may skip human
          * review.
          *

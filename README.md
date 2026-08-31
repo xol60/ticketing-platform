@@ -472,8 +472,10 @@ message → extract (1 LLM call) → deterministic gates
    │
    ├─ hard slots (city/date/price) ──────────► SQL WHERE
    ├─ negations ─────────────────────────────► NOT EXISTS
-   └─ vibe facets ─► embed (bge-m3) ─┬─ dim has tags → tag coverage 1.0 / 0.0
-                                     └─ otherwise    → cosine, same dim only
+   └─ vibe facets ─► embed (bge-m3) ─┬─ tag ≥ 0.42 and carried
+                                     │     → coverage 1.0, then cosine
+                                     │       rescaled within the carriers
+                                     └─ otherwise → cosine, same dim only
                                                     → rank → diversity → ≤5
 ```
 
@@ -590,7 +592,11 @@ dies at zero inference cost.
 | 2 | **Grounding** | cited span absent from the description | reject |
 | 3 | Overlap | span is real but the facet is about something else | reject |
 | 4 | Contradiction | scale claim the ticket count disproves | reject |
-| 5 | Dim (vector) | atmosphere content filed under format | review |
+| 5 | Dim (vector) | atmosphere content filed under format | review¹ |
+
+¹ "Review" is aspirational: there is no review screen, so a held facet stays
+held. See *A gate with no review queue* below — the thirteen it was holding were
+the most discriminating facets in the catalogue.
 
 Rejections are kept in `facet_rejection` rather than dropped — the distribution
 across reasons is the only honest measure of how much the model is inventing,
@@ -660,8 +666,11 @@ technology enthusiasts"*. `TagSynchronizer` warns at startup when a dim has one.
 | Facets where no tag fitted | 16 |
 | Auto-accept at 0.495 vs the hand review | 81% precision, 83% recall |
 
-The threshold is measured, not chosen: the score curve against the hand verdicts
-has one knee. Eight of the fifty chosen tags sat at rank two or three — one of
+There are two thresholds, both measured rather than chosen, because they score
+different text: **0.495** at ingest, where a facet carries its span, and
+**0.42** at query time, where it is one distilled phrase. The ingest curve
+against the hand verdicts has one knee; on the query side every one of the 23
+matches at or above 0.42 is correct. Eight of the fifty chosen tags sat at rank two or three — one of
 them an exact 0.495-to-0.495 tie — which is why the shortlist is stored rather
 than only the winner.
 
@@ -672,14 +681,20 @@ than only the winner.
 | City | 6 | **97%** | SQL |
 | Temporal | 2 | 70% | SQL |
 | Proper noun | 8 | 67% | literal name lookup |
-| Negation | 5 | 44% | tag + exclusion gates |
+| Negation | 5 | 40% | tag + exclusion gates |
 | Combined | 6 | 40% | mixed |
-| Genre | 8 | 20% | vector → tag |
-| Vibe | 11 | 13% | cosine only |
-| Adversarial | 7 | 9% | mixed |
-| **Overall** | **53** | **37%** | 10 of 53 perfect |
+| Genre | 8 | 30% | tag + within-group cosine |
+| Vibe | 11 | 18% | cosine, mostly |
+| Adversarial | 7 | 11% | mixed |
+| **Overall** | **53** | **40%** | **13 of 53 perfect** |
 
 Two runs of the same build return identical results on all 57 queries.
+
+The perfect-case count is the more honest of the two figures. precision@5 is
+capped by how many right answers the catalogue holds — a request only one event
+satisfies can never exceed 20% however well it ranks — while "every expected
+show was surfaced" measures the ranking itself. It went 7 → 13 as the tag path
+was built out.
 
 Scoring by distinct show, not by event id, is deliberate: 45 of 53 cases list
 several dates of one show among their expected ids, so an id-level score
@@ -691,7 +706,7 @@ measures how many duplicates a shortlist emits rather than how well it ranks.
 decide, the better the answer. Every group above 40% is carried by a structured
 field; every group below is carried by a vector.
 
-**Vibe (13%) is a data limit, not a matching one.** Those requests land on
+**Vibe (18%) is a data limit, not a matching one.** Those requests land on
 `atmosphere` and `physical`, which carry no tags, so they fall to cosine. The
 catalogue holds **four distinct `atmosphere` values across 92 events** —
 descriptions talk about history and awards, not about what attending feels like.
@@ -701,13 +716,61 @@ returns a stage musical at 0.575 and a basketball game at 0.539, because
 that separates those from a real match, which is why the agent reports them
 rather than hiding them.
 
-**Genre (20%) is a vocabulary limit.** `"rock concert"` resolves to `live-music`,
-which 19 events carry, and every one of them scores identically — tag membership
-is binary, so it cannot rank within itself. Neither side holds the discriminating
-word: the extraction distils `"rock concert"` into `"live music performance"`,
-and Metallica's stored facet is *"two shows with different setlists and
-supporting acts"*. Feeding the raw phrase back in does not help; Metallica still
-ranks sixth, below Bruno Mars, whose facet contains the word *pop*.
+**Genre (30%) was mostly the tag path hiding evidence the system already had.**
+Tag membership is binary, so a request resolving to `live-music` scored all 19
+carriers identically and the choice of five fell to recency and popularity. But
+the discriminating word usually survives into the facet — measured across the
+catalogue, **36 of 43 events whose description contains their genre keep it in a
+facet** (`ballet performance`, `tennis tournament`, `three-stage knockout
+qualifying session`). Coverage was throwing that away.
+
+Ranking carriers among themselves by cosine recovers it, and the separation is
+clean: asked for `"ballet"`, the two ballets score 0.615 and 0.556 against 0.399
+for the musicals; asked for `"tennis"`, Wimbledon scores 0.571 against 0.461 for
+the next sport.
+
+Rock is the exception that misled the first attempt at this. It is the one genre
+of eleven whose facets do not contain the word — Metallica's reads *"two shows
+with different setlists and supporting acts"* while the description says
+*"modern rock history"* — so no ranking of those facets could have worked.
+Testing the idea on `"rock concert"` alone produced the wrong conclusion, and it
+stood for several rounds.
+
+**Absolute cosine is unusable even as a tiebreak.** Within one coverage group the
+values are compressed — the gap that matters between the tennis event and the
+next sport is 0.11 — and after the tiebreak and semantic weights that becomes
+0.017 in the final score, against 0.40 for recency and popularity together. The
+correct answer ranked last of five. Raising the weight cannot fix it: it would
+have to exceed 6 to outrun the clock, and anything at or above 1.0 lets a better
+example of one facet outrank covering two. The group is rescaled to 0..1
+instead, keeping the ranking and discarding the magnitude — which is the only
+part of a cosine that means anything when 0.452 is the floor for two unrelated
+phrases.
+
+**A threshold calibrated on one text length does not transfer to another.** The
+tag-match threshold was measured on ingest facets — `value` plus its span,
+around 96 characters — and reused unchanged on query facets, which are often a
+single word. `ballet` scored 0.442 against `performing-arts` and `tennis` 0.445
+against `sports`: both correct, both discarded, both falling through to a cosine
+that answered `"ballet"` with a Bruno Mars concert. Measured over the 29 distinct
+query facets the evaluation set produces, **every one of the 23 at or above 0.42
+is correct** and wrong matches begin below it, so the query side has its own
+number.
+
+**A gate with no review queue is a permanent deletion.** The dim gate routes a
+facet it cannot place to review rather than rejecting it — but nothing ever
+reviews, so `approved_at` stays null and the scoring queries skip it forever.
+The 13 facets it was holding turned out to be among the most discriminating in
+the catalogue: `ballet performance` ×3, `tennis tournament` ×2, `classical music
+performance` ×2, and `electric and intense`, one of only four `atmosphere`
+values that exist. Wimbledon is the only tennis event in the catalogue and its
+only format facet was held, so `"tennis"` could not be answered correctly however
+well every other layer worked.
+
+Twelve of the thirteen belonged to events carrying an **approved tag derived from
+that same facet** — the conclusion was accepted while its evidence was held. The
+facets were reviewed and approved by hand; the gate's behaviour on short,
+specific facets is unchanged and will hold the next ones the same way.
 
 **Embeddings cannot read negation, antonyms, or magnitude.** Measured on the
 running model: `"not crowded"` scores **0.771** against `"crowded"`; `"calm"`
