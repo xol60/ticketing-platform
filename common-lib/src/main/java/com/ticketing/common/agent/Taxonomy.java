@@ -56,18 +56,11 @@ public final class Taxonomy {
     public static final String TAG_PERFORMING_ARTS = "performing-arts";
     public static final String TAG_SPORTS          = "sports";
     public static final String TAG_CONFERENCE_TECH = "conference-tech";
-    public static final String TAG_EXHIBITION      = "exhibition";
-    public static final String TAG_FOOD_DRINK      = "food-drink";
-    public static final String TAG_FESTIVAL        = "festival-outdoor";
-    public static final String TAG_COMEDY          = "comedy";
-    public static final String TAG_WORKSHOP        = "workshop";
     public static final String TAG_FAMILY_KIDS     = "family-kids";
-    public static final String TAG_PROFESSIONAL    = "professional";
 
     // ── Tag slugs — attribute (4) ────────────────────────────────────────────
     public static final String TAG_HEADLINER   = "headliner";
     public static final String TAG_LARGE_SCALE = "large-scale";
-    public static final String TAG_INTIMATE    = "intimate";
     public static final String TAG_LATE_NIGHT  = "late-night";
 
     // ── Dim names (8) ────────────────────────────────────────────────────────
@@ -120,6 +113,26 @@ public final class Taxonomy {
      */
     public record Dim(String name, String description, boolean embedded) {}
 
+    // Six tags were removed from this list after the first review: comedy,
+    // workshop, exhibition, food-drink, festival-outdoor and intimate.
+    //
+    // All fifteen original tags were written in a single commit fifteen hours
+    // before the first event was ingested, so every one of them was a guess
+    // about what a ticketing catalogue might hold. Eight guesses matched the
+    // corpus. Six did not, and an unmatched tag is not inert: across 92 events
+    // those six appeared in 173 candidate shortlists, took first place ten
+    // times — every one of them wrong, including a Formula 1 race tagged
+    // 'workshop' on a 0.495-to-0.495 tie — and were carried by no event at all.
+    // At query time one of them captured "somewhere I can learn something" at
+    // 0.594 and then had nothing to return, deleting the only signal that
+    // request contained.
+    //
+    // The reason to guess was that adding a tag meant editing this file and
+    // redeploying. That is no longer true: 'broadcast' was created with an
+    // INSERT, embedded itself, rebuilt its candidate lists and reached the
+    // query path across one restart. So this list holds only vocabulary the
+    // corpus has been observed to need, and anything else is added when a
+    // reviewer meets a facet nothing covers.
     public static final List<Tag> TAGS = List.of(
             new Tag(TAG_LIVE_MUSIC, "Live Music",
                     "A live musical performance: a concert, gig, tour date, DJ set or "
@@ -145,56 +158,12 @@ public final class Taxonomy {
                     DIM_FORMAT,
                     "Examples: keynote presentations and technical sessions, a developer "
                     + "conference, an industry summit, a talk followed by networking."),
-            new Tag(TAG_EXHIBITION, "Exhibition & Visual Arts",
-                    "A visual arts showing: a gallery exhibition, museum show, art fair or "
-                    + "installation, viewed at the visitor's own pace.",
-                    DIM_FORMAT,
-                    "Examples: paintings hung in a gallery, a museum retrospective, "
-                    + "an installation you walk through, an art fair with many stands."),
-            new Tag(TAG_FOOD_DRINK, "Food & Drink",
-                    "An event built around eating and drinking: a food festival, tasting, "
-                    + "supper club, brewery tour or pop-up restaurant.",
-                    DIM_FORMAT,
-                    "Examples: a tasting menu with paired wines, a street food festival, "
-                    + "a brewery tour, a chef cooking in front of guests."),
-            new Tag(TAG_FESTIVAL, "Festival & Outdoor",
-                    "A multi-act or multi-day outdoor gathering: a music festival, street "
-                    + "fair, parade or countdown event, usually standing and weather-exposed.",
-                    DIM_FORMAT,
-                    "Examples: several stages across a field over a weekend, a street "
-                    + "parade, a new year countdown in a square, a camping music festival."),
-            new Tag(TAG_COMEDY, "Comedy & Light Entertainment",
-                    "A comedy or light entertainment show: stand-up, improv, a live podcast "
-                    + "recording, a panel show or a talk show taping.",
-                    DIM_FORMAT,
-                    "Examples: a stand-up comedian with a microphone, an improv troupe "
-                    + "taking suggestions, a live podcast recorded in front of an audience."),
-            new Tag(TAG_WORKSHOP, "Workshop & Learning",
-                    "A hands-on session where attendees make or practise something: a short "
-                    + "course, masterclass, tasting class or skills workshop.",
-                    DIM_FORMAT,
-                    "Examples: learning to throw pottery, a cooking class where you cook, "
-                    + "a masterclass with exercises, a hands-on lab with equipment."),
             new Tag(TAG_FAMILY_KIDS, "Family & Kids",
                     "An event programmed for children and family groups, suitable for all "
                     + "ages, with no age restriction on entry.",
                     DIM_AUDIENCE,
                     "Examples: something to bring young children to, a show aimed at "
                     + "families, all ages welcome, no age restriction on entry."),
-            // family-kids was the only tag on audience, so every audience facet
-            // was matched to it by default — an argmax over a set of one is not
-            // a decision. Seventeen facets were assigned it and twelve were
-            // wrong, including "developers, engineers and technology
-            // enthusiasts". This gives the dim a second answer.
-            new Tag(TAG_PROFESSIONAL, "Professional & Industry",
-                    "An event aimed at people attending for their work: developers, "
-                    + "engineers, executives, practitioners and industry peers rather than "
-                    + "the general public.",
-                    DIM_AUDIENCE,
-                    "Examples: developers and engineers, cloud architects and enterprise IT "
-                    + "leaders, industry practitioners, people attending for their job, a "
-                    + "trade audience."),
-
             // The physical dim has twenty-one embedded facets and deliberately
             // no tag. The obvious pair — seated and standing — was written,
             // embedded and measured, and standing beat seated on every facet
@@ -216,12 +185,6 @@ public final class Taxonomy {
                     DIM_SCALE,
                     "Examples: a stadium filled with tens of thousands, an arena crowd, "
                     + "a packed outdoor site, thousands of people in one place."),
-            new Tag(TAG_INTIMATE, "Intimate",
-                    "A small-room event with a few hundred people or fewer, where the "
-                    + "audience is close to the performer and the atmosphere is personal.",
-                    DIM_SCALE,
-                    "Examples: a small room holding two hundred, the audience close enough "
-                    + "to see the performer's face, a basement venue, a personal setting."),
 
             // ── Exclusion-only: no dim ──────────────────────────────────────
             // Neither of these answers a dimension of the experience. headliner
@@ -340,17 +303,26 @@ public final class Taxonomy {
      * function of compile-time constants, so it also caches well as the static
      * prefix of a cached prompt.
      */
+    /**
+     * The dimension list alone — what the ingestion prompt needs.
+     *
+     * <p>Ingestion used to receive the tag catalogue too, and ask the model for
+     * a {@code tags} array alongside its facets. Tags are no longer produced by
+     * the model at all: a facet earns its tag by being embedded and matched
+     * against tag definitions on its own dim, so the tag inherits the facet's
+     * grounded span as evidence. A label the model simply asserts has nothing
+     * behind it.
+     *
+     * <p>Removing the catalogue is also what makes the design scale. Listing
+     * every tag with its definition costs 2,223 characters on every single
+     * event, and that figure grows with the vocabulary — at a hundred tags the
+     * catalogue would dominate the prompt. Retrieval by vector has no such
+     * term.
+     */
     public static String promptBlock() {
-        StringBuilder sb = new StringBuilder(2048);
+        StringBuilder sb = new StringBuilder(1024);
 
-        sb.append("TAGS — use these slugs where one fits the kind of event.\n");
-        for (Tag t : TAGS) {
-            sb.append("  ").append(t.slug())
-              .append(t.dim() == null ? "" : " [" + t.dim() + "]")
-              .append(" — ").append(t.description()).append('\n');
-        }
-
-        sb.append("\nFACET DIMENSIONS — closed set of labels.\n")
+        sb.append("FACET DIMENSIONS — closed set of labels.\n")
           .append("Emit any number of facets per dimension, including none. ")
           .append("Only state what the source actually says or directly implies; ")
           .append("leaving a dimension empty is correct when the source is silent ")
@@ -361,4 +333,5 @@ public final class Taxonomy {
 
         return sb.toString();
     }
+
 }

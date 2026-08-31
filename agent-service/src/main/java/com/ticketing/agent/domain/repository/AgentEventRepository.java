@@ -32,6 +32,11 @@ public interface AgentEventRepository extends JpaRepository<AgentEvent, String> 
      * @param excludeCount guards the IN clause when nothing is excluded, which
      *                     is the common case
      */
+    // ORDER BY is required, not tidiness. Without one the database is free to
+    // return rows in whatever order the plan produces, and the ranker's sort is
+    // stable — so events on equal scores inherit that arbitrary order, and the
+    // diversity cap then drops whichever of them happened to come second. Same
+    // query, same data, different answer.
     @Query("""
             SELECT e FROM AgentEvent e
              WHERE e.searchable = true
@@ -44,6 +49,7 @@ public interface AgentEventRepository extends JpaRepository<AgentEvent, String> 
                       WHERE t.eventId = e.id
                         AND t.tagId IN :excludeTagIds
                         AND t.approvedAt IS NOT NULL))
+             ORDER BY e.startAt, e.id
             """)
     List<AgentEvent> findCandidates(@Param("cityId") Integer cityId,
                                     @Param("from") Instant from,
@@ -79,6 +85,7 @@ public interface AgentEventRepository extends JpaRepository<AgentEvent, String> 
                AND (LOWER(e.name)          LIKE LOWER(CONCAT('%', :term, '%'))
                  OR LOWER(e.primaryArtist) LIKE LOWER(CONCAT('%', :term, '%'))
                  OR LOWER(e.venueName)     LIKE LOWER(CONCAT('%', :term, '%')))
+             ORDER BY e.startAt, e.id
             """)
     List<AgentEvent> findByName(@Param("term") String term,
                                 @Param("cityId") Integer cityId,

@@ -58,21 +58,4 @@ public interface TagRepository extends JpaRepository<TagEntity, Integer> {
     /** Tags a reviewer added, which TagSynchronizer must leave alone. */
     List<TagEntity> findBySource(String source);
 
-    /**
-     * Nearest tag to a free-form label, by cosine — the tag-snapping lookup.
-     *
-     * <p>Returns {@code (slug, similarity)} for the single closest tag. The
-     * caller compares the similarity against the snap threshold: above it, the
-     * label becomes that tag; below it, the label becomes a proposal and no
-     * tag is created. Fifteen rows, so a sequential scan is the right plan and
-     * no index is wanted here.
-     */
-    @Query(value = """
-            SELECT t.slug, (1 - (t.embedding <=> CAST(:vectorLiteral AS vector))) AS similarity
-              FROM tag t
-             WHERE t.embedding IS NOT NULL
-             ORDER BY t.embedding <=> CAST(:vectorLiteral AS vector)
-             LIMIT 1
-            """, nativeQuery = true)
-    Object[] findNearest(@Param("vectorLiteral") String vectorLiteral);
 }

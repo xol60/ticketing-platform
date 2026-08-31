@@ -62,7 +62,23 @@ public class Ranker {
             scored.add(new SearchResult.Scored(e, score, semantic));
         }
 
-        scored.sort(Comparator.comparingDouble(SearchResult.Scored::score).reversed());
+        // The id tiebreak is not cosmetic. Ties are structural in this
+        // catalogue — the same show runs in several cities with identical
+        // facets, so identical scores are common rather than rare — and
+        // applyDiversity turns an arbitrary order between two tied events into
+        // a different result SET, not merely a different order: whichever of
+        // them sorts second hits the per-bucket cap and is pushed out of the
+        // shortlist entirely.
+        //
+        // Without it, 22 of 57 evaluation queries returned different results on
+        // two runs of the same build against the same data. The extraction was
+        // identical in all 57 — the model is deterministic at temperature 0 —
+        // so the variation was entirely here. That is a correctness bug before
+        // it is a measurement one: the same person asking the same question
+        // twice got different answers, and no A/B comparison of ranking changes
+        // meant anything while it stood.
+        scored.sort(Comparator.comparingDouble(SearchResult.Scored::score).reversed()
+                .thenComparing(s -> s.event().getId()));
         return applyDiversity(scored, limit);
     }
 

@@ -5,7 +5,10 @@ import com.ticketing.agent.domain.repository.AgentEventRepository;
 import com.ticketing.agent.domain.repository.CityAliasRepository;
 import com.ticketing.agent.domain.repository.EventFacetRepository;
 import com.ticketing.agent.domain.repository.TagRepository;
+import com.ticketing.agent.config.AgentProperties;
+import com.ticketing.agent.domain.repository.EventTagRepository;
 import com.ticketing.agent.vector.EmbeddingService;
+import com.ticketing.agent.vector.TagMatcher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -74,6 +77,9 @@ public class SearchService {
     private final CityAliasRepository  aliasRepository;
     private final TagRepository        tagRepository;
     private final EmbeddingService     embeddings;
+    private final TagMatcher           tagMatcher;
+    private final EventTagRepository   eventTagRepository;
+    private final AgentProperties      properties;
     private final Ranker               ranker;
 
     @Transactional(readOnly = true)
@@ -201,18 +207,43 @@ public class SearchService {
     }
 
     /**
-     * Mean of the best match on each queried dim.
+     * How well each candidate answers the request, on 0..1.
      *
-     * <p>Divided by the number of <em>query</em> facets, not event facets. The
-     * denominator is then constant across the whole result set, so no event is
-     * rewarded or punished for how richly it happens to be described — only for
-     * how well it answers what was asked.
+     * <h3>Two signals, chosen per dim by whether a vocabulary exists</h3>
+     * A query facet on a dim that has tags is resolved to a tag, and an event
+     * either carries that tag or does not. That is a reviewed fact: a person
+     * looked at the facet, its shortlist and their scores and said yes. A query
+     * facet on a dim with no tags falls back to cosine against the stored
+     * facets, because there is nothing else there to compare against.
+     *
+     * <p>The split is not a hedge, it is where the vocabulary reaches. Measured
+     * over the 57-case evaluation set, 43 of 54 extracted query facets landed
+     * on {@code format}, {@code scale} or {@code audience} — dims that carry
+     * tags — and 11 on {@code atmosphere}, {@code physical},
+     * {@code participation} and {@code duration}, which carry none. Scoring
+     * those 11 as zero coverage would silently delete the vibe queries, which
+     * are the ones the tags were meant to help.
+     *
+     * <h3>Why a tag beats a cosine where both are available</h3>
+     * Cosine is recomputed on every request and its scale does not mean what it
+     * looks like: two unrelated phrases on the same dim score 0.452, which
+     * reads as "somewhat relevant" and is not. Nothing separates a real match
+     * from that floor, so ranking by it spreads a little credit across the
+     * whole corpus. Tag membership has no floor — an event carries the tag or
+     * it does not.
+     *
+     * <p>Each query facet contributes one unit either way and the sum is
+     * divided by the number of <em>query</em> facets, so the denominator is
+     * constant across the result set: no event is rewarded or punished for how
+     * richly it happens to be described, only for how well it answers what was
+     * asked.
      */
     private Map<String, Double> scoreSemantically(List<FacetQuery> vibe, List<AgentEvent> candidates) {
         if (vibe.isEmpty() || candidates.isEmpty()) return Map.of();
 
         List<String> ids = candidates.stream().map(AgentEvent::getId).toList();
         Map<String, Double> summed = new HashMap<>();
+        double threshold = properties.getValidation().getTagMatchThreshold();
 
         for (FacetQuery f : vibe) {
             String vector;
@@ -223,10 +254,43 @@ public class SearchService {
                 log.warn("Could not embed query facet on dim {}: {}", f.dim(), e.getMessage());
                 continue;
             }
+
+            var tag = tagMatcher.bestFor(f.dim(), vector);
+            if (tag.isPresent() && tag.get().score() >= threshold) {
+                List<Object[]> carriers =
+                        eventTagRepository.findApprovedPairs(List.of(tag.get().tagId()), ids);
+
+                // A tag no candidate carries cannot rank them. Scoring it as
+                // coverage would give every event zero and silently delete the
+                // facet — worse than not resolving it at all, because the
+                // person did express something and it stops counting.
+                //
+                // This is not hypothetical: "somewhere I can learn something"
+                // resolves to workshop at 0.594, which is correct, and workshop
+                // is carried by no event in the corpus. The query lost its only
+                // real signal and dropped from one right answer to none. Six of
+                // the thirteen matchable tags are currently carried by nothing.
+                if (carriers.isEmpty()) {
+                    log.debug("Query facet {}:'{}' resolved to tag {} ({}), which no candidate "
+                                    + "carries — scoring by facet cosine instead",
+                            f.dim(), f.value(), tag.get().slug(), tag.get().score());
+                } else {
+                    log.debug("Query facet {}:'{}' resolved to tag {} ({}), carried by {} candidates",
+                            f.dim(), f.value(), tag.get().slug(), tag.get().score(), carriers.size());
+                    carriers.forEach(row -> summed.merge((String) row[0], 1.0, Double::sum));
+                    continue;
+                }
+            }
+
+            // No vocabulary on this dim, or nothing near enough on it. Falling
+            // through to cosine rather than scoring zero: a facet the tags
+            // cannot represent is still evidence, and dropping it would make
+            // the search worse on exactly the dims the tags do not cover.
+            log.debug("Query facet {}:'{}' matched no tag ({}) — scoring by facet cosine",
+                    f.dim(), f.value(),
+                    tag.map(c -> c.slug() + " " + c.score()).orElse("no tag on dim"));
             for (Object[] row : facetRepository.bestMatchPerEvent(f.dim(), vector, ids)) {
-                String eventId = (String) row[0];
-                double sim = ((Number) row[1]).doubleValue();
-                summed.merge(eventId, sim, Double::sum);
+                summed.merge((String) row[0], ((Number) row[1]).doubleValue(), Double::sum);
             }
         }
 

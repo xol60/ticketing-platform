@@ -140,13 +140,6 @@ public class AgentProperties {
         @DecimalMin("0.0") @DecimalMax("1.0")
         private double dimThreshold = 0.60;
 
-        /**
-         * Cosine below which an emitted tag label does not snap to a known tag
-         * and becomes a proposal. High on purpose — a wrong snap is invisible,
-         * an unsnapped label sits in a queue where someone sees it.
-         */
-        @DecimalMin("0.0") @DecimalMax("1.0")
-        private double tagSnapThreshold = 0.82;
 
         /**
          * Cosine at which a facet's nearest tag on its own dim is accepted

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.ticketing.agent.llm.OllamaClient;
+import com.ticketing.agent.vector.TagCatalog;
 import com.ticketing.common.agent.Taxonomy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,6 +34,9 @@ import java.util.List;
 public class QueryExtractor {
 
     private final OllamaClient ollama;
+    // The vocabulary comes from the database, not from Taxonomy. A tag a
+    // reviewer created must be excludable the moment it exists; see TagCatalog.
+    private final TagCatalog   tagCatalog;
     private final ObjectMapper mapper = new ObjectMapper();
 
     private static final String SYSTEM_PROMPT = """
@@ -143,7 +147,8 @@ public class QueryExtractor {
 
         try {
             String raw = ollama.generateJson(SYSTEM_PROMPT,
-                    Taxonomy.promptBlock() + "\nREQUEST:\n" + message,
+                    Taxonomy.promptBlock() + "\n" + tagCatalog.promptBlock()
+                            + "\nREQUEST:\n" + message,
                     schema());
             return parse(raw);
         } catch (Exception e) {
@@ -178,7 +183,7 @@ public class QueryExtractor {
         ObjectNode tagEnum = mapper.createObjectNode();
         tagEnum.put("type", "string");
         ArrayNode slugs = tagEnum.putArray("enum");
-        Taxonomy.TAGS.forEach(t -> slugs.add(t.slug()));
+        tagCatalog.slugs().forEach(slugs::add);
         ObjectNode excludes = mapper.createObjectNode();
         excludes.put("type", "array");
         excludes.set("items", tagEnum);
@@ -265,7 +270,7 @@ public class QueryExtractor {
         List<String> excludes = new ArrayList<>();
         root.path("excludeTags").forEach(n -> {
             String slug = n.asText("").trim();
-            if (Taxonomy.isKnownTag(slug)) excludes.add(slug);
+            if (tagCatalog.isKnown(slug)) excludes.add(slug);
         });
 
         JsonNode price = root.path("priceMax");
@@ -286,6 +291,17 @@ public class QueryExtractor {
             String f = n.asText("").trim();
             if (!f.isEmpty()) clears.add(f);
         });
+
+        // The one place the model's reading of a request is visible. Without it a
+        // bad result is indistinguishable from a bad extraction: the search
+        // looks correct on every filter it was given, and nobody can see that
+        // it was given the wrong ones.
+        if (log.isDebugEnabled()) {
+            log.debug("Extracted intent={} noun={} city={} date={} priceMax={} facets={} exclude={}",
+                    intent, noun.asText(null), city.asText(null), date.asText(null),
+                    price.isNumber() ? price.asDouble() : null,
+                    facets.stream().map(f -> f.dim() + ":" + f.value()).toList(), excludes);
+        }
 
         return new QueryExtraction(
                 intent,

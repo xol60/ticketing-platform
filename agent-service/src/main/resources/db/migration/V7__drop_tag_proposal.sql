@@ -1,0 +1,15 @@
+-- Retires the LLM's own tag output, and the table that collected it.
+--
+-- The model was asked for a `tags` array alongside its facets, and any label
+-- outside the taxonomy was recorded here as a signal that the vocabulary needed
+-- widening. Across 92 events it collected zero rows — the same prompt that
+-- asked for labels also listed the catalogue and told the model to prefer it,
+-- so the model always chose a known slug and every one was skipped as already
+-- known. The mechanism suppressed the only signal it existed to collect.
+--
+-- It is removed rather than repaired because tags are no longer the model's to
+-- assign. A facet earns its tag by being embedded and matched against tag
+-- definitions on its own dim, which means the tag inherits the facet's verified
+-- span as evidence. An asserted label has none, and there is no gate that can
+-- give it any.
+DROP TABLE IF EXISTS tag_proposal;

@@ -82,15 +82,16 @@ public class FacetEmbeddingBackfill implements ApplicationRunner {
                 String vector = embeddings.embedDocument(
                         TagMatcher.representationOf(facet.getValue(), facet.getSourceSpan()));
 
-                var tag = tagMatcher.bestFor(facet.getDim(), vector);   // outside the transaction
+                var tags = tagMatcher.candidatesFor(facet.getDim(), vector,
+                        TagSuggester.CANDIDATES_PER_FACET);      // outside the transaction
 
                 tx.executeWithoutResult(s -> {
                     facetRepository.writeEmbedding(facet.getId(), vector, embeddings.modelVersion());
-                    tag.ifPresent(c -> tagSuggester.suggest(facet.getEventId(), c));
+                    tagSuggester.record(facet.getEventId(), facet.getId(), tags);
                 });
 
                 embedded++;
-                if (tag.isPresent()) suggested++;
+                if (!tags.isEmpty()) suggested++;
             } catch (Exception e) {
                 // Ollama being down is not a reason to fail startup. The rows
                 // keep their null embedding and the next boot retries them.

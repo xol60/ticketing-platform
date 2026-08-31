@@ -23,19 +23,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 class TaxonomyTest {
 
     @Test
-    @DisplayName("tag set is closed at 15 with unique kebab-case slugs")
+    @DisplayName("tag set is closed at 8 with unique kebab-case slugs")
     void tagSetIsClosed() {
-        assertThat(Taxonomy.TAGS).hasSize(15);
+        assertThat(Taxonomy.TAGS).hasSize(8);
 
         List<String> slugs = Taxonomy.TAGS.stream().map(Taxonomy.Tag::slug).toList();
         assertThat(slugs).doesNotHaveDuplicates();
         assertThat(slugs).allMatch(s -> s.matches("[a-z]+(-[a-z]+)*"),
                 "slugs are kebab-case — they are used verbatim as DB keys and prompt tokens");
 
-        // 13 carry a dim and can be matched against a facet; 2 are
+        // 6 carry a dim and can be matched against a facet; 2 are
         // exclusion-only. Forcing headliner or late-night into a dimension
         // would put them in competition with facets they do not describe.
-        assertThat(Taxonomy.TAGS.stream().filter(Taxonomy.Tag::isMatchable)).hasSize(13);
+        assertThat(Taxonomy.TAGS.stream().filter(Taxonomy.Tag::isMatchable)).hasSize(6);
         assertThat(Taxonomy.TAGS.stream().filter(t -> !t.isMatchable())).hasSize(2);
     }
 
@@ -62,31 +62,25 @@ class TaxonomyTest {
                 assertThat(t.embeddingText()).hasSizeGreaterThan(120));
     }
 
-    @Test
-    @DisplayName("a matchable dim carries at least two tags")
-    void matchableDimsOfferAChoice() {
-        // Tag matching is an argmax over the tags on a facet's dim. With one
-        // tag the argmax has no alternative to reject, so every facet on that
-        // dim is assigned it — not because it fits but because nothing else
-        // was offered. Measured: family-kids was alone on audience, took all
-        // seventeen audience facets, and twelve were wrong, among them
-        // "developers, engineers, and technology enthusiasts".
-        //
-        // Two is the floor for the comparison to mean anything, not a target.
-        Taxonomy.EMBEDDED_DIMS.stream()
-                .filter(d -> !Taxonomy.matchableOn(d).isEmpty())
-                .forEach(d -> assertThat(Taxonomy.matchableOn(d))
-                        .as("dim '%s' offers only one answer, so matching it is a "
-                          + "default rather than a decision", d)
-                        .hasSizeGreaterThanOrEqualTo(2));
-    }
+    // The "a dim needs at least two tags" invariant used to be checked here and
+    // is now checked at runtime by TagSynchronizer, against the database.
+    //
+    // It moved because its subject did. Taxonomy is a seed: it fills an empty
+    // database and is then outranked by it, since a reviewer who finds no tag
+    // fits a facet creates one and it takes effect at once. 'professional' is
+    // exactly such a tag — it lives in the tag table with source = 'human' and
+    // has no constant here, so this file cannot see the audience dim's second
+    // answer and would fail on a vocabulary that is in fact correct.
+    //
+    // Do not restore it here. A Java test cannot observe the vocabulary the
+    // system actually runs on.
 
     @Test
     @DisplayName("matchableOn returns only tags on that dim")
     void matchableOnFiltersByDim() {
         assertThat(Taxonomy.matchableOn(Taxonomy.DIM_SCALE))
                 .extracting(Taxonomy.Tag::slug)
-                .containsExactlyInAnyOrder(Taxonomy.TAG_LARGE_SCALE, Taxonomy.TAG_INTIMATE);
+                .containsExactly(Taxonomy.TAG_LARGE_SCALE);   // 'broadcast' lives in the table
         assertThat(Taxonomy.matchableOn(Taxonomy.DIM_PARTICIPATION)).isEmpty();
         assertThat(Taxonomy.matchableOn(null)).isEmpty();
     }
@@ -150,15 +144,23 @@ class TaxonomyTest {
     }
 
     @Test
-    @DisplayName("prompt block carries every tag slug — drift guard")
-    void promptBlockCarriesEveryTag() {
-        String block = Taxonomy.promptBlock();
-        Set<String> missing = Taxonomy.TAG_SLUGS.stream()
-                .filter(slug -> !block.contains(slug))
-                .collect(Collectors.toSet());
-
-        assertThat(missing)
-                .as("a tag absent from the prompt block can never be emitted by the LLM")
+    @DisplayName("the ingestion prompt names no tag")
+    void tagsDoNotReachTheIngestionPrompt() {
+        // The query side's half of this guard lives in TagCatalogTest, because
+        // the query catalogue is built from the database and this module cannot
+        // see it. The model is asked for facets only —
+        // a tag is derived by matching a facet's vector against tag
+        // definitions, so it inherits that facet's verified span as evidence,
+        // where an asserted label would have none. Listing the catalogue here
+        // also cost 2,223 characters on every event and grew with the
+        // vocabulary, which is the scaling term the design removed.
+        //
+        // Ingestion is asked for facets only: a tag is earned by matching a
+        // facet's vector against tag definitions on its own dim, so it inherits
+        // that facet's verified span as evidence. An asserted label has none.
+        String ingest = Taxonomy.promptBlock();
+        assertThat(Taxonomy.TAG_SLUGS.stream().filter(ingest::contains))
+                .as("the ingestion prompt must not name tags — it asks for facets only")
                 .isEmpty();
     }
 

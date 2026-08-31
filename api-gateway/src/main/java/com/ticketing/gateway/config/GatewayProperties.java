@@ -130,6 +130,21 @@ public class GatewayProperties {
         private int    permittedCallsInHalfOpen   = 3;
         private long   waitDurationInOpenSeconds  = 30;
         private int    slidingWindowSize          = 20;
+
+        /**
+         * Per-service override for {@link #slowCallDurationSeconds}.
+         *
+         * <p>"Slow" is not a property of the gateway, it is a property of what
+         * the call does. Three seconds is right for a database read and
+         * meaningless for a language-model turn, which takes tens of seconds
+         * when everything is working perfectly. With one global value the agent
+         * marked every single call slow, crossed the 80% slow-call rate within
+         * one sliding window, and opened a circuit — reporting an outage that
+         * consisted entirely of the service doing its job.
+         */
+        private Map<String, Long> slowCallDurationSecondsByService = Map.of(
+                "agent-service", 180L
+        );
     }
 
     @Data

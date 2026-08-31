@@ -12,15 +12,12 @@ import java.util.List;
  * will turn out to be invented — naming these "facets" would invite treating
  * them as findings.
  *
- * @param tags   free-form labels. Not validated against the catalogue here:
- *               snapping is a vector operation, so an unrecognised label
- *               becomes a proposal rather than an error.
  * @param facets candidate facets, each carrying the span it claims to derive
  *               from
  */
-public record ExtractionResult(List<String> tags, List<FacetCandidate> facets) {
+public record ExtractionResult(List<FacetCandidate> facets) {
 
     public static ExtractionResult empty() {
-        return new ExtractionResult(List.of(), List.of());
+        return new ExtractionResult(List.of());
     }
 }

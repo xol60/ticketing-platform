@@ -101,10 +101,11 @@ agent:
     # atmosphere content written into the format slot. Goes to review, not
     # dropped: the dim may simply be new.
     dim-threshold: 0.60
-    # Tag label this far from every known tag becomes a proposal instead of
-    # snapping. High on purpose — a wrong snap is invisible, an unsnapped
-    # label sits in a queue where someone sees it.
-    tag-snap-threshold: 0.82
+    # Cosine at which a facet's nearest tag on its own dim is accepted rather
+    # than left for review. Measured, not chosen: all 124 suggestions over the
+    # 92-event corpus were reviewed by hand and the curve has one knee here —
+    # 88% of what it accepts is right, and it accepts 94% of what is right.
+    tag-match-threshold: 0.495
     # Note what is NOT here: any use of the model's self-reported confidence.
     # An 8B model reports 0.95 for a fabricated facet as readily as a sound
     # one, so trusting it would launder the exact failure these gates catch.
@@ -114,7 +115,11 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,prometheus
+        # loggers is here so a level can be raised on a running instance.
+        # Without it, seeing what the model extracted from a request — the one
+        # thing that explains a wrong result — costs a rebuild and a restart,
+        # which is exactly when nobody does it and the bug stays unexplained.
+        include: health,info,metrics,prometheus,loggers
   endpoint:
     health:
       show-details: always

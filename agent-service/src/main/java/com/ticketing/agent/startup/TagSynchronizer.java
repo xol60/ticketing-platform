@@ -90,18 +90,38 @@ public class TagSynchronizer implements ApplicationRunner {
             }
         }
 
-        List<String> orphans = tagRepository.findAll().stream()
+        // Only taxonomy rows can be orphans. A human row has no Java
+        // counterpart by definition — that is what makes the vocabulary
+        // growable — so warning about it would fire on every reviewer-created
+        // tag on every boot and train everyone to ignore this line.
+        List<String> orphans = tagRepository.findBySource("taxonomy").stream()
                 .map(TagEntity::getSlug)
                 .filter(slug -> !Taxonomy.isKnownTag(slug))
                 .toList();
 
         if (!orphans.isEmpty()) {
-            log.warn("Tags present in the database but absent from Taxonomy: {}. "
+            log.warn("Tags marked 'taxonomy' but absent from Taxonomy.java: {}. "
                     + "Left in place — event_tag rows still reference them. "
                     + "Retire one with a migration, not by deleting the constant.", orphans);
         }
 
-        log.info("Tag sync complete: {} created, {} updated, {} total in Taxonomy",
+        // A dim with exactly one tag cannot be matched, only defaulted to:
+        // matching is an argmax over the tags on a facet's dim, and an argmax
+        // over a set of one has nothing to reject. Measured, family-kids alone
+        // on audience took all seventeen audience facets and twelve were wrong.
+        // Checked against the database rather than Taxonomy because a reviewer
+        // can fix it without touching Java.
+        tagRepository.findAll().stream()
+                .filter(t -> t.getDim() != null)
+                .collect(java.util.stream.Collectors.groupingBy(TagEntity::getDim,
+                        java.util.stream.Collectors.counting()))
+                .forEach((dim, n) -> {
+                    if (n < 2) log.warn("Dim '{}' has only {} tag — every facet on it will be "
+                            + "assigned that tag regardless of fit. Add a second, or give the "
+                            + "tag no dim.", dim, n);
+                });
+
+        log.info("Tag sync complete: {} created, {} updated, {} seeded from Taxonomy",
                 created, updated, Taxonomy.TAGS.size());
     }
 }

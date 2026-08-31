@@ -34,6 +34,9 @@ public class CircuitBreakerManager {
     private final GatewayProperties properties;
     private final Map<String, CircuitBreaker> breakers = new ConcurrentHashMap<>();
 
+    /** Breaker for paths no rule claims. Deliberately not a real service. */
+    static final String UNMAPPED = "unmapped-route";
+
     // Known downstream services — one breaker each
     private static final String[] SERVICES = {
             "auth-service",
@@ -45,18 +48,38 @@ public class CircuitBreakerManager {
             "payment-service",
             "notification-service",
             "secondary-market-service",
-            "search-service"
+            "search-service",
+            // Was missing, and unmapped paths fall through to ticket-service —
+            // so every agent turn counted against ticket browsing. An agent
+            // turn is slow by design, so the shared breaker opened on healthy
+            // traffic and blocked a service that was never involved.
+            "agent-service",
+            // Home for paths that match nothing. A gateway that cannot name the
+            // service behind a route must not guess a real one: the guess is
+            // invisible, and its cost is borne by whichever service was named.
+            UNMAPPED
     };
+
 
     @PostConstruct
     public void init() {
         var cbProps = properties.getCircuitBreaker();
 
+        for (String service : SERVICES) {
+            breakers.computeIfAbsent(service, n -> buildBreaker(n, cbProps));
+        }
+        log.info("Circuit breakers initialized for {} services", breakers.size());
+    }
+
+    private CircuitBreaker buildBreaker(String service,
+                                        GatewayProperties.CircuitBreaker cbProps) {
+        long slowSeconds = cbProps.getSlowCallDurationSecondsByService()
+                .getOrDefault(service, cbProps.getSlowCallDurationSeconds());
+
         CircuitBreakerConfig config = CircuitBreakerConfig.custom()
                 .failureRateThreshold(cbProps.getFailureRateThreshold())
                 .slowCallRateThreshold(cbProps.getSlowCallRateThreshold())
-                .slowCallDurationThreshold(
-                        Duration.ofSeconds(cbProps.getSlowCallDurationSeconds()))
+                .slowCallDurationThreshold(Duration.ofSeconds(slowSeconds))
                 .permittedNumberOfCallsInHalfOpenState(
                         cbProps.getPermittedCallsInHalfOpen())
                 .waitDurationInOpenState(
@@ -108,21 +131,16 @@ public class CircuitBreakerManager {
                 )
                 .build();
 
-        CircuitBreakerRegistry registry = CircuitBreakerRegistry.of(config);
-
-        for (String service : SERVICES) {
-            CircuitBreaker cb = registry.circuitBreaker(service);
-            cb.getEventPublisher()
-              .onStateTransition(event ->
-                  log.warn("Circuit breaker [{}] state: {} → {}",
-                      service,
-                      event.getStateTransition().getFromState(),
-                      event.getStateTransition().getToState())
-              );
-            breakers.put(service, cb);
-        }
-
-        log.info("Circuit breakers initialized for {} services", breakers.size());
+        CircuitBreaker cb = CircuitBreakerRegistry.of(config).circuitBreaker(service);
+        cb.getEventPublisher()
+          .onStateTransition(event ->
+              log.warn("Circuit breaker [{}] state: {} → {}  (slow-call threshold {}s)",
+                  service,
+                  event.getStateTransition().getFromState(),
+                  event.getStateTransition().getToState(),
+                  slowSeconds)
+          );
+        return cb;
     }
 
     /**
@@ -131,7 +149,7 @@ public class CircuitBreakerManager {
      */
     public CircuitBreaker getForPath(String path) {
         String service = resolveService(path);
-        return breakers.getOrDefault(service, breakers.get("ticket-service"));
+        return breakers.getOrDefault(service, breakers.get(UNMAPPED));
     }
 
     public Map<String, CircuitBreaker.State> getAllStates() {
@@ -150,6 +168,7 @@ public class CircuitBreakerManager {
         if (path.startsWith("/api/payments"))      return "payment-service";
         if (path.startsWith("/api/secondary"))     return "secondary-market-service";
         if (path.startsWith("/api/search"))        return "search-service";
+        if (path.startsWith("/api/agent"))         return "agent-service";
 
         // ── Admin routes — map to the owning service ─────────────────────────
         if (path.startsWith("/api/admin/users"))         return "auth-service";
@@ -163,6 +182,9 @@ public class CircuitBreakerManager {
         if (path.startsWith("/api/admin/listings"))      return "secondary-market-service";
         if (path.startsWith("/api/admin/notifications")) return "notification-service";
 
-        return "ticket-service"; // conservative fallback
+        // Not "ticket-service". Naming a real service here is the opposite of
+        // conservative — it makes an unrouted path able to open a breaker in
+        // front of traffic that has nothing to do with it.
+        return UNMAPPED;
     }
 }

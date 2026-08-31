@@ -101,11 +101,6 @@ public class IngestionExtractor {
               the description does not say it, it does not exist.
             - Do not describe the size of the crowd unless the description states it.
 
-            TAGS
-            At most four, and prefer the catalogue slugs listed below — they are what the
-            catalogue can actually filter on. Write your own label only when no slug fits the
-            kind of event this is. Tags describe the KIND of event, not features of it:
-            "live-music" is a tag, "compostable wristbands" is not.
             """;
 
     /**
@@ -197,18 +192,18 @@ public class IngestionExtractor {
         facets.put("type", "array");
         facets.set("items", facetItem);
 
-        ObjectNode tags = mapper.createObjectNode();
-        tags.put("type", "array");
-        tags.set("items", stringField("A label describing what kind of event this is."));
-
+        // No tags field. The model is asked for facets and nothing else: a tag
+        // is derived from a facet's vector, so it carries that facet's verified
+        // span as evidence, while a label the model asserts on its own carries
+        // none. Leaving the field in the schema would have the grammar demand
+        // an answer the pipeline then discards.
         ObjectNode props = mapper.createObjectNode();
-        props.set("tags", tags);
         props.set("facets", facets);
 
         ObjectNode schema = mapper.createObjectNode();
         schema.put("type", "object");
         schema.set("properties", props);
-        schema.putArray("required").add("tags").add("facets");
+        schema.putArray("required").add("facets");
         return schema;
     }
 
@@ -222,18 +217,12 @@ public class IngestionExtractor {
     private ExtractionResult parse(String raw) throws com.fasterxml.jackson.core.JsonProcessingException {
         JsonNode root = mapper.readTree(raw);
 
-        List<String> tags = new ArrayList<>();
-        root.path("tags").forEach(n -> {
-            String t = n.asText("").trim();
-            if (!t.isEmpty()) tags.add(t);
-        });
-
         List<FacetCandidate> facets = new ArrayList<>();
         root.path("facets").forEach(n -> facets.add(new FacetCandidate(
                 n.path("dim").asText(null),
                 n.path("value").asText(null),
                 n.path("span").asText(null))));
 
-        return new ExtractionResult(tags, facets);
+        return new ExtractionResult(facets);
     }
 }

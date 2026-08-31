@@ -61,7 +61,6 @@ public class IngestionService {
     private final DimGate            dimGate;
     private final TagMatcher           tagMatcher;
     private final TagSuggester         tagSuggester;
-    private final TagProposalRepository tagProposalRepository;
     private final AgentProperties    properties;
 
     /**
@@ -138,18 +137,16 @@ public class IngestionService {
         }
 
         ExtractionResult extracted = extractor.extract(event);
-        if (extracted.facets().isEmpty() && extracted.tags().isEmpty()) {
+        if (extracted.facets().isEmpty()) {
             log.info("Event {} yielded nothing to review", event.getId());
             return;
         }
 
         List<ValidationOutcome> outcomes = validator.validate(event, extracted.facets());
         persistFacets(event, outcomes);
-        persistTags(event, extracted.tags());
 
-        log.info("Ingested event {} — {} facets kept, {} rejected, {} tags",
-                event.getId(), event.getFacetsKept(), event.getFacetsRejected(),
-                extracted.tags().size());
+        log.info("Ingested event {} — {} facets kept, {} rejected",
+                event.getId(), event.getFacetsKept(), event.getFacetsRejected());
     }
 
     private AgentEvent upsertProjection(EventSearchIndexedEvent m) {
@@ -255,7 +252,11 @@ public class IngestionService {
             boolean approve = properties.getValidation().isAutoApproveOnAllGatesPass()
                     && dimGate.looksLikeDim(candidate.dim(), vector);
 
-            var tagCandidate = tagMatcher.bestFor(candidate.dim(), vector);
+            // Top-N, not top-1. The review has to be able to answer "which of
+            // these?" and "none of these?", and neither question exists when
+            // only the winner is kept.
+            var tagCandidates = tagMatcher.candidatesFor(
+                    candidate.dim(), vector, TagSuggester.CANDIDATES_PER_FACET);
 
             tx.executeWithoutResult(s -> {
                 facetRepository.writeEmbedding(facet.getId(), vector, embeddings.modelVersion());
@@ -263,11 +264,7 @@ public class IngestionService {
                     facet.setApprovedAt(Instant.now());
                     facetRepository.save(facet);
                 }
-                // Recorded unapproved with its score. No threshold is applied:
-                // the score distribution on real data has not been measured
-                // yet, and picking a cut-off before seeing it would be a guess
-                // baked into every row.
-                tagCandidate.ifPresent(c -> tagSuggester.suggest(event.getId(), c));
+                tagSuggester.record(event.getId(), facet.getId(), tagCandidates);
             });
         }
 
@@ -300,13 +297,4 @@ public class IngestionService {
      * only as a signal for growing the vocabulary: a label that keeps appearing
      * and matches nothing in the catalogue is a gap worth a person's attention.
      */
-    private void persistTags(AgentEvent event, List<String> labels) {
-        for (String label : labels) {
-            if (label == null || label.isBlank()) continue;
-            if (Taxonomy.isKnownTag(label.trim().toLowerCase())) continue;
-            tx.executeWithoutResult(s ->
-                    tagProposalRepository.record(label.trim().toLowerCase(),
-                            event.getId(), null, null));
-        }
-    }
 }
