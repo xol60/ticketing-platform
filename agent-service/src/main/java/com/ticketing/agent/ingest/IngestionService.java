@@ -160,6 +160,19 @@ public class IngestionService {
      */
     public void extract(AgentEvent event) {
         ExtractionResult extracted = extractor.extract(event);
+
+        // Stamp the prompt even when nothing came back. What is being recorded
+        // is that this prompt has been run against this description, not that
+        // it produced something — and "produced nothing" is a legitimate
+        // outcome the prompt explicitly allows ("leaving a dimension empty is
+        // correct when the source is silent").
+        //
+        // Returning first left the event unstamped, so every later reindex
+        // picked it up again and spent another inference call reaching the same
+        // empty answer. One event did exactly that.
+        event.setPromptVersion(IngestionExtractor.PROMPT_VERSION);
+        tx.executeWithoutResult(s -> eventRepository.save(event));
+
         if (extracted.facets().isEmpty()) {
             log.info("Event {} yielded nothing to review", event.getId());
             return;
@@ -167,9 +180,6 @@ public class IngestionService {
 
         List<ValidationOutcome> outcomes = validator.validate(event, extracted.facets());
         persistFacets(event, outcomes);
-
-        event.setPromptVersion(IngestionExtractor.PROMPT_VERSION);
-        tx.executeWithoutResult(s -> eventRepository.save(event));
 
         log.info("Ingested event {} — {} facets kept, {} rejected",
                 event.getId(), event.getFacetsKept(), event.getFacetsRejected());
