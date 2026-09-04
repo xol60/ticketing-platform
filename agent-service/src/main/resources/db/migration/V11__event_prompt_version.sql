@@ -1,0 +1,20 @@
+-- Records which extraction prompt produced an event's facets.
+--
+-- Ingestion skips an event whose description has not changed, because
+-- extraction is deterministic and re-running it would spend a minute of
+-- inference to produce exactly what is already stored. That guard is right and
+-- it was also incomplete: the description is not the only input. Editing a dim
+-- definition changes what the model is asked to do, and until now nothing
+-- noticed — the corpus kept facets produced by a prompt that no longer existed.
+--
+-- The first edit that needed this: scale was being read as reach. Nine of the
+-- nineteen wrong tag proposals were facets about television audiences, acclaim
+-- and box-office totals filed under a dimension that asks how big the crowd in
+-- the room is. The dim gate could not catch it either, because it compares a
+-- facet against approved facets on the same dim and those already contained the
+-- same mistake — the gate had learned the error.
+--
+-- Same shape as tag.vector_source: the artefact records what produced it, so
+-- changing the producer invalidates the artefact instead of relying on someone
+-- to remember.
+ALTER TABLE agent_event ADD COLUMN prompt_version TEXT;

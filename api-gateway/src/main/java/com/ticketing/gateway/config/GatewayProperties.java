@@ -74,6 +74,7 @@ public class GatewayProperties {
             // express, so it is an admin action even though it lives under the
             // otherwise-public agent namespace.
             new RoleRule(List.of(), "/api/agent/tags", List.of("ADMIN")),
+            new RoleRule(List.of(), "/api/agent/reindex", List.of("ADMIN")),
             new RoleRule(List.of("POST", "PUT", "PATCH", "DELETE"),
                     "/api/pricing/rules", List.of("EVENT_OWNER", "ADMIN")),
             new RoleRule(List.of("POST", "PUT", "PATCH", "DELETE"),

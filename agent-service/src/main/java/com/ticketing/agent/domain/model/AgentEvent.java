@@ -111,6 +111,10 @@ public class AgentEvent {
     private Instant ingestedAt;
 
     /** Which embedding model produced this event's facet vectors. Drives re-embed cutover. */
+    /** Which extraction prompt produced this event's facets. See IngestionExtractor. */
+    @Column(name = "prompt_version")
+    private String promptVersion;
+
     @Column(name = "model_version")
     private String modelVersion;
 

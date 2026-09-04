@@ -112,12 +112,29 @@ public interface EventFacetRepository extends JpaRepository<EventFacet, Long> {
 
 
     /**
-     * Clears machine-generated facets before a re-ingest writes fresh ones.
-     * Human rows survive: a reviewer's correction must not be undone by the
-     * next metadata edit upstream.
+     * Clears unreviewed machine facets before a re-ingest writes fresh ones.
+     *
+     * <p>Approved rows survive, and that clause was missing. {@code event_tag}
+     * was given the same protection in V4 after rejections kept reappearing;
+     * facets never got it, so any upstream description edit silently discarded
+     * every approval on that event. At the time of writing that would have been
+     * 309 approved facets, 264 of which nothing could restore — including the
+     * thirteen the dim gate had held back and a reviewer had reinstated by
+     * hand, among them the only facet Wimbledon has.
+     *
+     * <p>Human rows survive for the older reason: a reviewer's own correction
+     * must not be undone by a metadata edit upstream.
+     *
+     * <p>Keeping approved rows means extraction can re-propose one that is
+     * already there, so {@code persistFacets} skips a candidate that duplicates
+     * an approved row rather than inserting it twice.
      */
     @Modifying
-    @Query("DELETE FROM EventFacet f WHERE f.eventId = :eventId AND f.source = 'llm'")
+    @Query("""
+            DELETE FROM EventFacet f
+             WHERE f.eventId = :eventId AND f.source = 'llm'
+               AND f.approvedAt IS NULL
+            """)
     int deleteLlmFacets(@Param("eventId") String eventId);
 
     /**
@@ -186,4 +203,8 @@ public interface EventFacetRepository extends JpaRepository<EventFacet, Long> {
             """, nativeQuery = true)
     List<Object[]> previewAgainstDim(@Param("dim") String dim,
                                      @Param("vectorLiteral") String vectorLiteral);
+
+    /** True when this exact facet is already on the event and already approved. */
+    boolean existsByEventIdAndDimAndValueAndApprovedAtIsNotNull(
+            String eventId, String dim, String value);
 }

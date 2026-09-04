@@ -38,6 +38,7 @@ public class AgentController {
 
     private final SearchService        searchService;
     private final TagCurationService curationService;
+    private final com.ticketing.agent.ingest.IngestionService ingestionService;
 
     private final ChatService          chatService;
     private final EventFacetRepository facetRepository;
@@ -88,6 +89,22 @@ public class AgentController {
      * Had this endpoint existed then, that would have been on screen before the
      * tag was saved.
      */
+    /**
+     * Re-extracts every event whose facets predate the current prompt.
+     *
+     * <p>ADMIN only. Exists because a prompt edit has no other way to reach
+     * events already stored: the consumer skips an event whose description has
+     * not changed, and replaying the topic is not always possible — its
+     * retention had expired the first time this was needed.
+     *
+     * <p>Approved facets survive, so this adds what the new prompt produces
+     * rather than discarding what a reviewer has already ruled on.
+     */
+    @PostMapping("/reindex")
+    public ApiResponse<Integer> reindex() {
+        return ApiResponse.ok(ingestionService.reextractStalePrompts());
+    }
+
     @PostMapping("/tags/preview")
     public ApiResponse<TagPreviewResponse> previewTag(@Valid @RequestBody NewTagRequest request) {
         return ApiResponse.ok(curationService.preview(request));

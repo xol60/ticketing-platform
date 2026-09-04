@@ -50,6 +50,19 @@ public class IngestionExtractor {
     private final AgentProperties properties;
     private final ObjectMapper mapper = new ObjectMapper();
 
+    /**
+     * Bumped whenever the extraction prompt or the dim definitions change.
+     *
+     * <p>Stored on the event so ingestion can tell "already extracted" from
+     * "extracted by an older prompt". Without it the unchanged-description
+     * guard makes a prompt edit invisible: the corpus keeps facets produced by
+     * instructions that no longer exist, and the only way to apply a fix is to
+     * remember to force a re-ingest by hand.
+     *
+     * <p>v2 tightened scale and audience, which were being read as reach.
+     */
+    public static final String PROMPT_VERSION = "v2-dim-reach";
+
     private static final String SYSTEM_PROMPT = """
             You extract structured metadata from event descriptions for a ticketing catalogue.
 

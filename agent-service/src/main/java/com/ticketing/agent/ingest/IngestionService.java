@@ -111,6 +111,7 @@ public class IngestionService {
         var existing = eventRepository.findById(message.getEventId());
         boolean seenBefore = existing.isPresent();
         String previousDescription = existing.map(AgentEvent::getDescriptionRaw).orElse(null);
+        String previousPrompt = existing.map(AgentEvent::getPromptVersion).orElse(null);
 
         AgentEvent event = upsertProjection(message);
 
@@ -130,12 +131,34 @@ public class IngestionService {
         // minute of inference to produce exactly what is already stored, and
         // would churn the review queue by deleting and recreating rows a human
         // may already have looked at.
+        // The description is not the only input. A prompt edit changes what the
+        // model was asked to do, and skipping on description alone left the
+        // corpus holding facets produced by instructions that no longer exist.
         if (seenBefore
-                && java.util.Objects.equals(previousDescription, event.getDescriptionRaw())) {
-            log.debug("Event {} description unchanged — reusing existing facets", event.getId());
+                && java.util.Objects.equals(previousDescription, event.getDescriptionRaw())
+                && IngestionExtractor.PROMPT_VERSION.equals(previousPrompt)) {
+            log.debug("Event {} unchanged and extracted by the current prompt — reusing facets",
+                    event.getId());
             return;
         }
 
+        extract(event);
+    }
+
+    /**
+     * Runs extraction over an event already in the projection.
+     *
+     * <p>Split out because extraction depends on exactly two things — the
+     * description and the prompt — and the projection holds the first while the
+     * code holds the second. Neither needs Kafka. That matters when the prompt
+     * changes: the topic's retention had expired by the time the first prompt
+     * fix landed, so replay was not available and the fix had no way to reach
+     * the 92 events already stored.
+     *
+     * <p>Called by the consumer for new or edited events, and by the reindex
+     * endpoint for a prompt change.
+     */
+    public void extract(AgentEvent event) {
         ExtractionResult extracted = extractor.extract(event);
         if (extracted.facets().isEmpty()) {
             log.info("Event {} yielded nothing to review", event.getId());
@@ -145,8 +168,37 @@ public class IngestionService {
         List<ValidationOutcome> outcomes = validator.validate(event, extracted.facets());
         persistFacets(event, outcomes);
 
+        event.setPromptVersion(IngestionExtractor.PROMPT_VERSION);
+        tx.executeWithoutResult(s -> eventRepository.save(event));
+
         log.info("Ingested event {} — {} facets kept, {} rejected",
                 event.getId(), event.getFacetsKept(), event.getFacetsRejected());
+    }
+
+    /**
+     * Re-extracts every OPEN event whose facets came from an older prompt.
+     *
+     * @return how many events were re-extracted
+     */
+    public int reextractStalePrompts() {
+        List<AgentEvent> stale = eventRepository.findAll().stream()
+                .filter(e -> "OPEN".equalsIgnoreCase(e.getStatus()))
+                .filter(e -> e.getDescriptionRaw() != null && !e.getDescriptionRaw().isBlank())
+                .filter(e -> !IngestionExtractor.PROMPT_VERSION.equals(e.getPromptVersion()))
+                .toList();
+
+        log.info("Re-extracting {} event(s) whose facets predate prompt {}",
+                stale.size(), IngestionExtractor.PROMPT_VERSION);
+        int done = 0;
+        for (AgentEvent e : stale) {
+            try {
+                extract(e);
+                done++;
+            } catch (Exception ex) {
+                log.error("Re-extraction failed for {}: {}", e.getId(), ex.getMessage());
+            }
+        }
+        return done;
     }
 
     private AgentEvent upsertProjection(EventSearchIndexedEvent m) {
@@ -205,6 +257,15 @@ public class IngestionService {
         for (ValidationOutcome outcome : outcomes) {
             if (outcome.rejected()) continue;
             var candidate = outcome.candidate();
+
+            // Re-extraction is deterministic, so an approved facet is usually
+            // proposed again word for word. Inserting it would duplicate a row
+            // a reviewer already ruled on.
+            if (facetRepository.existsByEventIdAndDimAndValueAndApprovedAtIsNotNull(
+                    event.getId(), candidate.dim(), candidate.value())) {
+                kept++;
+                continue;
+            }
 
             EventFacet facet = tx.execute(s -> facetRepository.save(EventFacet.builder()
                     .eventId(event.getId())

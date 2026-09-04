@@ -220,12 +220,19 @@ public final class Taxonomy {
                     + "an interval, or something spread over days.",
                     false),
             new Dim(DIM_AUDIENCE,
-                    "Who it is programmed for, including any age restriction or assumed "
-                    + "familiarity with the subject.",
+                    "What KIND of person it is programmed for, including any age "
+                    + "restriction or assumed familiarity with the subject. Not where "
+                    + "they come from and not how they watch — \"international fans\" "
+                    + "and \"television audiences\" describe reach, not the kind of "
+                    + "person the event is for.",
                     false),
             new Dim(DIM_SCALE,
-                    "How big the crowd is, in the terms a person would notice: a full "
-                    + "stadium, a packed club, a half-empty gallery.",
+                    "How big the crowd IN THE ROOM is, in the terms a person standing "
+                    + "there would notice: a full stadium, a packed club, a half-empty "
+                    + "gallery. Viewers watching from elsewhere are not scale — "
+                    + "television audiences, streaming numbers, worldwide acclaim, "
+                    + "touring history and box-office totals all belong to other "
+                    + "dimensions or to none.",
                     false),
             new Dim(DIM_PARTICIPATION,
                     "Whether the audience watches passively or takes part — singing along, "
