@@ -55,7 +55,5 @@ public interface TagRepository extends JpaRepository<TagEntity, Integer> {
                        @Param("source") String source,
                        @Param("modelVersion") String modelVersion);
 
-    /** Tags a reviewer added, which TagSynchronizer must leave alone. */
-    List<TagEntity> findBySource(String source);
 
 }

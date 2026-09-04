@@ -9,9 +9,10 @@ import java.time.Instant;
  * Database row for one of the 15 tags.
  *
  * <p>Named {@code TagEntity} rather than {@code Tag} because
- * {@code com.ticketing.common.agent.Taxonomy.Tag} is the definition and this is
+ * {@code com.ticketing.common.agent.Taxonomy.Tag} was once the definition and this
  * merely its persisted shadow. Java owns slug, name, description and kind;
- * {@code TagSynchronizer} pushes them here on every startup. This table exists
+ * was its shadow, pushed here on every startup. That is reversed: this table is
+ * the definition, written only by a reviewer through the curation API. It exists
  * so a tag can be joined in SQL and can carry a vector — never so someone can
  * add a sixteenth tag with an INSERT.
  *
@@ -54,17 +55,20 @@ public class TagEntity {
     private String examples;
 
     /**
-     * {@code taxonomy} for the tags defined in Java, {@code human} for tags a
-     * reviewer added.
+     * Always {@code human} — a CHECK constraint allows nothing else since V12.
      *
-     * <p>TagSynchronizer rewrites every taxonomy row on each startup. Without
-     * this column a reviewer-added tag would be silently reverted on the next
-     * restart, so the vocabulary could only ever shrink back to its starting
-     * set.
+     * <p>The column once separated {@code taxonomy} rows, which a startup bean
+     * rewrote from Java on every boot, from {@code human} rows it had to leave
+     * alone; without it a reviewer-added tag was silently reverted on the next
+     * restart and the vocabulary could only shrink back to its starting set.
+     * There is no seeder now, so the distinction has one side. It is kept as a
+     * stated invariant rather than dropped, because "every tag in this table
+     * was written by a person" is the property the whole curation flow rests
+     * on, and a CHECK says it where a comment would not.
      */
     @Column(nullable = false)
     @Builder.Default
-    private String source = "taxonomy";
+    private String source = "human";
 
     /**
      * {@code description} while the vector comes from the tag's own prose,

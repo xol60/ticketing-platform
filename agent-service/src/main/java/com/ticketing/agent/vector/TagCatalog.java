@@ -30,7 +30,8 @@ import java.util.stream.Collectors;
  * the vocabulary the model is allowed to speak.
  *
  * <p>So the boundary is: <b>Java seeds, the database decides.</b>
- * {@code Taxonomy.TAGS} bootstraps an empty database and nothing more. Anything
+ * {@code Taxonomy.TAGS} is gone entirely — it bootstrapped an empty database and
+ * nothing more, and a seed that outranks nothing is a second copy. Anything
  * reading tags while the service is running reads them from here.
  *
  * <h3>Cached, and why that is safe</h3>

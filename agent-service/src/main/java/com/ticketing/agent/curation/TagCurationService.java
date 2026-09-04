@@ -123,7 +123,8 @@ public class TagCurationService {
 
     // ── internals ────────────────────────────────────────────────────────────
 
-    /** Byte-identical to what {@code Taxonomy.Tag.embeddingText()} produces. */
+    /** Byte-identical to what {@code TagEmbeddingBackfill} produces, so a tag
+     *  embedded here and one re-embedded at boot land on the same vector. */
     private static String embeddingTextOf(NewTagRequest r) {
         return r.getName() + ". " + r.getDescription() + " " + r.getExamples();
     }
@@ -132,6 +133,19 @@ public class TagCurationService {
         if (req.getDim() != null && !Taxonomy.isKnownDim(req.getDim())) {
             throw new IllegalArgumentException(
                     "dim '" + req.getDim() + "' is not one of the eight");
+        }
+        // A tag is matched by comparing it against facets on its own dim. On a
+        // dim with no vectors that comparison never happens, so the tag is not
+        // weakly matched — it is unreachable, and it fails silently: it embeds,
+        // it rebuilds candidate lists, it returns a clean 201, and it is never
+        // suggested for anything. Three tags were lost that way before anyone
+        // noticed. This used to be guarded by deriving EMBEDDED_DIMS from the
+        // Java tag list; with that list gone, the check belongs here.
+        if (req.getDim() != null && !Taxonomy.isEmbedded(req.getDim())) {
+            throw new IllegalArgumentException(
+                    "dim '" + req.getDim() + "' carries no facet vectors, so a tag on it "
+                    + "could never be suggested. Embedded dims: " + Taxonomy.EMBEDDED_DIMS
+                    + ". Leave dim null for an exclusion-only tag.");
         }
         if (forWrite && tagRepository.findBySlug(req.getSlug()).isPresent()) {
             throw new IllegalArgumentException("slug '" + req.getSlug() + "' already exists");

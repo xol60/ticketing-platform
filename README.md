@@ -641,7 +641,7 @@ only a hundred people"*: the slug `intimate` scored 0.556 and lost to
 A dim needs at least two tags or matching it is a default rather than a
 decision. `family-kids` was alone on `audience`, took all seventeen audience
 facets, and twelve were wrong — including *"developers, engineers, and
-technology enthusiasts"*. `TagSynchronizer` warns at startup when a dim has one.
+technology enthusiasts"*. `TagEmbeddingBackfill` warns at startup when a dim has one.
 
 ### Measured behaviour
 

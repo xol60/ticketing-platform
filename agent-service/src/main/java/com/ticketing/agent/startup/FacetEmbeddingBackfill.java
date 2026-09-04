@@ -47,7 +47,7 @@ import java.util.List;
  */
 @Slf4j
 @Component
-@Order(300)   // after TagSynchronizer (100) and TagEmbeddingBackfill (200):
+@Order(300)   // after TagEmbeddingBackfill (200):
               // tags must have their own vectors before anything is matched
               // against them, or every match here would silently find nothing.
 @RequiredArgsConstructor
