@@ -57,4 +57,41 @@ public interface FacetTagCandidateRepository
             ON CONFLICT DO NOTHING
             """, nativeQuery = true)
     int backfillMissing(@Param("topN") int topN);
+
+    /** Clears every candidate list on one dim, so adding a tag can force a rebuild. */
+    @Modifying
+    @Query(value = """
+            DELETE FROM facet_tag_candidate c
+             USING event_facet f
+             WHERE f.id = c.facet_id AND f.dim = :dim
+            """, nativeQuery = true)
+    int deleteForDim(@Param("dim") String dim);
+
+    /**
+     * Rebuilds candidate lists for one dim, whether or not they already exist.
+     *
+     * <p>Distinct from {@link #backfillMissing}, which is guarded by
+     * {@code NOT EXISTS} and therefore cannot see that a dim's vocabulary
+     * changed. Adding or re-defining a tag invalidates every list on its dim:
+     * the stored scores were computed against a set of tags that no longer
+     * exists, and a reviewer looking at a stale list concludes their edit did
+     * nothing.
+     */
+    @Modifying
+    @Query(value = """
+            INSERT INTO facet_tag_candidate (facet_id, tag_id, score, rank)
+            SELECT f.id, c.tag_id, c.score, c.rank
+              FROM event_facet f
+              CROSS JOIN LATERAL (
+                   SELECT t.id AS tag_id,
+                          CAST(1 - (t.embedding <=> f.embedding) AS real) AS score,
+                          CAST(row_number() OVER (ORDER BY t.embedding <=> f.embedding) AS smallint) AS rank
+                     FROM tag t
+                    WHERE t.dim = f.dim AND t.embedding IS NOT NULL
+                    ORDER BY t.embedding <=> f.embedding
+                    LIMIT :topN) c
+             WHERE f.dim = :dim AND f.embedding IS NOT NULL
+            ON CONFLICT DO NOTHING
+            """, nativeQuery = true)
+    int rebuildForDim(@Param("dim") String dim, @Param("topN") int topN);
 }

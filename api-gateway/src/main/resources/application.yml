@@ -80,7 +80,11 @@ gateway:
     l1-max-size: 5000
     l2-ttl-seconds: 300
   public-paths:
-    - /api/agent/            # agent turn is a POST, so publicGetPaths cannot cover it
+    # The two conversational endpoints only, not the whole namespace. A prefix
+    # here short-circuits auth AND the role gate below, so "/api/agent/" made
+    # every future endpoint under it public by default — including writes.
+    - /api/agent/search      # agent turn is a POST, so publicGetPaths cannot cover it
+    - /api/agent/chat
     - /api/auth/login
     - /api/auth/register
     - /api/auth/refresh

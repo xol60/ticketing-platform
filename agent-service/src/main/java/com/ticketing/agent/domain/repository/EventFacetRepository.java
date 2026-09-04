@@ -159,4 +159,31 @@ public interface EventFacetRepository extends JpaRepository<EventFacet, Long> {
             """, nativeQuery = true)
     Double meanSimilarityWithinDim(@Param("dim") String dim,
                                    @Param("vectorLiteral") String vectorLiteral);
+
+    /**
+     * What a candidate tag vector would win on one dim, against what already wins.
+     *
+     * <p>The preview behind tag creation. A new tag does not only serve the
+     * facet that motivated it — it competes for every facet on its dim, and
+     * that blast radius is invisible at the moment of writing a definition.
+     * Measured: {@code broadcast} was created to cover three facets about
+     * television viewership and became rank one on eighteen, of which eleven
+     * were wrong.
+     *
+     * @return rows of {@code [facet_id, value, score against the new vector,
+     *         best score among existing tags]}
+     */
+    @Query(value = """
+            SELECT f.id, f.value,
+                   CAST(1 - (f.embedding <=> CAST(:vectorLiteral AS vector)) AS real) AS new_score,
+                   COALESCE((SELECT max(c.score) FROM facet_tag_candidate c
+                              WHERE c.facet_id = f.id), 0) AS current_best
+              FROM event_facet f
+             WHERE f.dim = :dim
+               AND f.embedding IS NOT NULL
+               AND f.approved_at IS NOT NULL
+             ORDER BY new_score DESC
+            """, nativeQuery = true)
+    List<Object[]> previewAgainstDim(@Param("dim") String dim,
+                                     @Param("vectorLiteral") String vectorLiteral);
 }

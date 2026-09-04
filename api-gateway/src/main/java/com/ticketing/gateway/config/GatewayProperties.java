@@ -28,9 +28,15 @@ public class GatewayProperties {
             // cover it. Public for the same reason /api/auth/register is: the
             // funnel exists to collect a signal from someone who has not
             // committed to anything, and a login wall on the first message
-            // loses exactly those people. The endpoint is read-only and
-            // returns event ids; identity is required later, at checkout.
-            "/api/agent/"
+            // loses exactly those people. Both endpoints are read-only and
+            // return event ids; identity is required later, at checkout.
+            //
+            // Listed one by one rather than as "/api/agent/". A prefix here
+            // returns before the role gate runs, so the namespace form made
+            // every endpoint added under it public by default — a write
+            // endpoint would have inherited that silently.
+            "/api/agent/search",
+            "/api/agent/chat"
     );
 
     /**
@@ -64,6 +70,10 @@ public class GatewayProperties {
      */
     private List<RoleRule> roleRules = List.of(
             new RoleRule(List.of(), "/api/admin/", List.of("ADMIN")),
+            // Curating the tag vocabulary changes what every future search can
+            // express, so it is an admin action even though it lives under the
+            // otherwise-public agent namespace.
+            new RoleRule(List.of(), "/api/agent/tags", List.of("ADMIN")),
             new RoleRule(List.of("POST", "PUT", "PATCH", "DELETE"),
                     "/api/pricing/rules", List.of("EVENT_OWNER", "ADMIN")),
             new RoleRule(List.of("POST", "PUT", "PATCH", "DELETE"),

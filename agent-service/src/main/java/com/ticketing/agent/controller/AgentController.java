@@ -4,6 +4,9 @@ import com.ticketing.agent.domain.model.EventFacet;
 import com.ticketing.agent.domain.repository.EventFacetRepository;
 import com.ticketing.agent.conversation.ChatService;
 import com.ticketing.agent.conversation.ConversationState;
+import com.ticketing.agent.curation.TagCurationService;
+import com.ticketing.agent.dto.TagPreviewResponse;
+import com.ticketing.agent.dto.NewTagRequest;
 import com.ticketing.agent.dto.ChatRequest;
 import com.ticketing.agent.dto.ChatResponse;
 import com.ticketing.agent.dto.SearchRequest;
@@ -34,6 +37,8 @@ import java.util.stream.Collectors;
 public class AgentController {
 
     private final SearchService        searchService;
+    private final TagCurationService curationService;
+
     private final ChatService          chatService;
     private final EventFacetRepository facetRepository;
 
@@ -72,6 +77,37 @@ public class AgentController {
      * describing what actually runs, and means a regression in ranking shows up
      * in both endpoints rather than hiding in one.
      */
+    /**
+     * Preview what a proposed tag would claim, writing nothing.
+     *
+     * <p>Separate from creation on purpose. A tag does not only serve the facet
+     * that motivated it — it competes for every facet on its dim, and that
+     * blast radius is invisible while writing a definition. Measured:
+     * {@code broadcast} was written to cover three facets about television
+     * viewership and became the top match on eighteen, eleven of them wrong.
+     * Had this endpoint existed then, that would have been on screen before the
+     * tag was saved.
+     */
+    @PostMapping("/tags/preview")
+    public ApiResponse<TagPreviewResponse> previewTag(@Valid @RequestBody NewTagRequest request) {
+        return ApiResponse.ok(curationService.preview(request));
+    }
+
+    /**
+     * Adds a tag to the live vocabulary.
+     *
+     * <p>ADMIN only, enforced at the gateway. Curating the vocabulary changes
+     * what every future search is able to express, which is a different kind of
+     * act from asking a question — and the two conversational endpoints beside
+     * it are deliberately public, so the distinction has to be explicit.
+     *
+     * @return the same shape as the preview, recomputed after the write
+     */
+    @PostMapping("/tags")
+    public ApiResponse<TagPreviewResponse> createTag(@Valid @RequestBody NewTagRequest request) {
+        return ApiResponse.ok(curationService.create(request));
+    }
+
     @PostMapping("/chat")
     public ApiResponse<ChatResponse> chat(@Valid @RequestBody ChatRequest request) {
         ChatService.TurnResult turn = chatService.handle(
