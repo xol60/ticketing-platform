@@ -1,5 +1,6 @@
 package com.ticketing.agent.startup;
 
+import com.ticketing.agent.config.AgentProperties;
 import com.ticketing.agent.domain.repository.FacetTagCandidateRepository;
 import com.ticketing.agent.ingest.TagSuggester;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class FacetCandidateBackfill implements ApplicationRunner {
 
     private final FacetTagCandidateRepository candidateRepository;
+    private final AgentProperties             properties;
 
     @Override
     @Transactional

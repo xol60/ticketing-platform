@@ -1,5 +1,6 @@
 package com.ticketing.agent.vector;
 
+import com.ticketing.agent.config.AgentProperties;
 import com.ticketing.agent.domain.repository.TagRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -48,7 +49,8 @@ public class TagMatcher {
     /** How many candidates to return when a human is going to look at them. */
     public static final int REVIEW_CANDIDATES = 3;
 
-    private final TagRepository tagRepository;
+    private final TagRepository  tagRepository;
+    private final AgentProperties properties;
 
     /**
      * One candidate tag for a facet.
@@ -69,14 +71,17 @@ public class TagMatcher {
     /**
      * Ranked tag candidates for a facet, all on the facet's own dim.
      *
-     * <p>Empty when the dim carries no matchable tags — {@code participation}
-     * and {@code duration} have none today, and a facet on those dims simply
-     * suggests nothing rather than being forced onto an unrelated tag.
+     * <p>Empty when the dim carries no matchable tags, and also when nothing on
+     * it clears {@code candidateFloor}. Both are the same answer to the
+     * reviewer — no tag covers this facet — and both are answers the old
+     * version could not give: it returned the nearest three whatever their
+     * scores, so a facet on the wrong dim entirely still arrived carrying a
+     * confident-looking label.
      */
     public List<Candidate> candidatesFor(String dim, String vectorLiteral, int topN) {
         if (dim == null || vectorLiteral == null) return List.of();
 
-        return tagRepository.findNearestInDim(dim, vectorLiteral, topN).stream()
+        return tagRepository.findCoveringInDim(dim, vectorLiteral, topN).stream()
                 .map(r -> new Candidate(
                         ((Number) r[0]).intValue(),
                         (String) r[1],
@@ -84,7 +89,22 @@ public class TagMatcher {
                 .toList();
     }
 
+    /**
+     * The query side's nearest tag, without the cross-dim comparison.
+     *
+     * <p>Deliberately not {@code candidatesFor}. A query facet is the model's
+     * distillation of one request and is often a single word, so it lands much
+     * closer to the floor of the space than an event facet does and the
+     * comparison would discard most of them. The query path has its own
+     * calibrated cut — {@code queryTagMatchThreshold} — and being wrong there
+     * costs a worse ordering for one search, not a claim written into the
+     * catalogue.
+     */
     public Optional<Candidate> bestFor(String dim, String vectorLiteral) {
-        return candidatesFor(dim, vectorLiteral, 1).stream().findFirst();
+        if (dim == null || vectorLiteral == null) return Optional.empty();
+        return tagRepository.findNearestInDim(dim, vectorLiteral, 1).stream()
+                .map(r -> new Candidate(((Number) r[0]).intValue(), (String) r[1],
+                                        ((Number) r[2]).doubleValue()))
+                .findFirst();
     }
 }

@@ -142,33 +142,19 @@ public class AgentProperties {
 
 
         /**
-         * Cosine at which a facet's nearest tag on its own dim is accepted
-         * rather than left for review.
+         * Cosine at which a QUERY facet resolves to a tag instead of falling
+         * through to plain cosine ranking.
          *
-         * <p>Measured, not chosen. All 124 suggestions the matcher produced
-         * over the 92-event corpus were reviewed by hand and the score curve
-         * plotted against the verdicts. It has one knee: 0.495 keeps 88% of
-         * what it accepts and accepts 94% of what is correct. Below it
-         * precision falls away with no recall gained; the next real gain
-         * (0.540, 93%) costs a quarter of recall.
+         * <p>This is a retrieval decision, not a verdict on an event, which is
+         * why a threshold is allowed here and nowhere on the ingest side: being
+         * wrong costs a worse ordering for one search, not a claim written into
+         * the catalogue.
          *
-         * <p>The distribution is unimodal — right and wrong answers overlap
-         * rather than forming two clusters — so this is a chosen operating
-         * point on a trade-off, not a boundary between classes. The errors it
-         * still admits are the ones cosine cannot see: "highly anticipated
-         * match" reads as large-scale because both sentences are about
-         * importance, and no threshold separates them.
-         */
-        @DecimalMin("0.0") @DecimalMax("1.0")
-        private double tagMatchThreshold = 0.495;
-
-        /**
-         * Same question on the query side, where the text is much shorter.
-         *
-         * <p>A separate number because it is a separate distribution. The
-         * ingest threshold was calibrated on {@code value + span} — around 96
-         * characters — while a query facet is the model's distillation of one
-         * request and is often a single word. Embedding length moves the score
+         * <p>The ingest side once had its own number, calibrated on
+         * {@code value + span} — around 96 characters — while a query facet is
+         * the model's distillation of one request and is often a single word.
+         * It was deleted with the machine approval it served; see
+         * {@code TagSuggester} for what the measurement showed. Embedding length moves the score
          * on its own: measured on this model, the same idea scores 0.572 at one
          * word and 0.799 at ten.
          *
@@ -191,8 +177,17 @@ public class AgentProperties {
         private double queryTagMatchThreshold = 0.42;
 
         /**
-         * Whether a facet clearing every deterministic gate may skip human
-         * review.
+         * Whether a FACET clearing every deterministic gate may skip human
+         * review. Tag assignments are not covered and cannot be — one is always
+         * written pending, whatever this says.
+         *
+         * <p>The asymmetry is deliberate. A facet is judged by gates that
+         * either pass or fail: it quotes a verbatim span or it does not, its
+         * words appear in the source or they do not. Approving one on that
+         * basis asserts nothing the checks have not already established. A tag
+         * assignment has no such check available — the only evidence is a
+         * cosine distance, and a distance cannot tell a real match from the
+         * floor of the space.
          *
          * <p>Note what is absent: any use of the model's self-reported
          * confidence. An 8B model reports 0.95 for a fabricated facet as

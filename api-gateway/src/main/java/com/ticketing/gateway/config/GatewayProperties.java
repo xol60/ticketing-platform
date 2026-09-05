@@ -74,6 +74,15 @@ public class GatewayProperties {
             // express, so it is an admin action even though it lives under the
             // otherwise-public agent namespace.
             new RoleRule(List.of(), "/api/agent/tags", List.of("ADMIN")),
+            // Approving a tag onto an event. Guarded with the rest of curation
+            // rather than left to the public agent namespace: it writes the
+            // only kind of approval the system has, and nothing automatic is
+            // allowed to write one.
+            new RoleRule(List.of(), "/api/agent/events", List.of("ADMIN")),
+            // The review queue exposes every extracted facet and its source
+            // span — internal working state, not anything a ticket buyer asked
+            // for. GET, so it would otherwise fall through publicGetPaths.
+            new RoleRule(List.of(), "/api/agent/review", List.of("ADMIN")),
             new RoleRule(List.of(), "/api/agent/reindex", List.of("ADMIN")),
             new RoleRule(List.of("POST", "PUT", "PATCH", "DELETE"),
                     "/api/pricing/rules", List.of("EVENT_OWNER", "ADMIN")),

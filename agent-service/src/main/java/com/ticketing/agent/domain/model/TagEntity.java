@@ -71,9 +71,19 @@ public class TagEntity {
     private String source = "human";
 
     /**
-     * {@code description} while the vector comes from the tag's own prose,
-     * {@code knn} once enough approved events carry the tag for their centroid
-     * to describe it better than the prose does.
+     * Always {@code description} — the vector is built from the tag's own
+     * prose, and V13's CHECK allows nothing else.
+     *
+     * <p>V1 reserved a second value, {@code knn}, for the centroid of approved
+     * events carrying the tag. It was never implemented and was removed rather
+     * than left waiting: a facet's vector is built from value plus span, and a
+     * span is raw source text, so averaging them would fold every description
+     * author's phrasing into the definition until the tag no longer meant what
+     * its reviewer wrote. A definition that moves on its own cannot be
+     * reviewed.
+     *
+     * <p>Null means the vector is missing or stale and the startup backfill
+     * will rebuild it — which is how an edited definition takes effect.
      */
     @Column(name = "vector_source")
     private String vectorSource;

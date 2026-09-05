@@ -190,6 +190,61 @@ public interface EventFacetRepository extends JpaRepository<EventFacet, Long> {
      * @return rows of {@code [facet_id, value, score against the new vector,
      *         best score among existing tags]}
      */
+    /**
+     * How much of each existing tag's territory a candidate tag would take.
+     *
+     * <p>The question a reviewer actually needs answered before writing a tag
+     * is not "does this text look like an existing definition" — measured on
+     * this corpus, tags that are unmistakably distinct sit at 0.596 to 0.734
+     * against each other, so text similarity has no band left to signal
+     * duplication with. It is "would this tag do what one already does".
+     *
+     * <p>That is decidable. For each tag currently holding facets at rank one,
+     * count how many of those the candidate would outscore. A tag that takes
+     * most of another's facets is not a new distinction, it is a rewrite of an
+     * existing one, and adding it makes the dim worse: two vectors compete for
+     * the same facets, the winner varies with phrasing, and every event that
+     * used to carry one tag now splits between two.
+     *
+     * <p>Tags holding nothing are returned too, with zero, so a reviewer can
+     * still see the text similarity against a tag that has yet to win anything.
+     *
+     * @return rows of {@code [slug, name, facets held at rank 1, of those how
+     *         many the candidate takes, cosine between the two definitions]}
+     */
+    @Query(value = """
+            WITH held AS (
+                SELECT c.facet_id, c.tag_id, c.score AS held_score
+                  FROM facet_tag_candidate c
+                  JOIN event_facet f ON f.id = c.facet_id
+                 WHERE c.rank = 1
+                   AND f.dim = :dim
+                   AND f.approved_at IS NOT NULL
+                   AND f.embedding IS NOT NULL
+            ),
+            challenger AS (
+                SELECT f.id AS facet_id,
+                       1 - (f.embedding <=> CAST(:vectorLiteral AS vector)) AS new_score
+                  FROM event_facet f
+                 WHERE f.dim = :dim
+                   AND f.approved_at IS NOT NULL
+                   AND f.embedding IS NOT NULL
+            )
+            SELECT t.slug,
+                   t.name,
+                   CAST(count(h.facet_id) AS integer) AS held,
+                   CAST(count(*) FILTER (WHERE ch.new_score > h.held_score) AS integer) AS taken,
+                   CAST(1 - (t.embedding <=> CAST(:vectorLiteral AS vector)) AS real) AS text_similarity
+              FROM tag t
+              LEFT JOIN held       h  ON h.tag_id    = t.id
+              LEFT JOIN challenger ch ON ch.facet_id = h.facet_id
+             WHERE t.dim = :dim AND t.embedding IS NOT NULL
+             GROUP BY t.id
+             ORDER BY taken DESC, text_similarity DESC
+            """, nativeQuery = true)
+    List<Object[]> overlapAgainstDim(@Param("dim") String dim,
+                                     @Param("vectorLiteral") String vectorLiteral);
+
     @Query(value = """
             SELECT f.id, f.value,
                    CAST(1 - (f.embedding <=> CAST(:vectorLiteral AS vector)) AS real) AS new_score,
@@ -207,4 +262,32 @@ public interface EventFacetRepository extends JpaRepository<EventFacet, Long> {
     /** True when this exact facet is already on the event and already approved. */
     boolean existsByEventIdAndDimAndValueAndApprovedAtIsNotNull(
             String eventId, String dim, String value);
+
+    /**
+     * Approved facets that no tag covers — the "write a definition" queue.
+     *
+     * <p>Empty candidate list is the signal, and it means what the cross-dim
+     * comparison decided: nothing on this facet's own dim beats the best tag on
+     * some other dim. Two different things land here and the reviewer is the
+     * one who can tell them apart — vocabulary the dim is genuinely missing,
+     * and facets the model filed on the wrong dim, where no tag on this dim
+     * could ever be right.
+     *
+     * @return rows of {@code [facet_id, event_id, event_name, value, span,
+     *         how many facets share this value]}
+     */
+    @Query(value = """
+            SELECT f.id, f.event_id, e.name, f.value, f.source_span,
+                   CAST((SELECT count(*) FROM event_facet x
+                          WHERE x.dim = f.dim AND lower(x.value) = lower(f.value)
+                            AND x.approved_at IS NOT NULL) AS integer) AS occurrences
+              FROM event_facet f
+              JOIN agent_event e ON e.id = f.event_id
+             WHERE f.approved_at IS NOT NULL
+               AND f.embedding IS NOT NULL
+               AND (CAST(:dim AS text) IS NULL OR f.dim = CAST(:dim AS text))
+               AND NOT EXISTS (SELECT 1 FROM facet_tag_candidate c WHERE c.facet_id = f.id)
+             ORDER BY occurrences DESC, f.value
+            """, nativeQuery = true)
+    List<Object[]> uncoveredFacets(@Param("dim") String dim);
 }

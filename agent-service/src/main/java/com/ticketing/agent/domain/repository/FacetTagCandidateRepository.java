@@ -50,6 +50,11 @@ public interface FacetTagCandidateRepository
                           CAST(row_number() OVER (ORDER BY t.embedding <=> f.embedding) AS smallint) AS rank
                      FROM tag t
                     WHERE t.dim = f.dim AND t.embedding IS NOT NULL
+                      AND (1 - (t.embedding <=> f.embedding)) >
+                          COALESCE((SELECT max(1 - (o.embedding <=> f.embedding))
+                                      FROM tag o
+                                     WHERE o.dim IS NOT NULL AND o.dim <> f.dim
+                                       AND o.embedding IS NOT NULL), 0)
                     ORDER BY t.embedding <=> f.embedding
                     LIMIT :topN) c
              WHERE f.embedding IS NOT NULL
@@ -88,10 +93,70 @@ public interface FacetTagCandidateRepository
                           CAST(row_number() OVER (ORDER BY t.embedding <=> f.embedding) AS smallint) AS rank
                      FROM tag t
                     WHERE t.dim = f.dim AND t.embedding IS NOT NULL
+                      AND (1 - (t.embedding <=> f.embedding)) >
+                          COALESCE((SELECT max(1 - (o.embedding <=> f.embedding))
+                                      FROM tag o
+                                     WHERE o.dim IS NOT NULL AND o.dim <> f.dim
+                                       AND o.embedding IS NOT NULL), 0)
                     ORDER BY t.embedding <=> f.embedding
                     LIMIT :topN) c
              WHERE f.dim = :dim AND f.embedding IS NOT NULL
             ON CONFLICT DO NOTHING
             """, nativeQuery = true)
     int rebuildForDim(@Param("dim") String dim, @Param("topN") int topN);
+
+    /**
+     * Turns rank-one candidates on a dim into pending proposals.
+     *
+     * <p>The step that was missing from tag creation, and the reason the
+     * feedback loop did not close. Creating a tag rebuilt every candidate list
+     * on its dim but wrote no {@code event_tag} row except the single one the
+     * reviewer named: the preview reported the tag would win forty facets and
+     * the vocabulary then showed one carrier, with the other thirty-nine
+     * appearing only after a full re-ingest of the corpus. A reviewer writing
+     * a definition and seeing one event attach concludes it did not work.
+     *
+     * <p>Pending, never approved — approving is a person's act. Pairs that
+     * already carry a verdict are left alone by the conflict clause, so this
+     * cannot reopen a question a reviewer has closed.
+     */
+    /**
+     * Drops proposals on a dim that no reviewer has answered.
+     *
+     * <p>Run before re-proposing, because {@link #proposeRankOneForDim} only
+     * inserts. Without it a tag written early keeps every proposal it made
+     * while it was alone on the dim, and the tags added afterwards cannot take
+     * them back: measured on the last rebuild, {@code live-music-concert} was
+     * the first tag on {@code format}, won all 201 facets, and still carried
+     * proposals for Formula 1, football fixtures and a keynote long after seven
+     * tags had displaced it in every candidate list. Twenty-five of its
+     * eighty-five rejections were that residue.
+     *
+     * <p>Answered rows are untouched. A verdict is the reviewer's, and this is
+     * only clearing what the matcher itself put there.
+     */
+    @Modifying
+    @Query(value = """
+            DELETE FROM event_tag et
+             USING tag t
+             WHERE t.id = et.tag_id AND t.dim = :dim
+               AND et.source = 'llm'
+               AND et.approved_at IS NULL AND et.rejected_at IS NULL
+            """, nativeQuery = true)
+    int clearUnansweredForDim(@Param("dim") String dim);
+
+    @Modifying
+    @Query(value = """
+            INSERT INTO event_tag (event_id, tag_id, source, confidence)
+            SELECT DISTINCT ON (f.event_id, c.tag_id)
+                   f.event_id, c.tag_id, 'llm', c.score
+              FROM facet_tag_candidate c
+              JOIN event_facet f ON f.id = c.facet_id
+             WHERE c.rank = 1
+               AND f.dim = :dim
+               AND f.approved_at IS NOT NULL
+             ORDER BY f.event_id, c.tag_id, c.score DESC
+            ON CONFLICT (event_id, tag_id) DO NOTHING
+            """, nativeQuery = true)
+    int proposeRankOneForDim(@Param("dim") String dim);
 }

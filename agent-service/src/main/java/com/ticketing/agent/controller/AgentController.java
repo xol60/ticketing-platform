@@ -7,6 +7,7 @@ import com.ticketing.agent.conversation.ConversationState;
 import com.ticketing.agent.curation.TagCurationService;
 import com.ticketing.agent.dto.TagPreviewResponse;
 import com.ticketing.agent.dto.NewTagRequest;
+import com.ticketing.agent.dto.ReviewQueueResponse;
 import com.ticketing.agent.dto.ChatRequest;
 import com.ticketing.agent.dto.ChatResponse;
 import com.ticketing.agent.dto.SearchRequest;
@@ -38,6 +39,7 @@ public class AgentController {
 
     private final SearchService        searchService;
     private final TagCurationService curationService;
+    private final com.ticketing.agent.review.ReviewQueueService reviewQueueService;
     private final com.ticketing.agent.ingest.IngestionService ingestionService;
 
     private final ChatService          chatService;
@@ -123,6 +125,65 @@ public class AgentController {
     @PostMapping("/tags")
     public ApiResponse<TagPreviewResponse> createTag(@Valid @RequestBody NewTagRequest request) {
         return ApiResponse.ok(curationService.create(request));
+    }
+
+    /**
+     * Attaches an existing tag to an event, approved.
+     *
+     * <p>The second exit from a duplicate warning. A reviewer who set out to
+     * write a tag, saw that it would take over one already in the vocabulary,
+     * and decided the existing one was right, still has an unassigned facet in
+     * front of them — this is what closes it.
+     *
+     * <p>ADMIN only. It writes an approval, which is the one thing nothing
+     * automatic is allowed to write.
+     */
+    /**
+     * What is waiting for a reviewer on one dim, or on all of them.
+     *
+     * <p>ADMIN only. It exposes every facet and span the model extracted, which
+     * is internal working state rather than anything a ticket buyer asked for.
+     */
+    @GetMapping("/review")
+    public ApiResponse<ReviewQueueResponse> reviewQueue(
+            @RequestParam(required = false) String dim) {
+        return ApiResponse.ok(reviewQueueService.forDim(dim));
+    }
+
+    @PostMapping("/events/{eventId}/tags/{slug}/approve")
+    public ApiResponse<Void> approveTag(@PathVariable String eventId,
+                                        @PathVariable String slug) {
+        curationService.attachExisting(eventId, slug);
+        return ApiResponse.ok(null);
+    }
+
+    /**
+     * Rejects a proposed tag on an event.
+     *
+     * <p>Not a DELETE, because nothing is deleted: the row stays and carries
+     * the rejection. That is what keeps the answer — re-ingest proposes from
+     * the same vectors and would otherwise regenerate the pair unchanged.
+     *
+     * <p>ADMIN only, like every other verdict.
+     */
+    @PostMapping("/events/{eventId}/tags/{slug}/reject")
+    public ApiResponse<Void> rejectTag(@PathVariable String eventId,
+                                       @PathVariable String slug) {
+        curationService.rejectProposal(eventId, slug);
+        return ApiResponse.ok(null);
+    }
+
+    /**
+     * Rewrites a tag's definition. ADMIN only.
+     *
+     * <p>The slug and dim in the body are ignored — they are identity. Changing
+     * a tag's dim would strand its verdicts against facets it can no longer be
+     * compared with, which is a new tag rather than an edit.
+     */
+    @PutMapping("/tags/{slug}")
+    public ApiResponse<TagPreviewResponse> editTag(@PathVariable String slug,
+                                                   @Valid @RequestBody NewTagRequest request) {
+        return ApiResponse.ok(curationService.edit(slug, request));
     }
 
     @PostMapping("/chat")

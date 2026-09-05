@@ -64,4 +64,19 @@ public class NewTagRequest {
      * ten times, every one of them wrong.
      */
     private String attachToEventId;
+
+    /**
+     * Write the tag even though it displaces an existing one.
+     *
+     * <p>Left false, a create that trips the duplicate warning writes nothing
+     * and returns the overlap instead, so the reviewer can see which tag they
+     * are about to talk over. Setting it is the reviewer saying the distinction
+     * is real — that {@code broadcast} and {@code large-scale} are different
+     * claims about an event even though both take stadium facets.
+     *
+     * <p>It is a separate field rather than a second endpoint because the
+     * decision belongs to the same request: the reviewer answers it having read
+     * the warning, and the body they send back is the body they were shown.
+     */
+    private boolean acknowledgeDuplicate;
 }

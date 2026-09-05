@@ -53,4 +53,29 @@ public interface EventTagRepository extends JpaRepository<EventTag, EventTag.Key
                AND t.approvedAt IS NULL AND t.rejectedAt IS NULL
             """)
     int deleteLlmTags(@Param("eventId") String eventId);
+
+    /**
+     * Proposals awaiting a verdict, with the facets that produced them.
+     *
+     * <p>The evidence is joined in SQL rather than fetched per row: a reviewer
+     * screen for one dim is one query, not one plus a hundred.
+     *
+     * @param dim null for every dim
+     * @return rows of {@code [event_id, event_name, tag_slug, confidence,
+     *         facet values joined by " | "]}
+     */
+    @Query(value = """
+            SELECT et.event_id, e.name, t.slug, et.confidence,
+                   (SELECT string_agg(DISTINCT f.value, ' | ')
+                      FROM event_facet f
+                     WHERE f.event_id = et.event_id AND f.dim = t.dim
+                       AND f.approved_at IS NOT NULL) AS evidence
+              FROM event_tag et
+              JOIN tag t         ON t.id = et.tag_id
+              JOIN agent_event e ON e.id = et.event_id
+             WHERE et.approved_at IS NULL AND et.rejected_at IS NULL
+               AND (CAST(:dim AS text) IS NULL OR t.dim = CAST(:dim AS text))
+             ORDER BY t.dim, t.slug, et.confidence DESC
+            """, nativeQuery = true)
+    List<Object[]> pendingForReview(@Param("dim") String dim);
 }

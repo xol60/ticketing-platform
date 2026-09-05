@@ -1,6 +1,5 @@
 package com.ticketing.agent.ingest;
 
-import com.ticketing.agent.config.AgentProperties;
 import com.ticketing.agent.domain.model.EventTag;
 import com.ticketing.agent.domain.model.FacetTagCandidate;
 import com.ticketing.agent.domain.repository.EventTagRepository;
@@ -10,7 +9,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.time.Instant;
 import java.util.List;
 
 /**
@@ -46,7 +44,6 @@ public class TagSuggester {
 
     private final EventTagRepository          eventTagRepository;
     private final FacetTagCandidateRepository candidateRepository;
-    private final AgentProperties             properties;
 
     /**
      * @param candidates nearest first, as returned by
@@ -64,15 +61,35 @@ public class TagSuggester {
                     .build());
         }
 
-        // Only the nearest is ever proposed as an assignment. A rank-two tag is
-        // shown to the reviewer as an alternative, not asserted — recording it
-        // as an assignment too would mean claiming an event is both a workshop
-        // and a sports fixture because one sentence read ambiguously.
+        // Only the nearest is ever proposed. A rank-two tag is shown to the
+        // reviewer as an alternative, not asserted — proposing it too would
+        // mean claiming an event is both a workshop and a sports fixture
+        // because one sentence read ambiguously.
         TagMatcher.Candidate best = candidates.get(0);
-        upsertVerdict(eventId, best);
+        proposePending(eventId, best);
     }
 
-    private void upsertVerdict(String eventId, TagMatcher.Candidate c) {
+    /**
+     * Writes the proposal with no verdict on it. Nothing here can approve.
+     *
+     * <p>A threshold used to: a rank-one score at or above 0.495 was assigned
+     * outright. The number was real — plotted against the verdicts it keeps 88%
+     * of what it accepts and accepts 94% of what is correct — and it was still
+     * the wrong instrument. Measured over the pairs it actually decided, 45 of
+     * the 160 it approved were later rejected by hand, because the distribution
+     * is unimodal: right and wrong answers overlap rather than separating, so
+     * any cut is an operating point on a trade-off and never a boundary between
+     * classes. "Highly anticipated match" reads as large-scale to cosine
+     * because both sentences are about importance, and no threshold anywhere
+     * tells them apart.
+     *
+     * <p>What settles it is not the error rate but what a verdict means. A tag
+     * is a claim about an event that a person wrote the definition for; letting
+     * a distance decide which events it covers puts the machine on both ends of
+     * a judgement that only exists because a human made it. The score is kept
+     * as {@code confidence} for ordering a review queue, and for nothing else.
+     */
+    private void proposePending(String eventId, TagMatcher.Candidate c) {
         var existing = eventTagRepository.findById(new EventTag.Key(eventId, c.tagId()));
         if (existing.isPresent()) {
             EventTag row = existing.get();
@@ -82,7 +99,6 @@ public class TagSuggester {
             if (row.getApprovedAt() == null && row.getRejectedAt() == null
                     && (row.getConfidence() == null || row.getConfidence() < c.score())) {
                 row.setConfidence((float) c.score());
-                if (accepted(c)) row.setApprovedAt(Instant.now());
                 eventTagRepository.save(row);
             }
             return;
@@ -92,12 +108,6 @@ public class TagSuggester {
                 .tagId(c.tagId())
                 .source("llm")
                 .confidence((float) c.score())
-                .approvedAt(accepted(c) ? Instant.now() : null)
-                .build());
-    }
-
-    private boolean accepted(TagMatcher.Candidate c) {
-        var v = properties.getValidation();
-        return v.isAutoApproveOnAllGatesPass() && c.score() >= v.getTagMatchThreshold();
+                .build());   // approvedAt and rejectedAt both null: awaiting review
     }
 }
