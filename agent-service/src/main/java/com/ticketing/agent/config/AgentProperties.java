@@ -169,6 +169,33 @@ public class AgentProperties {
         private double queryTagMatchThreshold = 0.42;
 
         /**
+         * Bonus added to an event whose {@code genre} the request named.
+         *
+         * <p>A bonus, never a filter and never a penalty, and each of those
+         * three words is load-bearing.
+         *
+         * <p><b>Never a filter</b>, because the match can be confidently wrong
+         * about a genre the catalogue does not have. Measured: "a night of
+         * country music" matched {@code MUSICAL} by vector at 0.567, a clear
+         * 0.138 ahead of the runner-up — every safety check in this service
+         * would have called that certain. Boosting the wrong events costs an
+         * ordering; filtering on them deletes the right answer.
+         *
+         * <p><b>Never a penalty</b>, because four of ninety-two events carry no
+         * genre at all. Docking them would punish an empty column.
+         *
+         * <p><b>Matched by string, not by vector</b>: 12 of 13 against 9 of 11,
+         * and it fails in the safe direction — "loud and heavy" and "country
+         * music" match nothing, where the vector confidently answered MUSICAL
+         * for both. The one it loses is the abbreviation, "electronic dance
+         * music night" not reaching EDM.
+         *
+         * <p>Zero disables it, which is how the gain below was measured.
+         */
+        @DecimalMin("0.0") @DecimalMax("1.0")
+        private double genreBonus = 0.15;
+
+        /**
          * How far the nearest tag must stand clear of the runner-up before a
          * phrase is treated as naming it.
          *

@@ -116,4 +116,22 @@ public interface AgentEventRepository extends JpaRepository<AgentEvent, String> 
             WHERE (SELECT COUNT(f) FROM EventFacet f WHERE f.eventId = e.id) >= :minFacets
             """)
     long countWithAtLeastFacets(int minFacets);
+
+    /**
+     * Every genre value present in the catalogue.
+     *
+     * <p>Read rather than enumerated, because {@code genre} is a free
+     * {@code VARCHAR(50)} written by whoever created the event — there is no
+     * enum, no CHECK and no definition of it anywhere in the system. Its
+     * fifteen tidy values today are an artefact of a seed script's constant
+     * array, not of any discipline the column enforces, and one country-music
+     * event adds a sixteenth without warning.
+     *
+     * <p>That is survivable only because of how the result is used: a match
+     * boosts an event's rank and a miss costs nothing. A value nobody has seen
+     * before simply fails to match, which is the correct answer for a genre the
+     * catalogue does not carry.
+     */
+    @Query("SELECT DISTINCT e.genre FROM AgentEvent e WHERE e.genre IS NOT NULL")
+    List<String> distinctGenres();
 }

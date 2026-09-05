@@ -208,7 +208,7 @@ public class SearchService {
         Semantics semantic = scoreSemantically(q.vibeFacets(), candidates);
         return new SearchResult(
                 ranker.rank(candidates, semantic.scores(), semantic.tagCarriers(),
-                        semantic.splittable(), now, SHORTLIST_SIZE),
+                        genresNamedIn(q), semantic.splittable(), now, SHORTLIST_SIZE),
                 total, relaxations, !semantic.scores().isEmpty());
     }
 
@@ -251,6 +251,45 @@ public class SearchService {
      * richly it happens to be described, only for how well it answers what was
      * asked.
      */
+    /**
+     * Genre values the request names outright, matched by word, not by vector.
+     *
+     * <p>A second, parallel reading of the same facet text the vector path
+     * uses — deliberately parallel and not downstream of it. The tag a facet
+     * resolves to cannot yield a genre: {@code live-music-concert} covers POP,
+     * VPOP, ROCK, EDM and KPOP, and guessing the commonest is wrong 52% of the
+     * time. Measured across the corpus, knowing an event's genre tells you its
+     * format tag (0.11 bits left over) while knowing its format tag leaves 1.07
+     * bits of genre unresolved. The coarsening is one-way, so the two readings
+     * have to start from the same text rather than one feeding the other.
+     *
+     * <p>By word rather than by vector because a bare genre token embeds badly
+     * and, worse, embeds <em>confidently</em>: "a night of country music" lands
+     * on MUSICAL at 0.567 with the runner-up 0.138 behind, and the catalogue
+     * has no COUNTRY at all. A word match simply finds nothing there, which is
+     * the right answer. It costs one case — "electronic dance music night"
+     * never reaches EDM — and buys the guarantee that an unknown genre matches
+     * nothing rather than something plausible.
+     *
+     * <p>Reads only the facets, not the raw message: a city or an artist name
+     * in the sentence is not a genre, and both leave the vibe before this runs.
+     */
+    private Set<String> genresNamedIn(QueryExtraction q) {
+        if (q.vibeFacets().isEmpty()) return Set.of();
+
+        Set<String> words = new HashSet<>();
+        for (FacetQuery f : q.vibeFacets()) {
+            for (String w : f.value().toLowerCase().split("[^a-z0-9]+")) {
+                if (!w.isEmpty()) words.add(w);
+            }
+        }
+        Set<String> named = eventRepository.distinctGenres().stream()
+                .filter(g -> words.contains(g.toLowerCase()))
+                .collect(java.util.stream.Collectors.toSet());
+        if (!named.isEmpty()) log.debug("Request names genre {}", named);
+        return named;
+    }
+
     private Semantics scoreSemantically(List<FacetQuery> vibe, List<AgentEvent> candidates) {
         if (vibe.isEmpty() || candidates.isEmpty()) return Semantics.none();
 

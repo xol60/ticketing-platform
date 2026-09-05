@@ -1,5 +1,6 @@
 package com.ticketing.agent.search;
 
+import com.ticketing.agent.config.AgentProperties;
 import com.ticketing.agent.domain.model.AgentEvent;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -22,7 +23,10 @@ import java.util.*;
  */
 @Slf4j
 @Component
+@lombok.RequiredArgsConstructor
 public class Ranker {
+
+    private final AgentProperties properties;
 
     // Weights sum to 1 so the score stays readable as a fraction. Semantic
     // dominates when a vibe was given; with none, its term is zero and the
@@ -96,6 +100,7 @@ public class Ranker {
     public List<SearchResult.Scored> rank(List<AgentEvent> candidates,
                                           Map<String, Double> semanticScores,
                                           Set<String> tagCarriers,
+                                          Set<String> namedGenres,
                                           boolean splittable,
                                           Instant now,
                                           int limit) {
@@ -107,6 +112,14 @@ public class Ranker {
             double score = W_SEMANTIC * semantic
                          + W_TIME     * timeProximity(e.getStartAt(), now, horizon)
                          + W_POP      * popularity(e);
+            // Added outside the weighted sum rather than folded into it. The
+            // three weights above divide one unit of evidence between signals
+            // that every event has; a genre match is evidence only some events
+            // can carry, and renormalising for it would quietly rescale the
+            // other three every time the column is null.
+            if (e.getGenre() != null && namedGenres.contains(e.getGenre())) {
+                score += properties.getValidation().getGenreBonus();
+            }
             boolean matched = !splittable || tagCarriers.contains(e.getId());
             scored.add(new SearchResult.Scored(e, score, semantic, matched));
         }
