@@ -36,10 +36,11 @@ import org.springframework.stereotype.Component;
  * boot rather than left pointing at prose nobody wrote, and it reports the one
  * vocabulary defect a running system can have.
  *
- * <p>Skips dim-less tags. {@code headliner} and {@code late-night} are reachable
- * by exclusion only and are never compared against a facet, so a vector for them
- * would be dead weight — and worse, would let them win comparisons they should
- * not be in.
+ * <p>Skips dim-less tags — a tag with no dim is reachable by exclusion only and
+ * is never compared against a facet, so a vector for it would be dead weight,
+ * and worse, would let it win comparisons it should not be in. The vocabulary
+ * holds none today; the first two, about an artist's fame and a start time,
+ * went with the rest of the seed set.
  */
 @Slf4j
 @Component

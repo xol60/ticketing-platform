@@ -44,9 +44,11 @@ public class TagEntity {
      * Which of the eight dimensions this tag answers, or null.
      *
      * <p>A facet is only compared against tags on its own dim. Null means the
-     * tag is reachable by exclusion only — {@code headliner} and
-     * {@code late-night} describe an artist's fame and a start time, neither of
-     * which is a dimension of the experience.
+     * tag is reachable by exclusion only. The seed vocabulary had two — one
+     * about an artist's fame, one about a start time — and neither was a
+     * dimension of the experience, which is why forcing them onto one would
+     * have put them in competition with facets they do not describe. The
+     * vocabulary holds none today.
      */
     private String dim;
 

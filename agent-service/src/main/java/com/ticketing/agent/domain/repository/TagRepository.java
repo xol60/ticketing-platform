@@ -105,11 +105,12 @@ public interface TagRepository extends JpaRepository<TagEntity, Integer> {
      *
      * <p>The baseline a candidate tag is judged against, and the reason no
      * constant appears anywhere in duplicate detection. Absolute cosine says
-     * nothing on its own: measured here, {@code live-music} and
-     * {@code performing-arts} — two tags nobody would confuse — score 0.713,
-     * and {@code conference-tech} against {@code professional} scores 0.734.
-     * A fixed threshold either sits below those and flags every tag, or above
-     * them and flags none.
+     * nothing on its own: measured on the live vocabulary,
+     * {@code focused-and-technical} and {@code formal-ceremonial} score 0.721
+     * against each other, {@code team-sport-fixture} and {@code combat-sport}
+     * 0.716, {@code stadium-crowd} and {@code broadcast-audience} 0.689 — pairs
+     * nobody would confuse. A fixed threshold either sits below those and flags
+     * every tag, or above them and flags none.
      *
      * <p>What is decidable is a comparison. If a candidate is closer to some
      * existing tag than any two existing tags are to each other, it is inside
@@ -137,4 +138,41 @@ public interface TagRepository extends JpaRepository<TagEntity, Integer> {
                AND a.embedding IS NOT NULL AND b.embedding IS NOT NULL
             """, nativeQuery = true)
     Double closestExistingPair(@Param("dim") String dim);
+
+    /**
+     * The two nearest tags to a phrase, across every dim.
+     *
+     * <p>Resolves what a person ruled out. Two rows rather than one, because
+     * the decision is not "how close is the nearest tag" but "does one tag
+     * stand out" — and only the runner-up can answer that. Measured on the
+     * phrases this corpus produces:
+     *
+     * <pre>
+     *   gap    phrase             nearest              verdict
+     *   0.073  a conference       conference-keynote   right to exclude
+     *   0.063  football           team-sport-fixture   right to exclude
+     *   0.051  too crowded        stadium-crowd        right to exclude
+     *   0.037  sports             team-sport-fixture   right to exclude
+     *   0.013  a musical          staged-drama         WRONG — kills ballet too
+     *   0.010  electronic music   live-music-concert   WRONG — kills the request
+     * </pre>
+     *
+     * <p>The two catastrophic cases have the smallest gaps, and they share a
+     * cause: the vocabulary has no tag meaning "musical as opposed to ballet"
+     * or "electronic as opposed to live", so several tags sit equally near and
+     * none of them is what was named. Absolute similarity cannot see this —
+     * {@code a musical} scores 0.561, higher than {@code sports} at 0.558.
+     *
+     * <p>Not restricted by dim: a person rules out a thing, not a dimension.
+     *
+     * @return up to two rows of {@code [slug, similarity]}, nearest first
+     */
+    @Query(value = """
+            SELECT t.slug, (1 - (t.embedding <=> CAST(:vectorLiteral AS vector))) AS sim
+              FROM tag t
+             WHERE t.embedding IS NOT NULL
+             ORDER BY t.embedding <=> CAST(:vectorLiteral AS vector)
+             LIMIT 2
+            """, nativeQuery = true)
+    List<Object[]> nearestTwo(@Param("vectorLiteral") String vectorLiteral);
 }

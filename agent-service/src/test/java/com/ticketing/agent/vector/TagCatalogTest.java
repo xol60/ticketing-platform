@@ -41,10 +41,6 @@ class TagCatalogTest {
                 .as("a reviewer-created tag must be excludable the moment it exists")
                 .isTrue();
         assertThat(catalog.slugs()).containsExactlyInAnyOrder("live-music", "professional");
-        assertThat(catalog.promptBlock())
-                .as("an enum of bare slugs carries no meaning — definitions travel with it")
-                .contains("professional [audience]")
-                .contains("An event aimed at people attending for work.");
         assertThat(catalog.isKnown("jazz-night")).isFalse();
         assertThat(catalog.isKnown(null)).isFalse();
     }
@@ -57,7 +53,7 @@ class TagCatalogTest {
         TagCatalog catalog = new TagCatalog(repo);
 
         catalog.slugs();
-        catalog.promptBlock();
+        catalog.all();
         catalog.isKnown("live-music");
         verify(repo, times(1)).findAll();   // on every chat turn otherwise
 

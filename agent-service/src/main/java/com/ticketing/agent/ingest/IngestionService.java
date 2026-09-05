@@ -84,8 +84,10 @@ public class IngestionService {
      *
      * <p>Derived rather than described, which is what lets the contradiction
      * gate treat a mismatch as fact against claim. The boundaries follow the
-     * taxonomy's own attribute tags: {@code intimate} is under 300 seats,
-     * {@code large-scale} is over 2000.
+     * seed taxonomy's own attribute tags, where "intimate" meant under 300
+     * seats and "large-scale" over 2000. Those tags are gone; the numbers stay
+     * because the sizes they name are what the words mean, not what the tags
+     * did.
      */
     private static String capacityBand(Integer ticketCount) {
         if (ticketCount == null || ticketCount == 0) return null;

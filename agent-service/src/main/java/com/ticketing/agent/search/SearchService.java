@@ -280,11 +280,17 @@ public class SearchService {
                 // facet — worse than not resolving it at all, because the
                 // person did express something and it stops counting.
                 //
-                // This is not hypothetical: "somewhere I can learn something"
-                // resolves to workshop at 0.594, which is correct, and workshop
-                // is carried by no event in the corpus. The query lost its only
-                // real signal and dropped from one right answer to none. Six of
-                // the thirteen matchable tags are currently carried by nothing.
+                // This is not hypothetical, though the case that produced it
+                // is now historical: under the first vocabulary "somewhere I
+                // can learn something" resolved to a 'workshop' tag at 0.594 —
+                // correctly — and that tag was carried by no event at all, so
+                // the query lost its only real signal and went from one right
+                // answer to none. Six of those thirteen tags were empty.
+                //
+                // Every tag today has carriers, because a tag is now written by
+                // a reviewer looking at a facet nothing covered. The branch
+                // stays regardless: the next tag written is empty for exactly
+                // as long as it takes someone to approve its first event.
                 if (carriers.isEmpty()) {
                     log.debug("Query facet {}:'{}' resolved to tag {} ({}), which no candidate "
                                     + "carries — scoring by facet cosine instead",
@@ -304,7 +310,7 @@ public class SearchService {
                     //
                     // Within the group cosine separates cleanly, because the
                     // facets there are already about the right kind of thing.
-                    // Asked for "ballet", the performing-arts carriers score
+                    // Asked for "ballet", the staged-drama carriers score
                     // Nutcracker 0.615 and Swan Lake 0.556 against 0.399 for
                     // the musicals; asked for "tennis", Wimbledon scores 0.571
                     // against 0.461 for the next sport.
@@ -346,10 +352,10 @@ public class SearchService {
         summed.forEach((id, sum) -> out.put(id, sum / vibe.size()));
 
         // An answer covers everything the request could be resolved into, not
-        // merely something. "basketball game" resolves to sports AND
-        // large-scale, and treating one of the two as enough labelled AWS
+        // merely something. "basketball game" resolves to team-sport-fixture
+        // AND stadium-crowd, and treating one of the two as enough labelled AWS
         // re:Invent and a Taylor Swift date as answers to it — both are
-        // large-scale and neither is a basketball game.
+        // stadium-crowd and neither is a basketball game.
         //
         // Partial cover still ranks: the score is k/N, so a facet matched is a
         // facet rewarded. Only the label is strict, because the label is what

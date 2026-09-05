@@ -71,8 +71,11 @@ public class NewTagRequest {
      * <p>Left false, a create that trips the duplicate warning writes nothing
      * and returns the overlap instead, so the reviewer can see which tag they
      * are about to talk over. Setting it is the reviewer saying the distinction
-     * is real — that {@code broadcast} and {@code large-scale} are different
-     * claims about an event even though both take stadium facets.
+     * is real. It has been used once: {@code business-investors} was refused
+     * for taking four of {@code technical-practitioners}' seven facets, and
+     * created anyway, because a founder raising money and an engineer reading
+     * documentation are different people however alike the two definitions
+     * read to cosine.
      *
      * <p>It is a separate field rather than a second endpoint because the
      * decision belongs to the same request: the reviewer answers it having read

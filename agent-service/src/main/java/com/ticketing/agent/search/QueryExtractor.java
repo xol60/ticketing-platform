@@ -4,7 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.ticketing.agent.config.AgentProperties;
+import com.ticketing.agent.domain.repository.TagRepository;
+import com.ticketing.agent.vector.EmbeddingService;
 import com.ticketing.agent.llm.OllamaClient;
+import com.ticketing.agent.validation.TextNormalizer;
 import com.ticketing.agent.vector.TagCatalog;
 import com.ticketing.common.agent.Taxonomy;
 import lombok.RequiredArgsConstructor;
@@ -13,7 +17,10 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.regex.Matcher;
 
 /**
  * The hot-path LLM call: one message in, a split query out.
@@ -36,8 +43,11 @@ public class QueryExtractor {
     private final OllamaClient ollama;
     // The vocabulary comes from the database, not from Taxonomy. A tag a
     // reviewer created must be excludable the moment it exists; see TagCatalog.
-    private final TagCatalog   tagCatalog;
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final TagCatalog       tagCatalog;
+    private final TagRepository    tagRepository;
+    private final EmbeddingService embeddings;
+    private final AgentProperties  properties;
+    private final ObjectMapper   mapper = new ObjectMapper();
 
     private static final String SYSTEM_PROMPT = """
             You split a person's request for something to do into structured parts.
@@ -88,13 +98,24 @@ public class QueryExtractor {
                Split into facets under the dimension each belongs to. Write each value
                as a short plain phrase, positively stated.
 
-            3. THINGS THEY DO NOT WANT — put the matching catalogue slug in "excludeTags".
+            3. THINGS THEY DO NOT WANT — write what they ruled out in "excludeText",
+               in their own words, as a short positive noun phrase. One entry per
+               separate thing. Do NOT name a tag, a slug or a category: you are not
+               shown the catalogue, and you do not need to be — the phrase is matched
+               against it afterwards.
+                 "an evening out, not sports"      -> excludeText: ["sports"]
+                 "a concert but not too crowded"   -> excludeText: ["too crowded"]
+                 "live music, nothing electronic"  -> excludeText: ["electronic music"]
+                 "something in london, not a conference"
+                                                   -> excludeText: ["a conference"]
+
                NEVER write a negative phrase into a vibe facet. "not too crowded" and
                "crowded" are near-identical to a vector, so a negation left in the vibe
-               returns exactly what the person ruled out.
-                 "not too crowded"      -> excludeTags: ["large-scale"]
-                 "nothing late"         -> excludeTags: ["late-night"]
-                 "no big stadium shows" -> excludeTags: ["large-scale"]
+               returns exactly what the person ruled out. It belongs here instead, and
+               here it is stated positively — "too crowded", not "not too crowded".
+
+               Empty unless the sentence actually rules something out. A request that
+               only says what it wants rules out nothing.
 
             DATES
             Return the person's own words in "dateExpression" — "this weekend", "next
@@ -133,7 +154,7 @@ public class QueryExtractor {
                 priceMax:        80
                 vibeFacets:      [{"dim":"atmosphere","value":"calm, low-key, unhurried"},
                                   {"dim":"format","value":"live jazz performance"}]
-                excludeTags:     ["large-scale"]
+                excludeText:     ["too crowded"]
 
             Note what happened: "new york" and "$80" left the vibe entirely, "not too
             crowded" became an exclusion rather than a facet, and "thing" was dropped.
@@ -146,9 +167,10 @@ public class QueryExtractor {
         if (message == null || message.isBlank()) return QueryExtraction.empty();
 
         try {
+            // No tag catalogue. The prompt is now a constant, whatever the
+            // vocabulary grows to.
             String raw = ollama.generateJson(SYSTEM_PROMPT,
-                    Taxonomy.promptBlock() + "\n" + tagCatalog.promptBlock()
-                            + "\nREQUEST:\n" + message,
+                    Taxonomy.promptBlock() + "\nREQUEST:\n" + message,
                     schema());
             return groundExclusions(parse(raw), message);
         } catch (Exception e) {
@@ -178,15 +200,16 @@ public class QueryExtractor {
         facets.put("type", "array");
         facets.set("items", facetItem);
 
-        // Constrained to the catalogue, so an exclusion can only ever name a
-        // tag the filter can actually apply.
-        ObjectNode tagEnum = mapper.createObjectNode();
-        tagEnum.put("type", "string");
-        ArrayNode slugs = tagEnum.putArray("enum");
-        tagCatalog.slugs().forEach(slugs::add);
+        // Free text, deliberately. An enum of slugs would have to be rendered
+        // into the prompt for the model to choose from — 3,135 characters at
+        // eighteen tags, linear in the vocabulary, and measured to cost 3
+        // points of retrieval because the model copies slugs into facet values
+        // once it has seen them. A phrase is resolved against the catalogue
+        // afterwards, by vector, which costs nothing per tag.
         ObjectNode excludes = mapper.createObjectNode();
         excludes.put("type", "array");
-        excludes.set("items", tagEnum);
+        excludes.set("items", str("A thing the person ruled out, in their words, "
+                + "stated positively. Not a slug."));
 
         ObjectNode props = mapper.createObjectNode();
         ObjectNode intentEnum = mapper.createObjectNode();
@@ -210,7 +233,7 @@ public class QueryExtractor {
         props.set("dateExpression", nullableStr("Their own words for when, or null. Never a computed date."));
         props.set("priceMax", nullableNumber("Maximum price as a number, or null."));
         props.set("vibeFacets", facets);
-        props.set("excludeTags", excludes);
+        props.set("excludeText", excludes);
 
         ObjectNode schema = mapper.createObjectNode();
         schema.put("type", "object");
@@ -221,7 +244,7 @@ public class QueryExtractor {
         // arrived with no ordinal at all, so a selection was indistinguishable
         // from a search. Requiring the field forces an explicit null instead.
         schema.putArray("required")
-                .add("vibeFacets").add("excludeTags").add("clearFields")
+                .add("vibeFacets").add("excludeText").add("clearFields")
                 .add("intent").add("ordinal").add("properNoun").add("city")
                 .add("dateExpression").add("priceMax");
         return schema;
@@ -264,55 +287,117 @@ public class QueryExtractor {
           + "kh\u00f4ng|ch\u1eb3ng|\u0111\u1eebng|tr\u1eeb|ngo\u1ea1i tr\u1eeb)\\b",
             java.util.regex.Pattern.CASE_INSENSITIVE);
 
-    /** Above this many exclusions the list is an enumeration, not a reading. */
-    private static final int MAX_EXCLUSIONS = 2;
+    /**
+     * Share of the catalogue above which an exclusion list is an enumeration
+     * rather than a reading.
+     *
+     * <p>A fraction, not a count, and the difference is not cosmetic. The rule
+     * was written as "at most 2" against a ten-tag vocabulary, where two was a
+     * fifth of everything on offer. The vocabulary is now eighteen tags, and
+     * the same constant made an ordinary request impossible: "an evening out,
+     * not sports" has to rule out {@code team-sport-fixture},
+     * {@code motorsport-race} and {@code combat-sport} — three of eighteen, a
+     * sixth of the catalogue and plainly a reading of the sentence — and the
+     * cap discarded all three, so the search returned a Super Bowl, a Champions
+     * League final and a baseball game.
+     *
+     * <p>Splitting one {@code sports} tag into three was right for tagging and
+     * silently broke negation, because the two decisions were coupled through
+     * an absolute number that nobody thought to revisit. A share cannot come
+     * uncoupled that way.
+     *
+     * <p>A third is where the original evidence sits: the list that motivated
+     * this gate excluded ten tags out of ten, and the next worst excluded six
+     * of ten. Both are far above a third; every genuine reading measured has
+     * been at or below a sixth.
+     */
+    private static final double MAX_EXCLUSION_SHARE = 1.0 / 3;
+
+    /** Never below this, so a vocabulary too small to take a share still works. */
+    private static final int MIN_EXCLUSION_ALLOWANCE = 2;
 
     /**
-     * Holds {@code excludeTags} to what the sentence actually rules out.
+     * Turns what the person ruled out into tag slugs the filter can apply.
      *
-     * <h3>Why this is needed at all</h3>
-     * {@code excludeTags} is required by the JSON schema, so the grammar makes
-     * the model produce an array whether or not the request rules anything out
-     * — the same failure {@code clearFields} had. And unlike every other model
-     * output in this service, an exclusion is a <em>hard filter</em>: a facet
-     * must quote its source, a tag assignment must survive review, an exclusion
-     * deletes events on the model's word alone.
+     * <h3>Why the model is not asked for a slug</h3>
+     * It used to be, with the catalogue rendered into the prompt so it had
+     * something to choose from. That cost 3,135 characters at eighteen tags and
+     * grew with every tag added; at a hundred it would have dominated the
+     * request. Worse, it changed the rest of the extraction: shown eighteen
+     * definitions, the model started writing slugs into facet values —
+     * "basketball game" came back as {@code format: "team-sport-fixture"} — and
+     * a slug embeds nothing like the prose a facet is quoted from. Removing the
+     * catalogue was measured at +3 points across the evaluation set, with the
+     * whole difference in the groups the vector path serves.
      *
-     * <h3>What was measured</h3>
-     * Across the 57-query evaluation set, ten requests produced exclusions and
-     * the distribution was bimodal with nothing in between:
-     * <ul>
-     *   <li>Three excluded exactly one tag, and all three were right —
-     *       "not too crowded" ruled out large-scale, "not sports" ruled out
-     *       sports.</li>
-     *   <li>Seven excluded five to ten of the ten tags in the vocabulary, and
-     *       all seven were wrong. "live music, nothing electronic" excluded all
-     *       ten <em>including live-music</em>, and "theatre but not a musical"
-     *       excluded performing-arts. Each destroyed its own request, cutting
-     *       the candidate set from 64 events to 6.</li>
-     *   <li>Three of the seven — "tech conference", "basketball game",
-     *       "soccer match" — contained no negation at all. The model was
+     * <p>A phrase is resolved here instead, against the same vectors the rest
+     * of the system uses. The prompt is now constant whatever the vocabulary
+     * grows to — the property the ingest side has always had.
+     *
+     * <h3>Three gates, each decidable</h3>
+     * <ol>
+     *   <li>No negation marker in the sentence, no exclusion. Required because
+     *       the schema makes the model produce the array whether or not the
+     *       request rules anything out — "tech conference", "basketball game"
+     *       and "soccer match" all came back excluding things, the model
      *       listing what the event is not.</li>
-     * </ul>
-     *
-     * <h3>Two gates, both decidable</h3>
-     * A sentence with no negation marker supports no exclusion. And a list
-     * longer than {@link #MAX_EXCLUSIONS} is discarded whole rather than
-     * trimmed: once the model has enumerated the vocabulary, no subset of that
-     * enumeration is a reading of the sentence, so keeping two of ten would
-     * just be choosing arbitrarily which correct answers to delete.
+     *   <li>More than {@code maxExcludePhrases} separate things, and it is
+     *       listing rather than reading.</li>
+     *   <li>The nearest tag must stand clear of the runner-up. See
+     *       {@code excludeGapMin} — this is what stops "nothing electronic"
+     *       from deleting live music, and it is a comparison rather than a
+     *       floor because absolute similarity puts that mistake <em>above</em>
+     *       a correct exclusion.</li>
+     * </ol>
      */
     private QueryExtraction groundExclusions(QueryExtraction q, String message) {
         if (q.excludeTags().isEmpty()) return q;
 
-        String reason = null;
-        if (!NEGATION.matcher(message).find())            reason = "the request rules nothing out";
-        else if (q.excludeTags().size() > MAX_EXCLUSIONS) reason = "the list enumerates the vocabulary";
-        if (reason == null) return q;
+        if (!NEGATION.matcher(message).find()) {
+            log.debug("Dropping excludeText {} — the request rules nothing out: \"{}\"",
+                    q.excludeTags(), message);
+            return withExclusions(q, List.of());
+        }
+        if (q.excludeTags().size() > properties.getValidation().getMaxExcludePhrases()) {
+            log.debug("Dropping excludeText {} — {} separate things is an enumeration, "
+                    + "not a reading: \"{}\"", q.excludeTags(), q.excludeTags().size(), message);
+            return withExclusions(q, List.of());
+        }
 
-        log.debug("Dropping excludeTags {} — {}: \"{}\"", q.excludeTags(), reason, message);
+        double gapMin = properties.getValidation().getExcludeGapMin();
+        List<String> slugs = new ArrayList<>(q.excludeTags().size());
+        for (String phrase : q.excludeTags()) {
+            List<Object[]> near;
+            try {
+                near = tagRepository.nearestTwo(embeddings.embedQuery(phrase));
+            } catch (Exception e) {
+                // One phrase failing to embed costs that phrase, not the search.
+                log.warn("Could not resolve exclusion '{}': {}", phrase, e.getMessage());
+                continue;
+            }
+            if (near.isEmpty()) continue;
+
+            String slug = (String) near.get(0)[0];
+            double best = ((Number) near.get(0)[1]).doubleValue();
+            double gap  = near.size() < 2 ? best
+                    : best - ((Number) near.get(1)[1]).doubleValue();
+
+            if (gap < gapMin) {
+                log.debug("Not excluding '{}' — nearest is {} at {} but {} is {} behind, "
+                        + "so no tag in the catalogue means this", phrase, slug,
+                        String.format("%.3f", best), near.get(1)[0], String.format("%.3f", gap));
+                continue;
+            }
+            log.debug("Excluding '{}' -> {} ({}, clear of the next by {})", phrase, slug,
+                    String.format("%.3f", best), String.format("%.3f", gap));
+            slugs.add(slug);
+        }
+        return withExclusions(q, slugs);
+    }
+
+    private static QueryExtraction withExclusions(QueryExtraction q, List<String> excludes) {
         return new QueryExtraction(q.intent(), q.ordinal(), q.clearFields(), q.properNoun(),
-                q.city(), q.dateExpression(), q.priceMax(), q.vibeFacets(), List.of());
+                q.city(), q.dateExpression(), q.priceMax(), q.vibeFacets(), excludes);
     }
 
     private QueryExtraction parse(String raw) throws com.fasterxml.jackson.core.JsonProcessingException {
@@ -328,9 +413,9 @@ public class QueryExtractor {
         });
 
         List<String> excludes = new ArrayList<>();
-        root.path("excludeTags").forEach(n -> {
-            String slug = n.asText("").trim();
-            if (tagCatalog.isKnown(slug)) excludes.add(slug);
+        root.path("excludeText").forEach(n -> {
+            String phrase = n.asText("").trim();
+            if (!phrase.isEmpty()) excludes.add(phrase);
         });
 
         JsonNode price = root.path("priceMax");

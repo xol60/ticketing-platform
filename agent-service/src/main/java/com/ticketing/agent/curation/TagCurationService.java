@@ -382,13 +382,16 @@ public class TagCurationService {
      * different halves, which is what a useful distinction looks like.
      *
      * <p>Both are needed because they miss different things, which is not a
-     * guess — it was measured on the first version of this check, which had
-     * only the first test. A candidate written as an outright restatement of
-     * {@code performing-arts} scored 0.883 against it while the dim's closest
-     * genuine pair was 0.713, and it took 17 of 40 facets: a plain duplicate by
-     * wording, and under the displacement bar. The reverse case is
-     * {@code broadcast} against {@code large-scale} — 0.675, comfortably
-     * ordinary, and it took most of the stadium facets anyway.
+     * guess — the first version of this check had only the displacement test
+     * and a deliberate restatement of an existing tag walked straight past it:
+     * scored 0.883 against the tag it was rewording, well outside the 0.713 the
+     * dim's closest genuine pair sat at, while taking 17 of 40 facets — under
+     * the displacement bar. Wording caught what displacement could not.
+     *
+     * <p>The reverse case is {@code business-investors}, which reads only 0.676
+     * against {@code technical-practitioners} — comfortably inside the ordinary
+     * band — and took four of its seven facets anyway. Displacement caught what
+     * wording could not.
      */
     private static boolean duplicates(int held, int taken, double similarity, Double baseline) {
         boolean takesOver  = held >= DISPLACEMENT_FLOOR && taken * 2 >= held;

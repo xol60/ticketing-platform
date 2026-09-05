@@ -140,9 +140,23 @@ public class Ranker {
      * Walks the ranked list and skips anything that would be the third of its
      * kind, until the shortlist is full.
      *
-     * <p>If the cap leaves the list short — a corpus where everything really is
-     * the same kind of thing — the skipped rows come back in score order. A
-     * short answer is worse than a repetitive one.
+     * <p>If the caps leave the list short — a corpus where everything really is
+     * the same kind of thing — skipped rows come back in score order, because a
+     * short answer is worse than a repetitive one. With one exception: the show
+     * cap is never given back.
+     *
+     * <p>The two caps are not the same kind of rule. Category variety is a
+     * preference — five football matches for a request that never mentioned
+     * football is a worse answer than four, but it is still four answers.
+     * A second date of a show already listed is not an answer at all: the
+     * person has seen that show and can ask for its other dates. Refilling from
+     * it spends a slot to tell them something they already know.
+     *
+     * <p>Measured: "high energy night out" came back with Super Bowl LX @ Tokyo
+     * in two of its five slots, because the candidate pool was small, the show
+     * cap correctly rejected the second date, and the refill loop then put it
+     * straight back. The cap held only while there were enough distinct shows
+     * to make it unnecessary.
      */
     private List<SearchResult.Scored> applyDiversity(List<SearchResult.Scored> scored,
                                                      int limit, boolean capShows) {
@@ -175,6 +189,13 @@ public class Ranker {
         }
         for (SearchResult.Scored s : skipped) {
             if (picked.size() >= limit) break;
+            // Category variety is given back here; the show cap is not. A
+            // duplicate show is never a better use of a slot than leaving it
+            // empty, so this re-checks it against the same counter the first
+            // pass used rather than waving the row through.
+            if (capShows && shows.merge(showOf(s.event()), 1, Integer::sum) > MAX_PER_SHOW) {
+                continue;
+            }
             picked.add(s);
         }
         return picked;

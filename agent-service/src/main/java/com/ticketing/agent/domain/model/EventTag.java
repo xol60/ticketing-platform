@@ -14,7 +14,7 @@ import java.time.Instant;
  * {@code human} rows alone.
  *
  * <p>{@link #approvedAt} gates the exclude filter. A query saying "not too
- * crowded" resolves to {@code NOT EXISTS (… tag_id = large-scale AND
+ * crowded" resolves to {@code NOT EXISTS (… tag_id = <the crowd-size tag> AND
  * approved_at IS NOT NULL)} — hiding an event on the strength of an unreviewed
  * machine guess would silently shrink the catalogue for a reason nobody
  * checked.

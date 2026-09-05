@@ -61,7 +61,7 @@ class TaxonomyTest {
         assertThat(Taxonomy.isEmbedded(Taxonomy.DIM_FORMAT)).isTrue();
         assertThat(Taxonomy.isEmbedded(Taxonomy.DIM_SETTING)).isFalse();
         assertThat(Taxonomy.isEmbedded(Taxonomy.DIM_SCALE))
-                .as("scale carries large-scale and broadcast").isTrue();
+                .as("scale carries tags, so its facets need vectors").isTrue();
         assertThat(Taxonomy.isEmbedded(null)).isFalse();
     }
 

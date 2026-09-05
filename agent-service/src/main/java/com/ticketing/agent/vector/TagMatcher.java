@@ -24,8 +24,10 @@ import java.util.Optional;
  * from the description; the tag it maps to inherits that provenance.
  *
  * <h3>Why value and span together</h3>
- * Measured on three real facets from the catalogue, each representation matched
- * the correct tag in only some cases, while the pair matched in all three:
+ * Measured on three real facets, each representation alone matched the correct
+ * tag in only some cases while the pair matched in all three. The slugs below
+ * are from the seed vocabulary, since retired, but the failure pattern is a
+ * property of the representation rather than of those particular tags:
  *
  * <pre>
  *   facet                  value        span          value + span

@@ -54,9 +54,9 @@ public class TagPreviewResponse {
      * than any two existing tags on that dim sit to each other.
      *
      * <p>The second test uses no constant, and could not — definitions that are
-     * unmistakably distinct score 0.596 to 0.734 against each other on this
-     * corpus ({@code live-music} against {@code performing-arts} is 0.713), so
-     * a fixed cut either flags everything or nothing. See
+     * unmistakably distinct score up to 0.721 against each other on this corpus
+     * ({@code team-sport-fixture} against {@code combat-sport} is 0.716), so a
+     * fixed cut either flags everything or nothing. See
      * {@link #similarityBaseline}.
      */
     private boolean duplicateWarning;

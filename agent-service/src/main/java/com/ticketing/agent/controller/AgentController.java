@@ -86,7 +86,7 @@ public class AgentController {
      * <p>Separate from creation on purpose. A tag does not only serve the facet
      * that motivated it — it competes for every facet on its dim, and that
      * blast radius is invisible while writing a definition. Measured:
-     * {@code broadcast} was written to cover three facets about television
+     * a tag written to cover three facets about television
      * viewership and became the top match on eighteen, eleven of them wrong.
      * Had this endpoint existed then, that would have been on screen before the
      * tag was saved.

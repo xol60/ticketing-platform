@@ -183,7 +183,7 @@ public interface EventFacetRepository extends JpaRepository<EventFacet, Long> {
      * <p>The preview behind tag creation. A new tag does not only serve the
      * facet that motivated it — it competes for every facet on its dim, and
      * that blast radius is invisible at the moment of writing a definition.
-     * Measured: {@code broadcast} was created to cover three facets about
+     * Measured on the seed vocabulary: a tag created to cover three facets about
      * television viewership and became rank one on eighteen, of which eleven
      * were wrong.
      *

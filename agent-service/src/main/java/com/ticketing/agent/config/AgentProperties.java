@@ -131,14 +131,6 @@ public class AgentProperties {
         /** Spans shorter than this are too generic to constitute evidence. */
         @Positive private int minSpanChars = 12;
 
-        /**
-         * Cosine below which a facet value looks unlike anything approved on
-         * that dim before — usually the model writing atmosphere content into
-         * the format slot. Routed to review, never dropped: the dim may simply
-         * be new.
-         */
-        @DecimalMin("0.0") @DecimalMax("1.0")
-        private double dimThreshold = 0.60;
 
 
         /**
@@ -175,6 +167,27 @@ public class AgentProperties {
          */
         @DecimalMin("0.0") @DecimalMax("1.0")
         private double queryTagMatchThreshold = 0.42;
+
+        /**
+         * How far the nearest tag must stand clear of the runner-up before a
+         * phrase is treated as naming it.
+         *
+         * <p>A comparison rather than a similarity floor, for the reason every
+         * other gate here is: absolute cosine says nothing. {@code a musical}
+         * scores 0.561 against the tag it would wrongly delete, higher than
+         * {@code sports} at 0.558 against the tag it correctly deletes. What
+         * separates them is the runner-up — 0.013 behind in the first case,
+         * 0.037 in the second.
+         *
+         * <p>Set from seven measured phrases, which is not many. The gate logs
+         * every gap it sees so the number can be revisited against real
+         * traffic rather than against this sample.
+         */
+        @DecimalMin("0.0") @DecimalMax("1.0")
+        private double excludeGapMin = 0.030;
+
+        /** Above this many separate things ruled out, the model is listing. */
+        @Positive private int maxExcludePhrases = 3;
 
         /**
          * Whether a FACET clearing every deterministic gate may skip human

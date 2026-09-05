@@ -49,7 +49,7 @@ public class TagCatalog {
 
     private volatile Snapshot snapshot;
 
-    private record Snapshot(List<TagEntity> tags, Set<String> slugs, String promptBlock) {}
+    private record Snapshot(List<TagEntity> tags, Set<String> slugs) {}
 
     /** Drops the cache. Call after creating, editing or retiring a tag. */
     public void invalidate() {
@@ -60,21 +60,19 @@ public class TagCatalog {
     public Set<String>     slugs()          { return current().slugs(); }
     public boolean         isKnown(String s) { return s != null && current().slugs().contains(s); }
 
-    /**
-     * The tag catalogue as the query model sees it.
-     *
-     * <p>Only the query prompt gets this. Ingestion is asked for facets alone —
-     * a tag is earned by matching a facet's vector against tag definitions on
-     * its own dim, so it inherits that facet's verified span as evidence, while
-     * a label the model asserts carries none.
-     *
-     * <p>The query side is the one place a slug must be nameable, because a
-     * request to avoid something becomes an {@code excludeTags} entry. The
-     * schema constrains that field to an enum of real slugs so nothing can be
-     * invented, but an enum of bare slugs carries no meaning — the definitions
-     * have to travel with it.
-     */
-    public String promptBlock() { return current().promptBlock(); }
+    // There is no promptBlock() any more, and its absence is the point.
+    //
+    // The query prompt used to carry this catalogue so the model could name a
+    // slug for excludeTags — 3,135 characters at eighteen tags, linear in the
+    // vocabulary, and 17KB at a hundred. It also changed the rest of the
+    // extraction: shown the definitions, the model wrote slugs into facet
+    // values, so "basketball game" arrived as format: "team-sport-fixture" and
+    // embedded like nothing any facet is quoted from. Removing it measured +3
+    // points over the evaluation set.
+    //
+    // A person now says what they are ruling out in their own words, and the
+    // phrase is resolved against these same vectors afterwards. Neither prompt
+    // in this service enumerates the vocabulary now, so neither grows with it.
 
     private Snapshot current() {
         Snapshot s = snapshot;
@@ -84,17 +82,8 @@ public class TagCatalog {
                 .sorted(java.util.Comparator.comparing(TagEntity::getSlug))
                 .toList();
 
-        StringBuilder sb = new StringBuilder(2048);
-        sb.append("TAGS — slugs available to excludeTags.\n");
-        for (TagEntity t : tags) {
-            sb.append("  ").append(t.getSlug())
-              .append(t.getDim() == null ? "" : " [" + t.getDim() + "]")
-              .append(" — ").append(t.getDescription()).append('\n');
-        }
-
         s = new Snapshot(tags,
-                tags.stream().map(TagEntity::getSlug).collect(Collectors.toUnmodifiableSet()),
-                sb.toString());
+                tags.stream().map(TagEntity::getSlug).collect(Collectors.toUnmodifiableSet()));
         snapshot = s;
         return s;
     }
