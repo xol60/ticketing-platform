@@ -172,7 +172,7 @@ public class QueryExtractor {
             String raw = ollama.generateJson(SYSTEM_PROMPT,
                     Taxonomy.promptBlock() + "\nREQUEST:\n" + message,
                     schema());
-            return groundExclusions(parse(raw), message);
+            return groundClearFields(groundExclusions(parse(raw), message), message);
         } catch (Exception e) {
             // Never surfaced to the user. Searching with no vibe returns a
             // worse answer; failing returns none.
@@ -285,7 +285,33 @@ public class QueryExtractor {
     private static final java.util.regex.Pattern NEGATION = java.util.regex.Pattern.compile(
             "\\b(not|no|nothing|none|without|except|avoid|apart from|other than|"
           + "kh\u00f4ng|ch\u1eb3ng|\u0111\u1eebng|tr\u1eeb|ngo\u1ea1i tr\u1eeb)\\b",
-            java.util.regex.Pattern.CASE_INSENSITIVE);
+            // UNICODE_CHARACTER_CLASS, or \b never fires on a word starting with
+            // a Vietnamese letter: Java builds \b from the ASCII \w by default,
+            // 'đ' is not in it, so "\bđâu" cannot match "đâu cũng được" and the
+            // gate would silently pass every Vietnamese retraction through. The
+            // same trap sits in NEGATION on "đừng".
+            java.util.regex.Pattern.CASE_INSENSITIVE
+                    | java.util.regex.Pattern.UNICODE_CHARACTER_CLASS);
+
+    /**
+     * Words that take something back. Nothing else may clear a slot.
+     *
+     * <p>Deliberately narrow. A bare "any" is not here: "anything in tokyo"
+     * contains it and retracts nothing, so the pattern asks for the phrases a
+     * person actually uses to withdraw a constraint rather than for a token
+     * that happens to appear inside one.
+     */
+    private static final java.util.regex.Pattern RETRACTION = java.util.regex.Pattern.compile(
+            "\\b(forget|drop the|remove the|scrap|ignore the|never ?mind|"
+          + "doesn'?t matter|does not matter|don'?t care|no preference|"
+          + "any ?where|any ?time|any date|any day|any price|any city|any budget|"
+          + "when ?ever|wher ?ever|"
+          + "b\u1ecf|th\u00f4i|k\u1ec7|m\u1eb7c k\u1ec7|"
+          + "\u0111\u00e2u c\u0169ng \u0111\u01b0\u1ee3c|l\u00fac n\u00e0o c\u0169ng \u0111\u01b0\u1ee3c|"
+          + "bao gi\u1edd c\u0169ng \u0111\u01b0\u1ee3c|sao c\u0169ng \u0111\u01b0\u1ee3c|"
+          + "kh\u00f4ng quan tr\u1ecdng)\\b",
+            java.util.regex.Pattern.CASE_INSENSITIVE
+                    | java.util.regex.Pattern.UNICODE_CHARACTER_CLASS);
 
     /**
      * Share of the catalogue above which an exclusion list is an enumeration
@@ -393,6 +419,47 @@ public class QueryExtractor {
             slugs.add(slug);
         }
         return withExclusions(q, slugs);
+    }
+
+    /**
+     * Holds {@code clearFields} to slots the sentence actually gives back.
+     *
+     * <h3>The failure</h3>
+     * Turn one, "concerts in london", sets a city filter. Turn two, "an evening
+     * out, not sports", mentions no city, no date and no price — and comes back
+     * with {@code clearFields = [city, dateExpression, priceMax]}. The London
+     * filter is deleted and the results are Hà Nội, Los Angeles and New York.
+     * Nothing in the response says a constraint was dropped, so it reads as the
+     * agent misunderstanding turn two rather than discarding turn one.
+     *
+     * <h3>Why the existing guards all miss it</h3>
+     * The prompt has a section on this, headed "Not mentioning a slot is not
+     * removing it", with three worked counter-examples. The model ignores it —
+     * the fourth prohibition in this service measured to have no effect.
+     *
+     * <p>The JSON schema constrains {@code clearFields} to an enum, which
+     * guarantees the values are spellable, not that they are warranted.
+     *
+     * <p>{@link QueryExtraction}'s own invariant compares {@code clearFields}
+     * against the slots stated <em>in the same turn</em>, and catches the case
+     * it was written for: "actually in tokyo" arriving as {@code city="tokyo"}
+     * together with {@code clearFields=["city"]}. That output contradicts
+     * itself. This one does not — every slot it clears is genuinely absent from
+     * the turn. It is wrong only against the sentence, and the record never
+     * sees the sentence.
+     *
+     * <p>So the check belongs here, beside {@link #groundExclusions}, and for
+     * the same reason: clearing a slot deletes accumulated state on the model's
+     * word alone, and anything that destructive has to quote its source.
+     */
+    private QueryExtraction groundClearFields(QueryExtraction q, String message) {
+        if (q.clearFields().isEmpty()) return q;
+        if (RETRACTION.matcher(message).find()) return q;
+
+        log.debug("Dropping clearFields {} — nothing in the turn takes anything back: \"{}\"",
+                q.clearFields(), message);
+        return new QueryExtraction(q.intent(), q.ordinal(), List.of(), q.properNoun(),
+                q.city(), q.dateExpression(), q.priceMax(), q.vibeFacets(), q.excludeTags());
     }
 
     private static QueryExtraction withExclusions(QueryExtraction q, List<String> excludes) {
