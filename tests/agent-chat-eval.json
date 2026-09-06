@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "corpusSnapshot": "2026-09-06",
+  "notes": [
+    "Multi-turn eval for the chat agent. agent-eval.json cannot see any of this:",
+    "it posts one query to /search and reads the hits back, so every case there",
+    "starts from an empty filter state. The whole class of bugs measured here —",
+    "a filter set on turn 1 surviving, or correctly not surviving, turn 2 — is",
+    "invisible to it.",
+    "",
+    "Each case is a session. Turns are posted in order to /api/agent/chat under",
+    "one sessionId, and only the LAST reply is scored. The turns before it exist",
+    "to build state, not to be judged.",
+    "",
+    "Two checks, and they are opposites on purpose:",
+    "  allCity    every hit sits in that city — a filter from an earlier turn",
+    "             is still applied. Zero hits fails: an empty result proves",
+    "             nothing about persistence.",
+    "  multiCity  hits span two or more cities — a filter WAS dropped, because",
+    "             this turn took it back in words.",
+    "A fix that satisfies every allCity case by never clearing anything would",
+    "fail all four multiCity cases. That is the point of carrying both.",
+    "",
+    "retract-city-vn is a known failure, kept red on purpose. The model does not",
+    "emit clearFields for \"đâu cũng được\", and the grounding gate in",
+    "QueryExtractor.groundClearFields can only remove entries the model produced,",
+    "never add ones it did not. Teaching the prompt Vietnamese retraction phrases",
+    "was measured and cost 3 points on agent-eval.json across six unrelated",
+    "groups, so it was reverted. Delete this case only when the model itself",
+    "improves — not by widening the gate."
+  ],
+  "cases": [
+    {
+      "id": "persist-city",
+      "group": "persist",
+      "turns": ["concerts in london", "an evening out, not sports"],
+      "check": {"allCity": "London"},
+      "why": "The original bug. Turn 2 names no city, no date and no price, yet the model returned clearFields=[city,dateExpression,priceMax] and merge wiped London. Nothing in the sentence takes anything back."
+    },
+    {
+      "id": "persist-city-vibe",
+      "group": "persist",
+      "turns": ["shows in tokyo", "something calm"],
+      "check": {"allCity": "Tokyo"},
+      "why": "A pure vibe refinement. Adding an atmosphere constraint must narrow the set, not reset where it is searching."
+    },
+    {
+      "id": "persist-city-price",
+      "group": "persist",
+      "turns": ["concerts in london under 300", "something bigger"],
+      "check": {"allCity": "London"},
+      "why": "Two filters standing, only one vaguely addressed. 'Bigger' touches scale, not location."
+    },
+    {
+      "id": "persist-across-three",
+      "group": "persist",
+      "turns": ["musicals in london", "something for the family", "a bit shorter"],
+      "check": {"allCity": "London"},
+      "why": "State has to survive more than one hop. A gate that only inspects the latest turn against the latest extraction still has to hold here."
+    },
+    {
+      "id": "persist-genre",
+      "group": "persist",
+      "turns": ["football in london", "something with more atmosphere"],
+      "check": {"allCity": "London"},
+      "why": "The follow-up is the vaguest phrasing in the set, and the one most likely to make the model re-extract from scratch."
+    },
+    {
+      "id": "retract-city",
+      "group": "retract",
+      "turns": ["concerts in london", "anywhere is fine"],
+      "check": {"multiCity": true},
+      "why": "The control for every persist case. An explicit retraction must still clear the filter, or the fix is just a filter that can never be unset."
+    },
+    {
+      "id": "retract-city-vn",
+      "group": "retract",
+      "turns": ["sự kiện ở hà nội", "đâu cũng được"],
+      "check": {"multiCity": true},
+      "why": "KNOWN FAILURE. Same retraction in Vietnamese. The model emits no clearFields at all, so there is nothing for the gate to keep. See notes."
+    },
+    {
+      "id": "retract-budget",
+      "group": "retract",
+      "turns": ["concerts in london under 300", "forget the budget"],
+      "check": {"allCity": "London"},
+      "why": "A retraction aimed at one slot must not take the others with it. Price goes, city stays."
+    },
+    {
+      "id": "retract-date",
+      "group": "retract",
+      "turns": ["concerts in paris in february", "any date works"],
+      "check": {"allCity": "Paris"},
+      "why": "Same shape on the date slot, and a second city so a hardcoded 'London' would not pass."
+    },
+    {
+      "id": "select-keeps",
+      "group": "navigate",
+      "turns": ["musicals in london", "the second one"],
+      "check": {"stage": "FOCUSED"},
+      "why": "Picking a row off the list is navigation, not a new search. It must reach FOCUSED rather than re-running the query."
+    }
+  ]
+}
