@@ -154,6 +154,14 @@ public class SearchService {
         List<String> relaxations = new ArrayList<>();
         BigDecimal priceMax = q.priceMax();
 
+        // Said first, before any widening, because it is not a widening: the
+        // person asked for a place the catalogue does not cover, and every
+        // result below is somewhere else. Announcing it is the difference
+        // between an answer and a substitution nobody was told about.
+        if (cityIsUnknown(q, cityId)) {
+            relaxations.add("No event in" + q.city());
+        }
+
         List<AgentEvent> candidates = find(cityId, window, priceMax, excludeIds);
 
         // Relaxation, in a fixed order, every step announced. City is never
@@ -481,6 +489,25 @@ public class SearchService {
                             log.debug("City '{}' did not resolve — searching unconstrained", raw);
                             return null;
                         }));
+    }
+
+    /**
+     * Whether a city the person named exists in the catalogue at all.
+     *
+     * <p>Asked separately from {@link #resolveCity} because a null there means
+     * two different things and the search treated them as one: "no city was
+     * mentioned" and "a city was mentioned and we have nothing there". The
+     * second silently dropped the filter, so "anything in berlin" returned
+     * London and Tokyo with {@code totalMatched} equal to the whole catalogue
+     * and nothing in the response saying a constraint had been ignored.
+     *
+     * <p>Seven of the eight cases in the evaluation's {@code absent} group
+     * failed exactly this way: the catalogue has no jazz, no comedy, no Berlin
+     * and no ticket under fifty dollars, and every one of those requests came
+     * back with five confident results and an empty relaxation list.
+     */
+    private boolean cityIsUnknown(QueryExtraction q, Integer resolved) {
+        return resolved == null && q.city() != null && !q.city().isBlank();
     }
 
     private List<Integer> resolveTags(List<String> slugs) {

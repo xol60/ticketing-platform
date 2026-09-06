@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "corpusSnapshot": "2026-08-29",
+  "corpusSnapshot": "2026-09-06",
   "notes": [
     "Hand-labelled retrieval eval for the recommendation agent. Run it as a unit",
     "test on every prompt, model, or ranking-weight change — without it, every",
@@ -24,9 +24,29 @@
     "it surfaced afterwards.",
     "",
     "Today for date-relative queries is corpusSnapshot. Most of the corpus sits in",
-    "2027, so 'this weekend' legitimately returns almost nothing."
+    "2027, so 'this weekend' legitimately returns almost nothing.",
+    "",
+    "── Mo rong 2026-09-06 ──",
+    "40 ca them vao, va chung duoc gan nhan khac han 57 ca dau.",
+    "",
+    "57 ca goc: nhan viet tay, khong ghi lai cach chon. Khong tai lap duoc, va ti le",
+    "nhom giua chung (11 vibe / 2 temporal) la lua chon cua nguoi viet chu khong phai",
+    "phan bo luu luong — dieu nay tung bi nham la bang chung ve hanh vi nguoi dung.",
+    "",
+    "40 ca moi: moi ca mang truong 'rule' ghi dung phep loc da sinh ra expectIds.",
+    "Nhan tai lap duoc bang mot cau SQL, kiem toan duoc, va khong phu thuoc y kien",
+    "nguoi viet. Doi lai, chung chi bao phu duoc nhung gi dien dat duoc bang mot quy",
+    "tac — cau hoi ve tam trang van phai gan tay.",
+    "",
+    "Ba truc moi ma bo goc khong do:",
+    "  dim-*    cau hoi nham vao tung dim, ke ca ba dim KHONG co vector",
+    "           (setting, duration, participation). Chung do xem hoi ve mot chieu",
+    "           chi luu dang chu thi chuyen gi xay ra.",
+    "  absent   thu danh muc KHONG he co. expectEmpty=true. He thong duoc phep noi",
+    "           long, nhung phai bao la da noi long; tra ve nam ket qua tu tin",
+    "           ma im lang la that bai.",
+    "  price    chua tung duoc do."
   ],
-
   "cases": [
     {
       "id": "artist-taylor-swift",
@@ -79,7 +99,9 @@
       "id": "artist-son-tung-unaccented",
       "group": "proper-noun",
       "query": "son tung mtp",
-      "expectIds": ["aac728f0-745d-4df3-a1ae-323eada21a37"],
+      "expectIds": [
+        "aac728f0-745d-4df3-a1ae-323eada21a37"
+      ],
       "rejectIds": [],
       "why": "Typed without diacritics, as a Vietnamese user on a plain keyboard would. Must still reach the accented row."
     },
@@ -99,7 +121,9 @@
       "id": "artist-daft-punk",
       "group": "proper-noun",
       "query": "daft punk",
-      "expectIds": ["demo-evt-05-0000-0000-000000000005"],
+      "expectIds": [
+        "demo-evt-05-0000-0000-000000000005"
+      ],
       "rejectIds": []
     },
     {
@@ -115,7 +139,6 @@
       "rejectIds": [],
       "why": "fuzziness=AUTO gives two edits at this length. Typo tolerance belongs to the full-text path; the vector path must not be asked to rescue it."
     },
-
     {
       "id": "genre-kpop",
       "group": "genre",
@@ -124,7 +147,9 @@
         "952593a4-192f-4cbf-a1d0-38e674773c9e",
         "demo-evt-04-0000-0000-000000000004"
       ],
-      "rejectIds": ["aac728f0-745d-4df3-a1ae-323eada21a37"],
+      "rejectIds": [
+        "aac728f0-745d-4df3-a1ae-323eada21a37"
+      ],
       "why": "Sơn Tùng is VPOP, not KPOP. Adjacent genres are exactly where a loose vector match goes wrong."
     },
     {
@@ -152,7 +177,9 @@
         "248227fe-23fc-45cd-9a12-57ce053f38e9",
         "cc0aeeef-8573-4e80-acaa-1bb63a09a0ed"
       ],
-      "rejectIds": ["122e56a8-3a92-43ee-84d2-eae5b2604b59"]
+      "rejectIds": [
+        "122e56a8-3a92-43ee-84d2-eae5b2604b59"
+      ]
     },
     {
       "id": "genre-ballet",
@@ -224,7 +251,9 @@
         "76821ee5-6433-4174-b184-ff681d132680",
         "0afa2bcf-1a9c-45ad-8ef7-2d27070b2661"
       ],
-      "rejectIds": ["demo-evt-07-0000-0000-000000000007"]
+      "rejectIds": [
+        "demo-evt-07-0000-0000-000000000007"
+      ]
     },
     {
       "id": "genre-tennis",
@@ -236,7 +265,6 @@
       ],
       "rejectIds": []
     },
-
     {
       "id": "vibe-calm",
       "group": "vibe",
@@ -407,7 +435,6 @@
       ],
       "why": "Tests the participation dim, which is text-only and not embedded — expected to rank on format plus atmosphere alone."
     },
-
     {
       "id": "negation-not-crowded",
       "group": "negation",
@@ -512,7 +539,6 @@
       ],
       "why": "Hard city filter and a category exclusion in one turn. Neither belongs in the vector."
     },
-
     {
       "id": "city-tokyo",
       "group": "city",
@@ -543,7 +569,9 @@
         "3f389c58-67cd-431e-beff-682cdd946c1a",
         "demo-evt-05-0000-0000-000000000005"
       ],
-      "rejectIds": ["7a47bd0e-6301-4e34-b8c3-d7ef8d969136"],
+      "rejectIds": [
+        "7a47bd0e-6301-4e34-b8c3-d7ef8d969136"
+      ],
       "why": "Wimbledon Finals @ Paris is in the city but is not a concert."
     },
     {
@@ -606,7 +634,6 @@
       ],
       "rejectIds": []
     },
-
     {
       "id": "combo-relaxing-london",
       "group": "combined",
@@ -703,12 +730,13 @@
         "cc4d2e4b-f55f-49e3-a1b3-f03f86774eca"
       ]
     },
-
     {
       "id": "adversarial-opera-venue-trap",
       "group": "adversarial",
       "query": "opera",
-      "expectIds": ["dfc14d62-befc-436c-9f07-e285f479e440"],
+      "expectIds": [
+        "dfc14d62-befc-436c-9f07-e285f479e440"
+      ],
       "rejectIds": [
         "1af37f6d-2ce4-48cd-a208-fb9ed5d471ce",
         "ca1fc895-6f75-4b36-97ed-989e25c0c799",
@@ -805,11 +833,12 @@
       "id": "adversarial-empty-metadata",
       "group": "adversarial",
       "query": "coldplay hanoi",
-      "expectIds": ["a36175ef-dd9d-4e2d-91b1-f902da4846f7"],
+      "expectIds": [
+        "a36175ef-dd9d-4e2d-91b1-f902da4846f7"
+      ],
       "rejectIds": [],
       "why": "This row has null venue, category and genre. It must stay reachable by name even though it will carry almost no facets — the ranker must not require a facet score to return anything."
     },
-
     {
       "id": "temporal-this-weekend",
       "group": "temporal",
@@ -851,7 +880,6 @@
       "rejectIds": [],
       "why": "A bare month name with no year resolves to the next occurrence — February 2027, not a past February."
     },
-
     {
       "id": "turn1-bare-greeting",
       "group": "turn-1",
@@ -867,6 +895,574 @@
       "expectIds": [],
       "rejectIds": [],
       "why": "Same rule as turn1-bare-greeting. The point of turn 1 is to harvest a click, which is cheaper than asking a question."
+    },
+    {
+      "id": "setting-broadway",
+      "group": "dim-setting",
+      "query": "a show on broadway",
+      "expectIds": [
+        "2d2b1fe0-8112-4f9f-809d-d2705366a17f",
+        "ca11adc9-5eb5-4fe5-ab19-8497cff5e604",
+        "demo-evt-09-0000-0000-000000000009",
+        "dfc14d62-befc-436c-9f07-e285f479e440"
+      ],
+      "rejectIds": [],
+      "dim": "setting",
+      "rule": "facet setting LIKE '%broadway%'",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: facet setting LIKE '%broadway%'."
+    },
+    {
+      "id": "setting-stadium",
+      "group": "dim-setting",
+      "query": "something at a stadium",
+      "expectIds": [
+        "11e6e6ac-8e1c-4532-88cd-fd84c25d83f8",
+        "248227fe-23fc-45cd-9a12-57ce053f38e9",
+        "64c7f26b-5305-4dd9-9bf5-e10885dd8057",
+        "a36175ef-dd9d-4e2d-91b1-f902da4846f7",
+        "af10a8dd-3679-484e-b4d3-b0b29786dede",
+        "b731758f-8daa-478e-a5dd-e6a46ba3c6fb",
+        "c59e2946-969d-47f4-825c-7ecbe9c352a0",
+        "cc0aeeef-8573-4e80-acaa-1bb63a09a0ed",
+        "ddb16cd7-bb5a-4f55-aceb-410cb542744f",
+        "demo-evt-01-0000-0000-000000000001",
+        "demo-evt-03-0000-0000-000000000003",
+        "demo-evt-07-0000-0000-000000000007"
+      ],
+      "rejectIds": [],
+      "dim": "setting",
+      "rule": "facet setting LIKE '%stadium%'",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: facet setting LIKE '%stadium%'."
+    },
+    {
+      "id": "setting-theatre",
+      "group": "dim-setting",
+      "query": "a night at the theatre",
+      "expectIds": [
+        "25c70f11-1797-4d16-83cd-a1e04c19d54d",
+        "8d241a8a-c840-4ce6-aa27-b69f20f85a01",
+        "b68f8764-9ece-4424-bbf1-3b2085d382e6",
+        "cc4d2e4b-f55f-49e3-a1b3-f03f86774eca",
+        "cdec07a0-2e7a-4af1-89ae-04164936f914",
+        "cf1fc82d-9877-4af6-a922-62f942aad256",
+        "demo-evt-10-0000-0000-000000000010"
+      ],
+      "rejectIds": [],
+      "dim": "setting",
+      "rule": "facet setting LIKE '%theatre%' OR '%theater%'",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: facet setting LIKE '%theatre%' OR '%theater%'."
+    },
+    {
+      "id": "duration-multiday",
+      "group": "dim-duration",
+      "query": "an event that runs over several days",
+      "expectIds": [
+        "09997f36-3285-44fc-ba89-0d8dcb43e282",
+        "0afa2bcf-1a9c-45ad-8ef7-2d27070b2661",
+        "0b1d605e-184f-4078-93f2-7e4d17f2dd82",
+        "0b93ed07-aaae-4e7d-9f14-038658c9f9fc",
+        "1af37f6d-2ce4-48cd-a208-fb9ed5d471ce",
+        "2312ed39-5939-4746-8f36-1e1f1af76668",
+        "7a47bd0e-6301-4e34-b8c3-d7ef8d969136",
+        "7bc5347a-5edd-4cd2-a972-f5822991f86f",
+        "952593a4-192f-4cbf-a1d0-38e674773c9e",
+        "ac940ac0-fe7f-4bb2-96a7-826a1b856dd5",
+        "b3abbb60-9e58-4b3a-89ca-1ceda5dfcc2f",
+        "c6815937-492f-440f-bb2b-d49152cc1eb0",
+        "demo-evt-04-0000-0000-000000000004"
+      ],
+      "rejectIds": [],
+      "dim": "duration",
+      "rule": "facet duration LIKE '%day%' (multi-day, two/three-day)",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: facet duration LIKE '%day%' (multi-day, two/three-day)."
+    },
+    {
+      "id": "duration-twonights",
+      "group": "dim-duration",
+      "query": "a two night run with different setlists",
+      "expectIds": [
+        "ddb16cd7-bb5a-4f55-aceb-410cb542744f",
+        "demo-evt-03-0000-0000-000000000003"
+      ],
+      "rejectIds": [],
+      "dim": "duration",
+      "rule": "facet duration LIKE '%consecutive nights%'",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: facet duration LIKE '%consecutive nights%'."
+    },
+    {
+      "id": "duration-oneevening",
+      "group": "dim-duration",
+      "query": "just a single evening, nothing spread out",
+      "expectIds": [
+        "952593a4-192f-4cbf-a1d0-38e674773c9e",
+        "demo-evt-04-0000-0000-000000000004"
+      ],
+      "rejectIds": [],
+      "dim": "duration",
+      "rule": "facet duration LIKE 'single evening%'",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: facet duration LIKE 'single evening%'."
+    },
+    {
+      "id": "participation-joinin",
+      "group": "dim-participation",
+      "query": "somewhere i can join in rather than just watch",
+      "expectIds": [
+        "248227fe-23fc-45cd-9a12-57ce053f38e9",
+        "5f33dfa8-22be-4032-98d8-272ada06b703",
+        "a36175ef-dd9d-4e2d-91b1-f902da4846f7",
+        "ca1fc895-6f75-4b36-97ed-989e25c0c799",
+        "cc0aeeef-8573-4e80-acaa-1bb63a09a0ed",
+        "demo-evt-01-0000-0000-000000000001"
+      ],
+      "rejectIds": [],
+      "dim": "participation",
+      "rule": "facet participation LIKE '%audience%' (interacts / part of the show / singing)",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: facet participation LIKE '%audience%' (interacts / part of the show / singing)."
+    },
+    {
+      "id": "participation-handson",
+      "group": "dim-participation",
+      "query": "something hands-on where i can try things",
+      "expectIds": [
+        "ad333ce1-b2c5-4eee-8492-65ee7820798a",
+        "bbb51d7d-8d7d-4b0c-b3a1-5561313bb942"
+      ],
+      "rejectIds": [],
+      "dim": "participation",
+      "rule": "facet participation LIKE '%hands-on%' OR '%labs%'",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: facet participation LIKE '%hands-on%' OR '%labs%'."
+    },
+    {
+      "id": "physical-standing",
+      "group": "dim-physical",
+      "query": "a standing gig, no seats",
+      "expectIds": [
+        "5f33dfa8-22be-4032-98d8-272ada06b703",
+        "ca1fc895-6f75-4b36-97ed-989e25c0c799",
+        "ddb16cd7-bb5a-4f55-aceb-410cb542744f",
+        "demo-evt-03-0000-0000-000000000003"
+      ],
+      "rejectIds": [],
+      "dim": "physical",
+      "rule": "facet physical LIKE '%standing%'",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: facet physical LIKE '%standing%'."
+    },
+    {
+      "id": "physical-eco",
+      "group": "dim-physical",
+      "query": "an environmentally conscious event",
+      "expectIds": [
+        "248227fe-23fc-45cd-9a12-57ce053f38e9",
+        "a36175ef-dd9d-4e2d-91b1-f902da4846f7",
+        "cc0aeeef-8573-4e80-acaa-1bb63a09a0ed",
+        "demo-evt-01-0000-0000-000000000001"
+      ],
+      "rejectIds": [],
+      "dim": "physical",
+      "rule": "facet physical/scale LIKE '%compostable%' OR '%environment%'",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: facet physical/scale LIKE '%compostable%' OR '%environment%'."
+    },
+    {
+      "id": "physical-grandstand",
+      "group": "dim-physical",
+      "query": "watching from a grandstand",
+      "expectIds": [
+        "0b93ed07-aaae-4e7d-9f14-038658c9f9fc",
+        "2312ed39-5939-4746-8f36-1e1f1af76668",
+        "7bc5347a-5edd-4cd2-a972-f5822991f86f",
+        "ac940ac0-fe7f-4bb2-96a7-826a1b856dd5",
+        "c6815937-492f-440f-bb2b-d49152cc1eb0"
+      ],
+      "rejectIds": [],
+      "dim": "physical",
+      "rule": "facet physical LIKE '%grandstand%'",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: facet physical LIKE '%grandstand%'."
+    },
+    {
+      "id": "audience-engineers",
+      "group": "dim-audience",
+      "query": "an event for software engineers",
+      "expectIds": [
+        "09997f36-3285-44fc-ba89-0d8dcb43e282",
+        "0b1d605e-184f-4078-93f2-7e4d17f2dd82",
+        "1af37f6d-2ce4-48cd-a208-fb9ed5d471ce",
+        "ad333ce1-b2c5-4eee-8492-65ee7820798a",
+        "bbb51d7d-8d7d-4b0c-b3a1-5561313bb942"
+      ],
+      "rejectIds": [],
+      "dim": "audience",
+      "rule": "facet audience LIKE '%engineer%'",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: facet audience LIKE '%engineer%'."
+    },
+    {
+      "id": "audience-investors",
+      "group": "dim-audience",
+      "query": "somewhere founders and investors go",
+      "expectIds": [
+        "0dd00e83-ef8a-46de-be4d-22c806ef9572",
+        "21c1a330-bba2-4dd0-be2f-aef85a3d2698",
+        "90804a65-1e9a-41d7-a6d2-eaa786801e40",
+        "ad333ce1-b2c5-4eee-8492-65ee7820798a",
+        "bbb51d7d-8d7d-4b0c-b3a1-5561313bb942"
+      ],
+      "rejectIds": [],
+      "dim": "audience",
+      "rule": "facet audience LIKE '%investor%' OR '%startup%'",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: facet audience LIKE '%investor%' OR '%startup%'."
+    },
+    {
+      "id": "audience-allages",
+      "group": "dim-audience",
+      "query": "no age limit, anyone can come",
+      "expectIds": [
+        "25c70f11-1797-4d16-83cd-a1e04c19d54d",
+        "b68f8764-9ece-4424-bbf1-3b2085d382e6",
+        "cdec07a0-2e7a-4af1-89ae-04164936f914",
+        "cf1fc82d-9877-4af6-a922-62f942aad256",
+        "demo-evt-10-0000-0000-000000000010"
+      ],
+      "rejectIds": [],
+      "dim": "audience",
+      "rule": "facet audience LIKE '%all ages%'",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: facet audience LIKE '%all ages%'."
+    },
+    {
+      "id": "absent-jazz",
+      "group": "absent",
+      "query": "a jazz club night",
+      "expectIds": [],
+      "rejectIds": [],
+      "rule": "khong co genre/facet nao ve jazz",
+      "why": "Danh muc khong co thu nay. He thong duoc phep noi long va tra ve thu khac — nhung phai NOI RA da noi long. Tra ve nam ket qua tu tin ma khong bao gi la that bai.",
+      "expectEmpty": true
+    },
+    {
+      "id": "absent-comedy",
+      "group": "absent",
+      "query": "a stand-up comedy show",
+      "expectIds": [],
+      "rejectIds": [],
+      "rule": "khong co su kien hai kich",
+      "why": "Danh muc khong co thu nay. He thong duoc phep noi long va tra ve thu khac — nhung phai NOI RA da noi long. Tra ve nam ket qua tu tin ma khong bao gi la that bai.",
+      "expectEmpty": true
+    },
+    {
+      "id": "absent-country",
+      "group": "absent",
+      "query": "a country music concert",
+      "expectIds": [],
+      "rejectIds": [],
+      "rule": "khong co genre COUNTRY",
+      "why": "Danh muc khong co thu nay. He thong duoc phep noi long va tra ve thu khac — nhung phai NOI RA da noi long. Tra ve nam ket qua tu tin ma khong bao gi la that bai.",
+      "expectEmpty": true
+    },
+    {
+      "id": "absent-exhibition",
+      "group": "absent",
+      "query": "an art exhibition",
+      "expectIds": [],
+      "rejectIds": [],
+      "rule": "khong co trien lam",
+      "why": "Danh muc khong co thu nay. He thong duoc phep noi long va tra ve thu khac — nhung phai NOI RA da noi long. Tra ve nam ket qua tu tin ma khong bao gi la that bai.",
+      "expectEmpty": true
+    },
+    {
+      "id": "absent-city-berlin",
+      "group": "absent",
+      "query": "anything in berlin",
+      "expectIds": [],
+      "rejectIds": [],
+      "rule": "khong co su kien o Berlin",
+      "why": "Danh muc khong co thu nay. He thong duoc phep noi long va tra ve thu khac — nhung phai NOI RA da noi long. Tra ve nam ket qua tu tin ma khong bao gi la that bai.",
+      "expectEmpty": true
+    },
+    {
+      "id": "absent-city-bangkok",
+      "group": "absent",
+      "query": "shows in bangkok",
+      "expectIds": [],
+      "rejectIds": [],
+      "rule": "khong co su kien o Bangkok",
+      "why": "Danh muc khong co thu nay. He thong duoc phep noi long va tra ve thu khac — nhung phai NOI RA da noi long. Tra ve nam ket qua tu tin ma khong bao gi la that bai.",
+      "expectEmpty": true
+    },
+    {
+      "id": "absent-cheap",
+      "group": "absent",
+      "query": "anything under 50 dollars",
+      "expectIds": [],
+      "rejectIds": [],
+      "rule": "price_min thap nhat la 87",
+      "why": "Danh muc khong co thu nay. He thong duoc phep noi long va tra ve thu khac — nhung phai NOI RA da noi long. Tra ve nam ket qua tu tin ma khong bao gi la that bai.",
+      "expectEmpty": true
+    },
+    {
+      "id": "absent-past",
+      "group": "absent",
+      "query": "something that happened last week",
+      "expectIds": [],
+      "rejectIds": [],
+      "rule": "moi su kien deu o tuong lai",
+      "why": "Danh muc khong co thu nay. He thong duoc phep noi long va tra ve thu khac — nhung phai NOI RA da noi long. Tra ve nam ket qua tu tin ma khong bao gi la that bai.",
+      "expectEmpty": true
+    },
+    {
+      "id": "city-barcelona",
+      "group": "city",
+      "query": "events in barcelona",
+      "expectIds": [
+        "09997f36-3285-44fc-ba89-0d8dcb43e282",
+        "0b1d605e-184f-4078-93f2-7e4d17f2dd82",
+        "952593a4-192f-4cbf-a1d0-38e674773c9e"
+      ],
+      "rejectIds": [],
+      "rule": "venue_city='Barcelona'",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: venue_city='Barcelona'."
+    },
+    {
+      "id": "city-toronto",
+      "group": "city",
+      "query": "what's on in toronto",
+      "expectIds": [
+        "2312ed39-5939-4746-8f36-1e1f1af76668",
+        "0b93ed07-aaae-4e7d-9f14-038658c9f9fc",
+        "c6815937-492f-440f-bb2b-d49152cc1eb0"
+      ],
+      "rejectIds": [],
+      "rule": "venue_city='Toronto'",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: venue_city='Toronto'."
+    },
+    {
+      "id": "city-seoul",
+      "group": "city",
+      "query": "anything in seoul",
+      "expectIds": [
+        "demo-evt-04-0000-0000-000000000004"
+      ],
+      "rejectIds": [],
+      "rule": "venue_city='Seoul'",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: venue_city='Seoul'."
+    },
+    {
+      "id": "city-hcm",
+      "group": "city",
+      "query": "sự kiện ở thành phố hồ chí minh",
+      "expectIds": [
+        "aca4db52-6547-41ed-a82b-0ba8a607cc7e",
+        "b3dd30b9-bdeb-499b-8820-568680363430"
+      ],
+      "rejectIds": [],
+      "rule": "venue_city='TP. Hồ Chí Minh'",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: venue_city='TP. Hồ Chí Minh'."
+    },
+    {
+      "id": "genre-motorsport",
+      "group": "genre",
+      "query": "a formula one race weekend",
+      "expectIds": [
+        "7bc5347a-5edd-4cd2-a972-f5822991f86f",
+        "2312ed39-5939-4746-8f36-1e1f1af76668",
+        "ac940ac0-fe7f-4bb2-96a7-826a1b856dd5",
+        "0b93ed07-aaae-4e7d-9f14-038658c9f9fc",
+        "c6815937-492f-440f-bb2b-d49152cc1eb0"
+      ],
+      "rejectIds": [],
+      "rule": "genre='MOTORSPORT'",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: genre='MOTORSPORT'."
+    },
+    {
+      "id": "genre-mma",
+      "group": "genre",
+      "query": "an mma fight night",
+      "expectIds": [
+        "380c7528-b1fa-48de-a6d0-a051739cf334"
+      ],
+      "rejectIds": [],
+      "rule": "genre='MMA'",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: genre='MMA'."
+    },
+    {
+      "id": "genre-baseball",
+      "group": "genre",
+      "query": "a baseball game",
+      "expectIds": [
+        "demo-evt-07-0000-0000-000000000007"
+      ],
+      "rejectIds": [],
+      "rule": "genre='BASEBALL'",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: genre='BASEBALL'."
+    },
+    {
+      "id": "genre-vpop",
+      "group": "genre",
+      "query": "nhạc việt",
+      "expectIds": [
+        "de161611-1bd1-4265-a3c3-8b8328a7ac6c",
+        "5b89bbab-42d3-4c71-a13a-2adac1fc7566",
+        "535464a7-a12e-410b-8250-2849ad5ceda6"
+      ],
+      "rejectIds": [],
+      "rule": "genre='VPOP'",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: genre='VPOP'."
+    },
+    {
+      "id": "genre-classical",
+      "group": "genre",
+      "query": "classical music",
+      "expectIds": [
+        "61407ab5-1f70-4e58-9194-bb5b74362fb0",
+        "cc4d2e4b-f55f-49e3-a1b3-f03f86774eca",
+        "ef88d2ff-fe30-42b4-a947-d5ebffb69ac0",
+        "8d241a8a-c840-4ce6-aa27-b69f20f85a01"
+      ],
+      "rejectIds": [],
+      "rule": "genre='BALLET' (chi co ballet mang nhac co dien)",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: genre='BALLET' (chi co ballet mang nhac co dien)."
+    },
+    {
+      "id": "price-under200",
+      "group": "price",
+      "query": "tickets under 200 dollars",
+      "expectIds": [
+        "demo-evt-08-0000-0000-000000000008",
+        "demo-evt-10-0000-0000-000000000010",
+        "demo-evt-06-0000-0000-000000000006",
+        "bada4798-30da-4c94-a3ff-e662c46f6800",
+        "demo-evt-05-0000-0000-000000000005",
+        "demo-evt-09-0000-0000-000000000009",
+        "76821ee5-6433-4174-b184-ff681d132680",
+        "demo-evt-01-0000-0000-000000000001",
+        "demo-evt-03-0000-0000-000000000003",
+        "a36175ef-dd9d-4e2d-91b1-f902da4846f7",
+        "ddb16cd7-bb5a-4f55-aceb-410cb542744f",
+        "demo-evt-04-0000-0000-000000000004",
+        "ca11adc9-5eb5-4fe5-ab19-8497cff5e604",
+        "demo-evt-02-0000-0000-000000000002",
+        "demo-evt-07-0000-0000-000000000007"
+      ],
+      "rejectIds": [],
+      "rule": "price_min <= 200",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: price_min <= 200."
+    },
+    {
+      "id": "price-cheapest",
+      "group": "price",
+      "query": "the cheapest tickets you have",
+      "expectIds": [
+        "demo-evt-08-0000-0000-000000000008",
+        "demo-evt-10-0000-0000-000000000010",
+        "demo-evt-06-0000-0000-000000000006",
+        "bada4798-30da-4c94-a3ff-e662c46f6800",
+        "demo-evt-05-0000-0000-000000000005",
+        "demo-evt-09-0000-0000-000000000009",
+        "76821ee5-6433-4174-b184-ff681d132680",
+        "demo-evt-01-0000-0000-000000000001",
+        "demo-evt-03-0000-0000-000000000003",
+        "a36175ef-dd9d-4e2d-91b1-f902da4846f7",
+        "ddb16cd7-bb5a-4f55-aceb-410cb542744f",
+        "demo-evt-04-0000-0000-000000000004",
+        "ca11adc9-5eb5-4fe5-ab19-8497cff5e604",
+        "demo-evt-02-0000-0000-000000000002",
+        "demo-evt-07-0000-0000-000000000007"
+      ],
+      "rejectIds": [],
+      "rule": "price_min o phan tu duoi 10%",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: price_min o phan tu duoi 25%."
+    },
+    {
+      "id": "temporal-thismonth",
+      "group": "temporal",
+      "query": "anything this month",
+      "expectIds": [
+        "8956abc0-1efb-4896-a20d-0b13971bfd85",
+        "04f88015-0cfe-4c56-bee8-9a583b72d307",
+        "380c7528-b1fa-48de-a6d0-a051739cf334"
+      ],
+      "rejectIds": [],
+      "rule": "start_at trong 30 ngay toi",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: start_at trong 30 ngay toi."
+    },
+    {
+      "id": "temporal-december",
+      "group": "temporal",
+      "query": "something in december",
+      "expectIds": [
+        "demo-evt-08-0000-0000-000000000008",
+        "64c7f26b-5305-4dd9-9bf5-e10885dd8057",
+        "b731758f-8daa-478e-a5dd-e6a46ba3c6fb",
+        "dfc14d62-befc-436c-9f07-e285f479e440",
+        "2a212788-32b8-4b9e-8476-2acf12e829ac",
+        "af10a8dd-3679-484e-b4d3-b0b29786dede",
+        "demo-evt-04-0000-0000-000000000004",
+        "53290a5f-bd92-4ce4-98b4-e6085187a726"
+      ],
+      "rejectIds": [],
+      "rule": "thang 12",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: thang 12."
+    },
+    {
+      "id": "combined-london-sport",
+      "group": "combined",
+      "query": "a sports match in london",
+      "expectIds": [
+        "5796674e-e225-45b6-bb4f-c1ab805a31ac",
+        "c59e2946-969d-47f4-825c-7ecbe9c352a0",
+        "demo-evt-08-0000-0000-000000000008",
+        "2fc5cd0a-6441-4b41-8f75-1b00da07dd18",
+        "11e6e6ac-8e1c-4532-88cd-fd84c25d83f8"
+      ],
+      "rejectIds": [],
+      "rule": "city=London AND category=SPORTS",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: city=London AND category=SPORTS."
+    },
+    {
+      "id": "combined-tokyo-concert",
+      "group": "combined",
+      "query": "a concert in tokyo",
+      "expectIds": [
+        "122e56a8-3a92-43ee-84d2-eae5b2604b59",
+        "2a212788-32b8-4b9e-8476-2acf12e829ac"
+      ],
+      "rejectIds": [],
+      "rule": "city=Tokyo AND category=CONCERT",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: city=Tokyo AND category=CONCERT."
+    },
+    {
+      "id": "combined-hanoi-theatre",
+      "group": "combined",
+      "query": "kịch ở hà nội",
+      "expectIds": [
+        "cf1fc82d-9877-4af6-a922-62f942aad256",
+        "61407ab5-1f70-4e58-9194-bb5b74362fb0",
+        "b68f8764-9ece-4424-bbf1-3b2085d382e6",
+        "ef88d2ff-fe30-42b4-a947-d5ebffb69ac0",
+        "cdec07a0-2e7a-4af1-89ae-04164936f914",
+        "53290a5f-bd92-4ce4-98b4-e6085187a726"
+      ],
+      "rejectIds": [],
+      "rule": "city=Hà Nội AND category=THEATER",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: city=Hà Nội AND category=THEATER."
+    },
+    {
+      "id": "combined-conf-2027",
+      "group": "combined",
+      "query": "a tech conference in 2027",
+      "expectIds": [
+        "90804a65-1e9a-41d7-a6d2-eaa786801e40",
+        "09997f36-3285-44fc-ba89-0d8dcb43e282",
+        "21c1a330-bba2-4dd0-be2f-aef85a3d2698",
+        "ad333ce1-b2c5-4eee-8492-65ee7820798a",
+        "0b1d605e-184f-4078-93f2-7e4d17f2dd82",
+        "bbb51d7d-8d7d-4b0c-b3a1-5561313bb942",
+        "7c761ef9-1e58-47f0-a8b7-3048187ff93b",
+        "0dd00e83-ef8a-46de-be4d-22c806ef9572",
+        "1af37f6d-2ce4-48cd-a208-fb9ed5d471ce",
+        "8e803cfa-e06c-4e23-8bec-d0fecd95cfde",
+        "22364875-5fce-4ca3-a605-ae826ac92249"
+      ],
+      "rejectIds": [],
+      "rule": "genre=TECH AND nam 2027",
+      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: genre=TECH AND nam 2027."
     }
   ]
 }

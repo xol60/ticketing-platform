@@ -169,6 +169,31 @@ public class AgentProperties {
         private double queryTagMatchThreshold = 0.42;
 
         /**
+         * How near a labelled event must be before its tag is proposed for an
+         * unlabelled one.
+         *
+         * <p>Deliberately not tight. This produces a proposal, not a verdict,
+         * and the reviewer sees the anchor it came from; a floor set high
+         * enough to be safe on its own would also make the whole step
+         * pointless. Below it the event lands in the review queue's gap list
+         * instead, which is the correct destination for one nothing covers.
+         */
+        @DecimalMin("0.0") @DecimalMax("1.0")
+        private double anchorFloor = 0.55;
+
+        /**
+         * How close the runner-up class must be to be proposed alongside the winner.
+         *
+         * <p>The ambiguity window. Inside it an event reads as two or three
+         * things at once and no argmax should settle that — a reviewer picks,
+         * or decides none of them fits and writes the tag that does. Measured
+         * on this corpus at 0.05: of 27 unlabelled shows, 12 come back with one
+         * class, 11 with two and 4 with three.
+         */
+        @DecimalMin("0.0") @DecimalMax("1.0")
+        private double anchorBand = 0.05;
+
+        /**
          * Bonus added to an event whose {@code genre} the request named.
          *
          * <p>A bonus, never a filter and never a penalty, and each of those

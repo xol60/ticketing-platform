@@ -120,7 +120,18 @@ public class Ranker {
             if (e.getGenre() != null && namedGenres.contains(e.getGenre())) {
                 score += properties.getValidation().getGenreBonus();
             }
-            boolean matched = !splittable || tagCarriers.contains(e.getId());
+            // False when nothing resolved, not true. The flag says "this answers
+            // what was asked", and with no facet resolved to a tag nothing has
+            // been shown to answer anything — so claiming all five did was the
+            // response asserting a verification that never ran. Measured: "a
+            // jazz club night" came back matchedCount=5 against a catalogue
+            // with no jazz in it.
+            //
+            // The sort is unaffected — a flag with one value everywhere cannot
+            // order anything — but the diversity cap now applies to these rows,
+            // which is correct: when nothing answers the request, every row is
+            // filler, and filler is exactly what that cap is for.
+            boolean matched = splittable && tagCarriers.contains(e.getId());
             scored.add(new SearchResult.Scored(e, score, semantic, matched));
         }
 

@@ -193,6 +193,11 @@ public class TagCurationService {
 
         log.info("Tag '{}' {} on event {} by review", slug,
                 approve ? "approved" : "rejected", eventId);
+
+        // An approval is a new anchor. On a dim carried by facets that changes
+        // nothing, but on one carried by anchors it is the whole input, and a
+        // reviewer who labels an event expects the events like it to follow.
+        if (approve && tag.getDim() != null) propagateFromAnchors(tag.getDim());
     }
 
     /**
@@ -276,7 +281,31 @@ public class TagCurationService {
             candidateRepository.rebuildForDim(d, TagSuggester.CANDIDATES_PER_FACET);
             candidateRepository.clearUnansweredForDim(d);
             candidateRepository.proposeRankOneForDim(d);
+            propagateFromAnchors(d);
         }
+    }
+
+    /**
+     * Proposes tags to events that have no facet on the dim, from events that do.
+     *
+     * <p>Runs on every dim rather than on a named one, but only ever does
+     * anything where two conditions meet: events on that dim lack facets, and
+     * some events have been labelled by hand. On {@code format} every event has
+     * facets, so the anchor query finds nothing to fill in. On
+     * {@code atmosphere} 62 of 92 events have no facet at all — the
+     * descriptions never say what the room feels like — and this is the only
+     * route a tag has to reach them.
+     */
+    private void propagateFromAnchors(String dim) {
+        // Its own transaction, because the two callers differ: the rebuild runs
+        // inside one already, while a verdict has committed by the time this is
+        // reached. A @Modifying query with no transaction to join fails at
+        // runtime with "Executing an update/delete query", which no compiler
+        // and no test without a database will catch.
+        Integer n = tx.execute(st -> eventTagRepository.proposeFromAnchors(dim,
+                properties.getValidation().getAnchorFloor(),
+                properties.getValidation().getAnchorBand()));
+        if (n != null && n > 0) log.info("Dim '{}': {} proposals from labelled events", dim, n);
     }
 
     // ── internals ────────────────────────────────────────────────────────────

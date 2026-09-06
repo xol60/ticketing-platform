@@ -78,4 +78,81 @@ public interface EventTagRepository extends JpaRepository<EventTag, EventTag.Key
              ORDER BY t.dim, t.slug, et.confidence DESC
             """, nativeQuery = true)
     List<Object[]> pendingForReview(@Param("dim") String dim);
+
+    /**
+     * Proposes tags on a dim by similarity to events already labelled on it.
+     *
+     * <h3>Why a dim needs this at all</h3>
+     * Every other dim earns its tags the same way: a facet quotes a span, the
+     * facet is embedded, and the vector is compared against tag definitions.
+     * {@code atmosphere} cannot. Measured over 89 event descriptions, not one
+     * contains a word for calm — no {@code calm}, {@code quiet},
+     * {@code intimate}, {@code relaxed} or {@code unhurried} anywhere — and only
+     * fourteen mention mood at all. The descriptions are reference copy:
+     * composer, year, plot, revenue. They say what the event <em>is</em> and
+     * never what the room <em>feels like</em>, so the grounding gate has
+     * nothing to admit and the dim sat at 16 events out of 92.
+     *
+     * <h3>What is compared</h3>
+     * An event's centroid over all its approved facet vectors, against the same
+     * centroid for events a reviewer has already labelled. Not facet against
+     * tag definition: that was tried and it lets one atypical facet define a
+     * whole event — a Taylor Swift stadium show came back "focused and
+     * technical" because it has an acoustic section. A centroid is the event's
+     * whole profile, so a single unrepresentative line cannot carry it.
+     *
+     * <p>Validated leave-one-show-out over the labelled set: 13 of 15, and the
+     * two failures were one incoherent class the reviewer then withdrew. Within
+     * the four classes that survived, prediction is exact. It bridges genres —
+     * Formula 1 finds Calvin Harris at 0.704, the Yankees find Formula 1 at
+     * 0.633 — which is the thing a genre lookup could never do.
+     *
+     * <h3>Every class within the band, not just the winner</h3>
+     * A single nearest class would hide the interesting case. Where two or
+     * three classes sit within {@code band} of each other the event genuinely
+     * reads as several things, and the answer is a person choosing — or writing
+     * the tag none of them is. Proposing all of them is what puts that choice
+     * in front of a reviewer instead of resolving it by argmax.
+     *
+     * <p>Written pending, like every other proposal in this service. Nothing
+     * here approves.
+     *
+     * @return number of proposals written
+     */
+    @Modifying
+    @Query(value = """
+            INSERT INTO event_tag (event_id, tag_id, source, confidence)
+            WITH ev AS (
+                SELECT id, split_part(name, ' @ ', 1) AS show FROM agent_event),
+            centroid AS (
+                SELECT v.id, v.show, avg(f.embedding) AS vec
+                  FROM ev v JOIN event_facet f ON f.event_id = v.id
+                 WHERE f.approved_at IS NOT NULL AND f.embedding IS NOT NULL
+                 GROUP BY v.id, v.show),
+            anchor AS (
+                SELECT DISTINCT v.show, t.id AS tag_id
+                  FROM event_tag et
+                  JOIN tag t ON t.id = et.tag_id
+                  JOIN ev v  ON v.id = et.event_id
+                 WHERE t.dim = :dim AND et.approved_at IS NOT NULL),
+            anchor_vec AS (
+                SELECT DISTINCT a.tag_id, c.show, c.vec
+                  FROM anchor a JOIN centroid c ON c.show = a.show),
+            best AS (
+                SELECT c.show, av.tag_id, max(1 - (av.vec <=> c.vec)) AS sim
+                  FROM centroid c CROSS JOIN anchor_vec av
+                 WHERE c.show NOT IN (SELECT show FROM anchor)
+                 GROUP BY c.show, av.tag_id),
+            top AS (SELECT show, max(sim) AS best_sim FROM best GROUP BY show)
+            SELECT c.id, b.tag_id, 'llm', CAST(b.sim AS real)
+              FROM best b
+              JOIN top t     ON t.show = b.show
+              JOIN centroid c ON c.show = b.show
+             WHERE t.best_sim >= :floor
+               AND t.best_sim - b.sim <= :band
+            ON CONFLICT (event_id, tag_id) DO NOTHING
+            """, nativeQuery = true)
+    int proposeFromAnchors(@Param("dim") String dim,
+                           @Param("floor") double floor,
+                           @Param("band") double band);
 }
