@@ -51,14 +51,26 @@ public class DateResolver {
     /**
      * Resolves with a default window sized to the kind of question being asked.
      *
+     * <p>The widening applies to any window that came from a default, which
+     * includes an expression this class could not parse — not only a blank one.
+     * That distinction used to be dropped here, and it inverted the cost of
+     * being specific: {@code "a tech conference"} searched two years and
+     * returned four conferences, while {@code "a tech conference in 2027"}
+     * searched a fortnight and returned none. 2027 holds 72 of the 92 events in
+     * the catalogue. Naming the right two-thirds of the corpus must never
+     * search less of it than naming nothing.
+     *
+     * <p>This is what {@code Window.isDefault} is for; it was computed
+     * correctly at every return below and read nowhere.
+     *
      * @param wide true for a lookup or an otherwise-narrowed query, where the
      *             browse fortnight would hide most of the catalogue
      */
     public Window resolve(String expression, Instant now, boolean wide) {
-        if (expression != null && !expression.isBlank()) return resolve(expression, now);
+        Window window = resolve(expression, now);
+        if (!wide || !window.isDefault()) return window;
         LocalDate today = now.atZone(ZONE).toLocalDate();
-        int days = wide ? LOOKUP_WINDOW_DAYS : DEFAULT_WINDOW_DAYS;
-        return new Window(now, endOf(today.plusDays(days)), true);
+        return new Window(now, endOf(today.plusDays(LOOKUP_WINDOW_DAYS)), true);
     }
 
     /** Overload taking the clock explicitly, so the resolution is testable. */
@@ -111,14 +123,32 @@ public class DateResolver {
             return new Window(startOf(d), endOf(d), false);
         }
 
+        // Read together, because they answer each other. A month with a year
+        // beside it is that month in that year; a bare month has to guess, and
+        // a bare year covers twelve of them.
+        Integer year = matchYear(e);
         Month month = matchMonth(e);
+
         if (month != null) {
             // A bare month name means the next time that month comes round —
             // "events in february" asked in August means next February, never
-            // the one that already passed.
-            LocalDate first = today.withMonth(month.getValue()).withDayOfMonth(1);
-            if (!first.isAfter(today)) first = first.plusYears(1);
+            // the one that already passed. A stated year overrides that guess,
+            // including backwards: "december 2026" in December 2026 is now.
+            LocalDate first = year != null
+                    ? LocalDate.of(year, month, 1)
+                    : nextOccurrence(month, today);
             return new Window(startOf(first), endOf(first.with(TemporalAdjusters.lastDayOfMonth())), false);
+        }
+
+        if (year != null) {
+            // The current year starts now, not in January — the same rule
+            // "this month" follows. A year already over resolves to a window
+            // with nothing in it, and that is the honest answer: the relaxation
+            // chain reports what it widened, and an empty result says so
+            // outright rather than substituting a year nobody asked for.
+            LocalDate first = LocalDate.of(year, 1, 1);
+            Instant from = year == today.getYear() ? now : startOf(first);
+            return new Window(from, endOf(LocalDate.of(year, 12, 31)), false);
         }
 
         log.debug("Unrecognised date expression '{}' — falling back to the default window", expression);
@@ -139,6 +169,26 @@ public class DateResolver {
         }
         return null;
     }
+
+    private static LocalDate nextOccurrence(Month month, LocalDate today) {
+        LocalDate first = today.withMonth(month.getValue()).withDayOfMonth(1);
+        return first.isAfter(today) ? first : first.plusYears(1);
+    }
+
+    /**
+     * A four-digit year, if the phrase names one.
+     *
+     * <p>Bounded to 19xx/20xx rather than any four digits: the model hands this
+     * field the person's own words, and a bare number in them is far more often
+     * a quantity than a year.
+     */
+    private static Integer matchYear(String e) {
+        java.util.regex.Matcher m = YEAR.matcher(e);
+        return m.find() ? Integer.valueOf(m.group()) : null;
+    }
+
+    private static final java.util.regex.Pattern YEAR =
+            java.util.regex.Pattern.compile("\\b(?:19|20)\\d{2}\\b");
 
     private static Month matchMonth(String e) {
         for (Month m : Month.values()) {

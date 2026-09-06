@@ -535,6 +535,17 @@ a worse answer, it is a useless one.
 ("this weekend"); a real clock and a real zone resolve them. Asked to compute a
 date, a model answers confidently and wrongly, and the error is invisible.
 
+**A phrase Java cannot parse must never search less than silence does.** The
+resolver used to drop its "widen this" flag the moment the field was non-empty,
+so an expression it did not understand fell to the fourteen-day browse window
+while an empty one got two years. `"a tech conference"` searched 77 candidates
+and returned four conferences; `"a tech conference in 2027"` searched 6 and
+returned none — and 2027 holds **72 of the 92 events in the catalogue**. Being
+specific has to cost nothing, or people learn to stop. The flag that
+distinguishes "the user asked for a fortnight" from "we gave up and used one"
+already existed on `Window.isDefault`, computed correctly at every return and
+read by nothing.
+
 **A turn that says nothing takes nothing back.** The sibling of the rule below,
 and the one that actually bites: the model returns `clearFields` for slots the
 sentence never mentions, and the merge then deletes a city set three turns ago.
@@ -736,12 +747,12 @@ answer is a spread rather than a set.
 
 | Group | Cases | p@5 | What it exercises |
 | --- | --- | --- | --- |
+| Temporal | 4 | **100%** | date resolution in Java |
 | City | 10 | **88%** | SQL `WHERE` |
-| Combined | 10 | **85%** | hard slot + vibe together |
+| Combined | 10 | **91%** | hard slot + vibe together |
 | Proper noun | 8 | **81%** | literal name lookup |
 | `dim-audience` | 3 | 78% | a dim that has a vocabulary |
 | Genre | 13 | 66% | tag path + genre bonus |
-| Temporal | 4 | 60% | date resolution in Java |
 | `dim-setting` | 3 | 55% | a dim with facets, no vocabulary |
 | Adversarial | 7 | 52% | wording that attracts the wrong event |
 | Negation | 5 | 41% | exclusion gates |
@@ -750,15 +761,15 @@ answer is a spread rather than a set.
 | `dim-physical` | 3 | 11% | 2 tags, both about venue shape |
 | `dim-duration` | 3 | **0%** | no vocabulary |
 | `dim-participation` | 2 | **0%** | no vocabulary |
-| **Overall** | **84** | **59%** | **34 perfect · 18 adversarial rows admitted** |
+| **Overall** | **84** | **61%** | **36 perfect · 18 adversarial rows admitted** |
 
 By the route the request actually took:
 
 | Path | Cases | p@5 |
 | --- | --- | --- |
 | Proper noun → SQL full-text | 8 | **81%** |
-| Hard filter → SQL, no vector | 22 | **62%** |
-| Vector + tag | 54 | **54%** |
+| Hard filter → SQL, no vector | 22 | **69%** |
+| Vector + tag | 54 | **55%** |
 
 **Saying nothing fits** — the 8 `absent` cases, where the catalogue genuinely has
 no answer. **5 of 8** are honest: they either return nothing, announce a
@@ -784,9 +795,9 @@ see conversational state at all, and the conversation set exercises five queries
 
 **The ordering in that table is the finding, and it has survived every change
 made to the ranker.** The more of a request SQL can decide, the better the
-answer: 81% down a literal name lookup, 62% where a `WHERE` clause settles it,
-54% once a vector is load-bearing. Three rounds of work on the vector path moved
-the overall figure from 40% to 59% without reordering those three rows.
+answer: 81% down a literal name lookup, 69% where a `WHERE` clause settles it,
+55% once a vector is load-bearing. Three rounds of work on the vector path moved
+the overall figure from 40% to 61% without reordering those three rows.
 
 **A dim answered only by cosine scores near zero.** `duration` **0%**,
 `participation` **0%**, `physical` **11%**. The first two have 66 facets between
@@ -934,6 +945,26 @@ was tried and reverted: four example lines cost **3 points across six unrelated
 groups** (59% → 56%, isolated by a three-way run and confirmed by removing
 them). That is the fifth time a prompt addition has paid for itself somewhere
 and been billed somewhere else — this model's prompt does not accumulate.
+
+**A time-dependent label rots, and a rotten label reads exactly like a defect.**
+`"anything happening next month"` scored 0% while returning the correct month:
+its expected ids listed September, written when "today" was still August, which
+contradicts the rule the evaluation file states for itself — *today for
+date-relative queries is `corpusSnapshot`*. `"something in december"` was
+ambiguous rather than wrong: its label gathered both Decembers in the catalogue
+while the resolver documents a bare month as *the next time that month comes
+round*, so the case could not reach 100% however well it worked. Correcting the
+two labels is worth **+2 points and no behaviour change** — worth separating
+from the code fix beside it, which is worth 0.7 and rounds away. Both cases now
+carry a `rule` field naming the exact window they mean.
+
+**What is still open on dates**: relaxation crosses the boundary the person
+named and nothing pulls the ranking back inside it. December 2026 holds four
+events, `MIN_USEFUL_CANDIDATES` is five, so the window widens by thirty days and
+two January events outrank two of the four Decembers. The widening is announced,
+so the answer is honest — but eight of the nineteen months in this catalogue
+hold fewer than five events, which makes this the common case for any
+month-shaped question rather than an edge one.
 
 The regex gate carried a latent bug worth naming, because it is invisible in
 review: Java builds `\b` from **ASCII** `\w`, so `\bđâu` never matches and every

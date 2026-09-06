@@ -45,7 +45,10 @@
     "  absent   thu danh muc KHONG he co. expectEmpty=true. He thong duoc phep noi",
     "           long, nhung phai bao la da noi long; tra ve nam ket qua tu tin",
     "           ma im lang la that bai.",
-    "  price    chua tung duoc do."
+    "  price    chua tung duoc do.",
+    "",
+    "── Nhan phu thuoc thoi gian ──",
+    "Cac ca temporal duoc cham voi 'hom nay' = corpusSnapshot. Nhan cua chung tu muc nat khi ngay that troi qua: temporal-next-month tung liet ke thang 9 trong khi thang sau cua snapshot la thang 10, va cham 0% cho mot cau tra loi dung. Doi corpusSnapshot thi phai tinh lai expectIds cua moi ca co truong 'rule' nhac den mot thang cu the."
   ],
   "cases": [
     {
@@ -853,13 +856,14 @@
       "group": "temporal",
       "query": "anything happening next month",
       "expectIds": [
-        "04f88015-0cfe-4c56-bee8-9a583b72d307",
-        "8956abc0-1efb-4896-a20d-0b13971bfd85",
-        "aac728f0-745d-4df3-a1ae-323eada21a37",
-        "380c7528-b1fa-48de-a6d0-a051739cf334"
+        "ef88d2ff-fe30-42b4-a947-d5ebffb69ac0",
+        "61407ab5-1f70-4e58-9194-bb5b74362fb0",
+        "2d2b1fe0-8112-4f9f-809d-d2705366a17f",
+        "122e56a8-3a92-43ee-84d2-eae5b2604b59"
       ],
       "rejectIds": [],
-      "why": "September 2026 relative to corpusSnapshot. Date arithmetic happens in Java against a fixed clock — the model only returns a relative expression."
+      "why": "Nhan phu thuoc ngay thang thi tu muc nat. Ca nay tung cham 0% trong khi he thong tra ve dung thang 10 — that bai nam o nhan, khong o he thong. Bat cu ai doi corpusSnapshot deu phai tinh lai expectIds cua no.",
+      "rule": "thang 10/2026 — thang sau corpusSnapshot 2026-09-06. Nhan cu liet ke thang 9, tuc doc 'next month' la '30 ngay toi'; no duoc viet khi hom nay con o thang 8 va mau thuan voi chinh quy uoc cua file nay."
     },
     {
       "id": "temporal-february",
@@ -1387,18 +1391,14 @@
       "group": "temporal",
       "query": "something in december",
       "expectIds": [
-        "demo-evt-08-0000-0000-000000000008",
-        "64c7f26b-5305-4dd9-9bf5-e10885dd8057",
-        "b731758f-8daa-478e-a5dd-e6a46ba3c6fb",
-        "dfc14d62-befc-436c-9f07-e285f479e440",
+        "1a71791f-b646-4d7c-8c4d-9b0f723ba87c",
         "2a212788-32b8-4b9e-8476-2acf12e829ac",
-        "af10a8dd-3679-484e-b4d3-b0b29786dede",
-        "demo-evt-04-0000-0000-000000000004",
-        "53290a5f-bd92-4ce4-98b4-e6085187a726"
+        "4d4eb358-03bf-40d9-8f40-a0e4fa589c1b",
+        "dfc14d62-befc-436c-9f07-e285f479e440"
       ],
       "rejectIds": [],
-      "rule": "thang 12",
-      "why": "Nhãn suy ra từ quy tắc trên corpus, không phải phán đoán: thang 12."
+      "rule": "start_at trong thang 12/2026 — thang 12 SAP TOI tinh tu corpusSnapshot. Day la hop dong cua DateResolver: mot ten thang tran nghia la lan ke tiep thang do quay lai. Nhan cu gop ca thang 12/2027, tuc doc la 'moi thang 12 trong kho', va dat tran diem o 8 dong ma cach doc cua code khong bao gio cham toi duoc.",
+      "why": "Neu hop dong doi — mot ten thang tran co nghia la moi nam — thi sua DateResolver truoc, roi sua nhan nay theo. Hai thu phai noi cung mot dieu."
     },
     {
       "id": "combined-london-sport",
