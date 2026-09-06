@@ -101,9 +101,9 @@ Each service has its own README with API, internal architecture, and operational
 | [`secondary-market-service/`](secondary-market-service)           | Ticket resale + HTTP idempotency on `POST /api/secondary/listings`     |
 | [`notification-service/`](notification-service)                   | Email / push                                                           |
 | [`search-service/`](search-service)                               | Elasticsearch read-only event search — multi-field + autocomplete + fuzzy |
-| [`agent-service/`](agent-service)                                 | Conversational recommendation agent — local LLM, pgvector, six validation gates |
+| [`agent-service/`](agent-service)                                 | Conversational recommendation agent — local LLM, pgvector, five validation gates |
 | [`ticketing-ui/`](ticketing-ui)                                   | React + TypeScript SPA                                                 |
-| [`tests/`](tests)                                                 | Concurrent-order stress test, demo-data seeder, hand-labelled agent retrieval eval |
+| [`tests/`](tests)                                                 | Concurrent-order stress test, demo-data seeder, agent retrieval + conversation evals |
 | [`docs/`](docs)                                                   | Cross-cutting deep dives (see [Deep dives](#deep-dives) below)         |
 | `docker/`                                                         | Topic-creation script, Postgres master+slave config, Redis & Nginx confs |
 
@@ -522,7 +522,9 @@ character sequence that happens to appear in a specific paragraph is not.
 **The model's own confidence is ignored.** It is emitted and discarded. An 8B
 model reports 0.95 for a fabricated facet as readily as for a sound one, so
 admitting it as evidence would launder the exact failure the gates exist to
-catch. Auto-approval is earned by deterministic checks or not at all.
+catch. A **facet** may skip review by clearing every deterministic gate; a **tag
+assignment** may not, and cannot be configured to — one is always written
+pending, whatever the property says.
 
 **City is never relaxed.** When a search comes back too thin the constraints
 widen in a fixed order — price, then time window, then exclusions — and each
@@ -533,30 +535,50 @@ a worse answer, it is a useless one.
 ("this weekend"); a real clock and a real zone resolve them. Asked to compute a
 date, a model answers confidently and wrongly, and the error is invisible.
 
+**A turn that says nothing takes nothing back.** The sibling of the rule below,
+and the one that actually bites: the model returns `clearFields` for slots the
+sentence never mentions, and the merge then deletes a city set three turns ago.
+`clearFields` is dropped unless the sentence contains a word of retraction.
+
 **A slot stated this turn cannot be retracted this turn.** The model returns
 `city: "tokyo"` together with `clearFields: ["city"]`, and applying the value
 before the retraction let the retraction win — three conversation turns returned
 byte-identical results while the logs said the city had been read correctly.
 Decidable in Java, so it is decided there.
 
-**An exclusion needs a negation in the sentence, and at most two of them.**
-`excludeTags` is the only model output that acts as a hard filter: a facet must
-quote its source and a tag assignment must survive review, but an exclusion
-deletes events on the model's word alone. Measured across 57 queries, the
-distribution was bimodal with nothing between — three requests excluded exactly
-one tag and all three were right; seven excluded five to ten of the ten tags and
-all seven were wrong. `"live music, nothing electronic"` excluded all ten
-*including* `live-music` and cut the candidate set from 64 events to 6. A list
-longer than two is discarded whole rather than trimmed: once the model has
+**An exclusion needs a negation in the sentence, and at most a third of the
+vocabulary.** An exclusion is the only model output that acts as a hard filter:
+a facet must quote its source and a tag assignment must survive review, but an
+exclusion deletes events on the model's word alone. Measured across 57 queries
+the distribution was bimodal with nothing between — three requests excluded
+exactly one tag and all three were right; seven excluded five to ten of the ten
+tags and all seven were wrong. `"live music, nothing electronic"` excluded all
+ten *including* `live-music` and cut the candidate set from 64 events to 6. A
+longer list is discarded whole rather than trimmed: once the model has
 enumerated the vocabulary, no subset of it is a reading of the sentence.
+
+The cap is a **share** and not a count, because a count is coupled to the size
+of the vocabulary: splitting `sports` into three tags made *"not sports"*
+inexpressible under a limit of two, without anything about the request changing.
+
+The model no longer picks the tag either. It writes what was ruled out in free
+text — `excludeText: ["sports"]` — and Java resolves the phrase against the
+vocabulary by vector, keeping the match only when it stands clear of the
+runner-up. Handing the model an enum invited it to browse: with the catalogue in
+the prompt it copied slugs into facet values (`format: "team-sport-fixture"`),
+and removing the catalogue entirely was worth **+3 points** on its own.
 
 **Ranking has an explicit tiebreak.** Equal scores are structural here — the
 same show runs in several cities with identical facets — and the sort is stable,
 so tied rows inherited whatever order Postgres happened to return. With the
 diversity cap on top, that turned an arbitrary order into a different result
 *set*: 22 of 57 queries returned different answers on two runs of the same build
-against the same data. Extraction was identical in all 57, so the variation was
-entirely in ranking. Sorting by `(matched, score, id)` makes it reproducible.
+against the same data. Sorting by `(matched, score, id)` removes that source.
+Extraction was identical across all 57 when this was measured, which was read at
+the time as "the model is deterministic at temperature 0" — it is not. A later
+run of the same query on the same build produced a different facet split, so
+**a one-case difference between two evaluation runs is noise, not signal**;
+anything smaller than a group-level move needs a repeat before it is believed.
 
 **A shortlist shows a show once.** The category-and-time diversity bucket cannot
 enforce that and works against it — two dates of one show at different times of
@@ -610,124 +632,212 @@ on venue size, not a measurement of it.
 
 ### The tag vocabulary
 
-Ten tags: eight carry a dim and are matched against facets, two carry none and
-are reachable only by exclusion (`headliner`, `late-night` describe an artist's
-fame and a start time, neither of which is a dimension of the experience).
+**Nineteen tags, every one written by a person after looking at a facet nothing
+covered.** There are no seeds. `Taxonomy` holds the eight dims and nothing else;
+the vocabulary lives only in `tag`, and the only way a row gets there is a
+reviewer deciding no existing tag fits.
 
-**Java seeds, the database decides.** `Taxonomy.TAGS` fills an empty database
-and is then outranked by it: a reviewer who finds no tag fits a facet creates
-one, and it takes effect on the next boot without a code change. `TagCatalog`
-reads the live vocabulary for the query prompt and the `excludeTags` enum, so a
-reviewer-created tag is excludable the moment it exists.
+| Dim | Tags | Vocabulary |
+| --- | --- | --- |
+| `format` | 8 | `live-music-concert`, `staged-drama`, `team-sport-fixture`, `conference-keynote`, `motorsport-race`, `combat-sport`, `orchestral-classical`, `short-form-talks` |
+| `atmosphere` | 4 | `high-energy-crowd`, `calm-and-unhurried`, `caught-up-in-a-story`, `focused-and-technical` |
+| `audience` | 3 | `all-ages-family`, `business-investors`, `technical-practitioners` |
+| `physical` | 2 | `indoor-auditorium`, `open-air-grounds` |
+| `scale` | 2 | `broadcast-audience`, `stadium-crowd` |
+| `setting` `duration` `participation` | **0** | 160 facets across these three dims, no vocabulary — see below |
 
-That boundary was learned the hard way. All fifteen original tags were written
-in a single commit **fifteen hours before the first event was ingested**, so
-every one was a guess about what a ticketing catalogue might hold. Eight guesses
-matched the corpus; six did not, and an empty tag is not inert — across 92
-events those six entered 173 candidate shortlists, took first place ten times
-with every one of those wrong (a Formula 1 race tagged `workshop` on a
-0.495-to-0.495 tie), and were approved zero times. One of them captured
-*"somewhere I can learn something"* at 0.594 and, carried by nothing, returned no
-events and erased the request's only signal. They were retired in `V9`. Both
-tags that came through review instead — `professional`, `broadcast` — are
-carried by events, because that flow starts from a facet nothing covers and so
-cannot produce an empty tag.
+The fifteen original tags were written in a single commit **fifteen hours before
+the first event was ingested**, so every one was a guess about what a ticketing
+catalogue might hold. Six matched nothing and an empty tag is not inert: across
+92 events they entered 173 candidate shortlists, took first place ten times with
+every one of those wrong (a Formula 1 race tagged `workshop` on a
+0.495-to-0.495 tie), and were approved zero times. `V9` retired those six; the
+rest were deleted outright and the vocabulary rebuilt from the corpus, one
+facet at a time.
+
+**Nothing is auto-approved, and a tag never stores a facet's vector.** `V12`
+narrows `tag.source` to `human`; `V13` makes `event_tag.vector_source`
+write-only. Both are enforced by `CHECK`, not by convention, because the two
+shortcuts they close are the same shortcut: letting the machine's phrasing
+become the vocabulary. A span reads *"1.8 million fans across 66 concerts"* and
+a tag has to read *"an event whose audience fills a stadium"* — embedding the
+first as the definition of the second poisons every later comparison with one
+event's copywriting. The reviewer rewrites it or there is no tag.
 
 A tag is embedded from **name + description + examples**, 244–329 characters,
 never from its slug. Measured against *"a small room, close to the performer,
 only a hundred people"*: the slug `intimate` scored 0.556 and lost to
 `live-music`; the full definition scored 0.819 and won.
 
-A dim needs at least two tags or matching it is a default rather than a
-decision. `family-kids` was alone on `audience`, took all seventeen audience
+**A duplicate warning calibrated against the vocabulary itself.** A reviewer
+adding a tag is shown the nearest existing one, and "near" is not a constant: it
+is the closest pair already living on that dim. Below three tags there is no
+baseline and no warning fires, because one pair is not a distribution. A fixed
+number here rejected 6 of 18 legitimate tags before the baseline replaced it.
+
+**A dim needs at least two tags or matching it is a default rather than a
+decision.** `family-kids` was alone on `audience`, took all seventeen audience
 facets, and twelve were wrong — including *"developers, engineers, and
-technology enthusiasts"*. `TagEmbeddingBackfill` warns at startup when a dim has one.
+technology enthusiasts"*. `TagEmbeddingBackfill` warns at startup when a dim
+holds fewer than two.
+
+**Three dims have facets and no tags, on purpose.** `setting` (94 facets, 62
+events), `duration` (38 / 35) and `participation` (28 / 23) never produced a
+facet a reviewer could generalise: they describe one venue, one schedule, one
+activity rather than a kind of experience. The vocabulary stops where the corpus
+stops repeating itself, not where the reviewer got tired.
+
+What that costs is not uniform. `duration` and `participation` score **0%**;
+`setting` scores **55%**, because a question about setting is usually answerable
+through some other dim — *"a night at the theatre"* is carried by `staged-drama`
+on `format` long before `setting` is consulted. A dim with no vocabulary is only
+fatal when nothing else in the sentence is answerable.
+
+**`atmosphere` is the one dim built by propagation rather than extraction.**
+Only 24 of 92 events describe how attending feels — online copy sells history
+and awards — so the facet path could never label the rest. Instead the events a
+reviewer *did* label become anchors: each labelled show's facets are averaged
+into a centroid, and an unlabelled show inherits a candidate tag from the
+nearest one. It runs as a proposal, never an assignment, and a show landing
+inside the ambiguity band of two or three classes goes to review rather than to
+an argmax. **72 of 92 events now carry an approved `atmosphere` tag while only 24 hold an
+`atmosphere` facet at all** — the rest were reached entirely by inheritance.
+Leave-one-show-out over the labelled set predicts 13 of 15 correctly. This is the only place in the system
+where one event's data decides another's, and it is allowed exactly because the
+output is a proposal a person still has to approve.
 
 ### Measured behaviour
 
-92-event demo catalogue, 57-query evaluation set. All figures from real runs.
+92-event demo catalogue. Two evaluation sets, 106 cases, all figures from real
+runs on the current build.
 
 **Ingestion**
 
 | | |
 | --- | --- |
-| Events with ≥2 usable facets | **73%** (§15.1 threshold is 60%) |
-| Facets kept / rejected | 264 / 174 (40% rejected) |
-| Rejection reasons | 71% span-drift, 29% outright fabrication |
-| Facets per event | 3.4 average, 1–8 range |
+| Events with ≥2 usable facets | **84%** (77 of 92; §15.1 threshold is 60%) |
+| Facets kept / rejected | 638 / 356 (36% rejected) |
+| Rejection reasons | 71% span-drift, 28% outright fabrication, 1% too short |
+| Facets per event | 8.2 average, 1–15 range |
 | Ingestion throughput | ~14 s per event (Metal GPU, model warm) |
 
-**Tag assignment**, after reviewing all 368 candidate pairs by hand:
+**Tag assignment**, every one of the 375 candidate pairs decided by a person:
 
 | | |
 | --- | --- |
-| Approved / rejected | 92 / 276, across 61 events |
-| Chosen at rank 1 / 2 / 3 | 42 / 6 / 2 |
-| Facets where no tag fitted | 16 |
-| Auto-accept at 0.495 vs the hand review | 81% precision, 83% recall |
+| Approved / rejected / still pending | 226 / 114 / 35, across 83 events |
+| Events carrying ≥1 approved tag | 81 of 92 |
+| Dims with a vocabulary | 5 of 8 |
 
-There are two thresholds, both measured rather than chosen, because they score
-different text: **0.495** at ingest, where a facet carries its span, and
-**0.42** at query time, where it is one distilled phrase. The ingest curve
-against the hand verdicts has one knee; on the query side every one of the 23
-matches at or above 0.42 is correct. Eight of the fifty chosen tags sat at rank two or three — one of
-them an exact 0.495-to-0.495 tie — which is why the shortlist is stored rather
-than only the winner.
+**Retrieval** — `tests/agent-eval.json`, 96 cases: 84 carry expected ids and are
+scored precision@5 **by distinct show**, 8 expect the catalogue to have nothing
+and are scored on whether the agent says so, 4 carry no labels because the right
+answer is a spread rather than a set.
 
-**Retrieval**, precision@5 scored by distinct show:
-
-| Group | Cases | p@5 | Path taken |
+| Group | Cases | p@5 | What it exercises |
 | --- | --- | --- | --- |
-| City | 6 | **97%** | SQL |
-| Temporal | 2 | 70% | SQL |
-| Proper noun | 8 | 67% | literal name lookup |
-| Negation | 5 | 40% | tag + exclusion gates |
-| Combined | 6 | 40% | mixed |
-| Genre | 8 | 30% | tag + within-group cosine |
-| Vibe | 11 | 18% | cosine, mostly |
-| Adversarial | 7 | 11% | mixed |
-| **Overall** | **53** | **40%** | **13 of 53 perfect** |
+| City | 10 | **88%** | SQL `WHERE` |
+| Combined | 10 | **85%** | hard slot + vibe together |
+| Proper noun | 8 | **81%** | literal name lookup |
+| `dim-audience` | 3 | 78% | a dim that has a vocabulary |
+| Genre | 13 | 66% | tag path + genre bonus |
+| Temporal | 4 | 60% | date resolution in Java |
+| `dim-setting` | 3 | 55% | a dim with facets, no vocabulary |
+| Adversarial | 7 | 52% | wording that attracts the wrong event |
+| Negation | 5 | 41% | exclusion gates |
+| Price | 2 | 40% | `priceMax` + relaxation |
+| Vibe | 11 | 35% | cosine, mostly |
+| `dim-physical` | 3 | 11% | 2 tags, both about venue shape |
+| `dim-duration` | 3 | **0%** | no vocabulary |
+| `dim-participation` | 2 | **0%** | no vocabulary |
+| **Overall** | **84** | **59%** | **34 perfect · 18 adversarial rows admitted** |
 
-Two runs of the same build return identical results on all 57 queries.
+By the route the request actually took:
 
-The perfect-case count is the more honest of the two figures. precision@5 is
-capped by how many right answers the catalogue holds — a request only one event
-satisfies can never exceed 20% however well it ranks — while "every expected
-show was surfaced" measures the ranking itself. It went 7 → 13 as the tag path
-was built out.
+| Path | Cases | p@5 |
+| --- | --- | --- |
+| Proper noun → SQL full-text | 8 | **81%** |
+| Hard filter → SQL, no vector | 22 | **62%** |
+| Vector + tag | 54 | **54%** |
 
-Scoring by distinct show, not by event id, is deliberate: 45 of 53 cases list
-several dates of one show among their expected ids, so an id-level score
-measures how many duplicates a shortlist emits rather than how well it ranks.
+**Saying nothing fits** — the 8 `absent` cases, where the catalogue genuinely has
+no answer. **5 of 8** are honest: they either return nothing, announce a
+relaxation, or mark every row `matched: false`. The three that are not —
+*"a stand-up comedy show"*, *"a country music concert"*, *"an art exhibition"* —
+return five rows reporting `matchedCount: 5`, which asserts a verification that
+never ran. Each names a category the catalogue does not stock at all, so nothing
+in the pipeline contradicts the request and nothing flags it.
+
+**Conversation** — `tests/agent-chat-eval.json`, 10 multi-turn sessions scored on
+the last reply only. **9 of 10.** Five cases check that a filter set on turn 1
+survives a turn that does not mention it; four check that an explicit retraction
+still clears one. The two directions are carried together deliberately: a fix
+that satisfies persistence by never clearing anything fails all four retractions.
+The single failure is `retract-city-vn` — the model emits no `clearFields` for
+`"đâu cũng được"`, and the gate can only drop entries the model produced, never
+add ones it did not.
+
+Neither number moves without the other being checked. The stateless set cannot
+see conversational state at all, and the conversation set exercises five queries.
 
 ### Where it fails, and why
 
-**The ordering in that table is the finding.** The more of a request SQL can
-decide, the better the answer. Every group above 40% is carried by a structured
-field; every group below is carried by a vector.
+**The ordering in that table is the finding, and it has survived every change
+made to the ranker.** The more of a request SQL can decide, the better the
+answer: 81% down a literal name lookup, 62% where a `WHERE` clause settles it,
+54% once a vector is load-bearing. Three rounds of work on the vector path moved
+the overall figure from 40% to 59% without reordering those three rows.
 
-**Vibe (18%) is a data limit, not a matching one.** Those requests land on
-`atmosphere` and `physical`, which carry no tags, so they fall to cosine. The
-catalogue holds **four distinct `atmosphere` values across 92 events** —
-descriptions talk about history and awards, not about what attending feels like.
-Asked for *"live music in hanoi"*, where no Hanoi event is live music, cosine
-returns a stage musical at 0.575 and a basketball game at 0.539, because
-`"stage **musical**"` is lexically near `"live **music**"`. There is no threshold
-that separates those from a real match, which is why the agent reports them
-rather than hiding them.
+**A dim answered only by cosine scores near zero.** `duration` **0%**,
+`participation` **0%**, `physical` **11%**. The first two have 66 facets between
+them and no vocabulary; the third has two tags, and both describe the shape of
+the venue while the queries ask about seating and about sustainability. Asked
+for *"somewhere i can join in rather than just watch"* the query embeds cleanly,
+the nearest facets come back, and not one of them means participation.
+**The vocabulary, not the embedding, is what makes a dim answerable** — and the
+corpus, not the reviewer, decides where a vocabulary can exist. `setting` is the
+control: no vocabulary either, 55%, because its questions are answerable through
+`format` instead.
 
-**Genre (30%) was mostly the tag path hiding evidence the system already had.**
-Tag membership is binary, so a request resolving to `live-music` scored all 19
-carriers identically and the choice of five fell to recency and popularity. But
-the discriminating word usually survives into the facet — measured across the
-catalogue, **36 of 43 events whose description contains their genre keep it in a
+**`atmosphere` was the same failure until the direction of inference was
+reversed.** Only 24 of 92 events say anything about how attending feels, so
+extraction could never cover the dim, and mapping genre to mood was rejected
+twice: the set of words a person might use for a mood is unbounded, so a mapping
+table is infinite on the side that faces the user. Anchoring on the events that
+*do* carry the label and spreading outward is finite on both sides — 72 of 92
+events covered, 13 of 15 correct under leave-one-show-out. The vibe group still
+scores 35%, because coverage is necessary and not sufficient, but *"something
+calm and relaxing"* now returns calm events instead of the loudest thing in the
+catalogue.
+
+**Genre (66%) is answered by a column, and the column is only consulted as a
+tiebreak.** Tag membership is binary, so a request resolving to
+`live-music-concert` scores all 19 carriers identically and the choice of five
+falls to recency and popularity. The discriminating word usually survives into
+the facet — **36 of 43 events whose description contains their genre keep it in a
 facet** (`ballet performance`, `tennis tournament`, `three-stage knockout
-qualifying session`). Coverage was throwing that away.
+qualifying session`) — and a word match on those facets against the `genre`
+column adds 0.15 to the score of an event whose genre was named.
 
-Ranking carriers among themselves by cosine recovers it, and the separation is
-clean: asked for `"ballet"`, the two ballets score 0.615 and 0.556 against 0.399
-for the musicals; asked for `"tennis"`, Wimbledon scores 0.571 against 0.461 for
-the next sport.
+A bonus, never a filter, and the distinction is the measurement: *"a night of
+country music"* matches `MUSICAL` by vector at 0.567, a clear 0.138 ahead of the
+runner-up, against a catalogue with no country music in it. Boosting the wrong
+event costs an ordering; filtering on it deletes the right answer. Matching by
+string rather than by vector is what keeps that failure cheap — an unknown genre
+matches nothing rather than something plausible, at the cost of one case
+(*"electronic dance music night"* never reaches `EDM`).
+
+**A fixed bonus still loses to a gap it cannot see, and this is open.** Asked for
+*"tennis"*, the five slots come back Super Bowl, NBA All-Star, El Clásico, UEFA
+and MLB — Wimbledon Finals, the catalogue's only tennis show, named by the one
+column that says so outright, is not among them. `"kpop concert"` puts a Bruno
+Mars concert first, 0.24 ahead of BLACKPINK, against a bonus of 0.15. The bonus
+was swept from 0.05 to 0.40 and reported as "no downside, little gain", which
+was true and meaningless: precision@5 cannot see an ordering, so the sweep was
+blind to the only thing the bonus affects. Measuring it needs a different
+question — how many of the five belong to the named genre, and how many rows of
+another genre sit above one that does — and by that measure 5 rows are
+misplaced across 14 genre-naming queries.
 
 Rock is the exception that misled the first attempt at this. It is the one genre
 of eleven whose facets do not contain the word — Metallica's reads *"two shows
@@ -735,6 +845,16 @@ with different setlists and supporting acts"* while the description says
 *"modern rock history"* — so no ranking of those facets could have worked.
 Testing the idea on `"rock concert"` alone produced the wrong conclusion, and it
 stood for several rounds.
+
+**A category the catalogue does not stock produces five confident rows.**
+*"a stand-up comedy show"*, *"a country music concert"* and *"an art exhibition"*
+each come back with `matchedCount: 5`. Nothing in the pipeline can contradict
+them: the city exists, the dates are open, the price is unset, and cosine always
+returns a nearest neighbour. The five gates catch a model inventing a fact about
+an event; none of them catches the catalogue lacking the whole category. The two
+`absent` cases that *are* caught are caught by structured fields — an unknown
+city and an empty date window — which is the same finding as the table above,
+arriving from the other side.
 
 **Absolute cosine is unusable even as a tiebreak.** Within one coverage group the
 values are compressed — the gap that matters between the tennis event and the
@@ -791,6 +911,35 @@ a scale nobody asked for). End to end it is a wash — **34% → 31%** precision
 on the 18 evaluation cases both configurations completed, 2 perfect against 3.
 The default stays off: 6.4× the latency for no measurable gain, and a 105 s
 worst case exceeds every timeout in the request path.
+
+**A defect survives exactly as long as the metric cannot see it.** Two of them
+did, and both were found by adding a measurement rather than by reading code.
+
+A conversational turn that mentioned nothing wiped every accumulated filter:
+*"concerts in london"* then *"an evening out, not sports"* returned Hà Nội,
+London, Los Angeles and New York. The model had emitted
+`clearFields: [city, dateExpression, priceMax]` for a sentence that takes
+nothing back, and the existing invariant could not catch it — that rule compares
+`clearFields` against the slots *stated in the same turn*, and here all three
+were null, so there was nothing to contradict. The fix is the same shape as
+every other gate here: a destructive operation on the model's word has to quote
+its source, so `clearFields` is dropped unless the sentence contains a
+retraction. The 96-case set could not see any of this, because every case in it
+is a single stateless request. `tests/agent-chat-eval.json` exists for that
+reason, and the fix moved it 7/10 → 9/10 while the stateless set did not move at
+all.
+
+Teaching the prompt Vietnamese retraction phrases would close the tenth case. It
+was tried and reverted: four example lines cost **3 points across six unrelated
+groups** (59% → 56%, isolated by a three-way run and confirmed by removing
+them). That is the fifth time a prompt addition has paid for itself somewhere
+and been billed somewhere else — this model's prompt does not accumulate.
+
+The regex gate carried a latent bug worth naming, because it is invisible in
+review: Java builds `\b` from **ASCII** `\w`, so `\bđâu` never matches and every
+Vietnamese retraction beginning with `đ` fell through silently. The same trap
+sat in the negation pattern on `đừng`. Both now compile with
+`UNICODE_CHARACTER_CLASS`.
 
 ### Operational notes
 
@@ -905,7 +1054,8 @@ Cross-cutting topics that span more than one service live in their own docs:
 | Saga animated flow (interactive)                            | [animated-flows.html](https://htmlpreview.github.io/?https://github.com/xol60/ticketing-platform/blob/main/docs/animated-flows.html) |
 | Saga static reference                                       | [diagrams.html](https://htmlpreview.github.io/?https://github.com/xol60/ticketing-platform/blob/main/docs/diagrams.html) |
 | Stress test methodology + findings                          | [`tests/README.md`](tests/README.md) |
-| Agent retrieval eval — 57 hand-labelled cases with `rejectIds` | [`tests/agent-eval.json`](tests/agent-eval.json) |
+| Agent retrieval eval — 96 cases, hand-labelled with `rejectIds` and `expectEmpty` | [`tests/agent-eval.json`](tests/agent-eval.json) |
+| Agent conversation eval — 10 multi-turn sessions, filter persistence vs retraction | [`tests/agent-chat-eval.json`](tests/agent-chat-eval.json) · [`run-chat-eval.py`](tests/run-chat-eval.py) |
 
 Per-service architecture lives in each service's own README — see [Project structure](#project-structure).
 
