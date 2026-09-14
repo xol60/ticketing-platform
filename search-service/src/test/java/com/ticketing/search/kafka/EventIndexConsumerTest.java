@@ -18,6 +18,7 @@ import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.kafka.support.Acknowledgment;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -86,7 +87,11 @@ class EventIndexConsumerTest {
                 salesOpen, salesClose, eventDate,
                 "Coldplay", "Madison Square Garden", "New York",
                 "Music of the Spheres", "Long-form description of the show...",
-                "CONCERT", "POP");
+                "CONCERT", "POP",
+                // Carried by the event since a7dc67c for the agent's price filter.
+                // Search does not index them today — see toDocument — but they are
+                // passed here so this test breaks if that ever changes silently.
+                new BigDecimal("120.00"), new BigDecimal("480.00"), 3000);
 
         consumer.onEvent(in, ack);
 
@@ -242,6 +247,7 @@ class EventIndexConsumerTest {
                 Instant.now(), Instant.now().plusSeconds(86400), Instant.now().plusSeconds(172800),
                 "Test Artist", "Test Venue", "Test City",
                 "short", "full",
-                "CONCERT", "ROCK");
+                "CONCERT", "ROCK",
+                new BigDecimal("50.00"), new BigDecimal("150.00"), 500);
     }
 }
